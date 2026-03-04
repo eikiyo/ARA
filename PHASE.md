@@ -1,0 +1,23 @@
+# ARA - Current Phase
+
+## Phase: Design Complete → Ready for Phase 1 Implementation
+
+## Phase 1: Infrastructure + Core Pipeline
+
+### Features (max 3):
+
+1. **Docker Stack on Railway**
+   - Definition of done: n8n + Postgres + Qdrant + Redis + GROBID all running on Railway, communicating via private network. Schema migrated. Manager workflow polling task_queue every 5s.
+
+2. **Scout + Analyst + Verifier Pipeline**
+   - Definition of done: User submits topic via n8n webhook → Scout searches Semantic Scholar → papers stored in Postgres + Qdrant → Analyst triages abstracts → Analyst deep-reads selected papers → Verifier checks claims → results visible in n8n execution logs. Full text via GROBID where available.
+
+3. **Next.js Approval UI (basic)**
+   - Definition of done: PIN gate, session config form (topic, paper type, sources, budget), live phase stepper, approval gates with Approve/Reject buttons, WebSocket connection showing progress. Rule Gate panel for adding rules.
+
+## Not in Phase 1:
+- Hypothesis Generator, Brancher, Critic, Writer (Phase 2-3)
+- Session history page (Phase 3)
+- Export/ZIP generation (Phase 3)
+- Fork sessions (Phase 3)
+- Presets (Phase 2)

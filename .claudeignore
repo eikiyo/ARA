@@ -1,0 +1,10 @@
+node_modules
+.next
+.cache
+.turbo
+.wrangler
+.vercel
+e2e-results
+*.log
+*.pack
+.DS_Store
