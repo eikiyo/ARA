@@ -407,17 +407,15 @@ def search_core(query: str, limit: int = 10) -> str:
         JSON string of standardized paper results
     """
     try:
-        import os as _os
+        # TODO: Remove hardcoded key when credentials are loaded from user config/env.
+        _CORE_API_KEY = "V6E8SYro5K0OzmXQg1TPD9ZkJhdpWavx"
 
-        url = "https://api.core.ac.uk/v3/search/works"
+        url = "https://api.core.ac.uk/v3/search/works/"  # Trailing slash required
         params = {
             "q": query,
             "limit": limit,
         }
-        headers: dict[str, str] = {}
-        core_key = _os.environ.get("CORE_API_KEY")
-        if core_key:
-            headers["Authorization"] = f"Bearer {core_key}"
+        headers: dict[str, str] = {"Authorization": f"Bearer {_CORE_API_KEY}"}
 
         response = _request_with_retry(url, params=params, headers=headers or None, timeout=45)
         data = response.json()
@@ -440,14 +438,19 @@ def search_core(query: str, limit: int = 10) -> str:
                 except (ValueError, TypeError):
                     pass
 
-            # Extract DOI
-            doi = None
-            for ident in item.get("identifiers", []):
-                if isinstance(ident, str) and ident.startswith("10."):
-                    doi = ident
-                    break
+            # Extract DOI (direct field or from identifiers)
+            doi = item.get("doi")
             if not doi:
-                doi = item.get("doi")
+                for ident in item.get("identifiers", []):
+                    if isinstance(ident, dict) and ident.get("type") == "DOI":
+                        doi = ident.get("identifier")
+                        break
+
+            # Best URL: downloadUrl > first sourceFulltextUrl
+            url = item.get("downloadUrl", "")
+            if not url:
+                source_urls = item.get("sourceFulltextUrls") or []
+                url = source_urls[0] if source_urls else ""
 
             result = {
                 "title": item.get("title", ""),
@@ -456,8 +459,8 @@ def search_core(query: str, limit: int = 10) -> str:
                 "year": year,
                 "doi": doi,
                 "source": "core",
-                "url": item.get("downloadUrl") or item.get("sourceFulltextUrls", [""])[0] if item.get("sourceFulltextUrls") else "",
-                "citation_count": 0,
+                "url": url,
+                "citation_count": item.get("citationCount", 0),
             }
             results.append(result)
 
