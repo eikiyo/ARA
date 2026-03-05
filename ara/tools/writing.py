@@ -29,6 +29,16 @@ _MIN_WORDS: dict[str, int] = {
     "conclusion": 400,
 }
 
+# Minimum citation counts per section for AAA-grade output
+_MIN_CITATIONS: dict[str, int] = {
+    "introduction": 6,
+    "literature_review": 15,
+    "methods": 2,
+    "results": 5,
+    "discussion": 6,
+    "conclusion": 2,
+}
+
 # Pattern to match citation formats:
 #   (Author, Year) — standard APA
 #   (Author & Author, Year) — two authors
@@ -182,6 +192,15 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
                     f"These should be removed or replaced with verified sources."
                 )
 
+    # Check minimum citation density
+    min_cites = _MIN_CITATIONS.get(section_key, 0)
+    total_citations = len(citations_found)
+    if min_cites > 0 and total_citations < min_cites:
+        warnings.append(
+            f"LOW CITATION DENSITY: section '{section}' has {total_citations} citations, "
+            f"minimum is {min_cites}. Add more (Author, Year) citations from list_papers data."
+        )
+
     # If critical errors, check retry budget before rejecting
     if errors:
         rejection_key = f"{ctx.get('session_id', 0)}:{section_key}"
@@ -210,8 +229,24 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
             errors = []  # Downgrade to warnings
             _section_rejection_counts[rejection_key] = 0  # Reset for potential revisions
 
-    # Save section to file
+    # Save section to file — prevent quality regression (never overwrite with shorter content)
     section_file = output_dir / f"{section_key}.md"
+    if section_file.exists():
+        existing_words = len(section_file.read_text(encoding="utf-8").split())
+        if word_count < existing_words * 0.85:  # Allow 15% shrink for quality rewrites, but not more
+            _log.warning("WRITE_SECTION: refusing to overwrite %s (existing=%d words, new=%d words — too short)",
+                          section, existing_words, word_count)
+            warnings.append(
+                f"Revision rejected: new version ({word_count} words) is significantly shorter than "
+                f"existing ({existing_words} words). Expand the content to at least {existing_words} words."
+            )
+            return json.dumps({
+                "status": "revision_too_short",
+                "section": section,
+                "existing_words": existing_words,
+                "new_words": word_count,
+                "warnings": warnings,
+            })
     section_file.write_text(content, encoding="utf-8")
 
     # Track PRISMA stats if this is the methods section

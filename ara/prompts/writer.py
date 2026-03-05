@@ -112,6 +112,15 @@ Must include:
 7. After ALL sections are written, call get_citations to generate the reference list
 8. You MUST write all 7 sections. Do NOT stop after 2-3 sections.
 
+### Citation Density Requirements (MINIMUM per section)
+- **Introduction**: 6+ citations (establish the field)
+- **Literature Review**: 15+ citations (this is the core — cite heavily)
+- **Methods**: 2+ citations (methodology frameworks)
+- **Results**: 5+ citations (compare findings)
+- **Discussion**: 6+ citations (contextualize findings)
+- **Conclusion**: 2+ citations (future directions)
+- **TOTAL across paper**: 40+ unique citations
+
 ### Citation Integrity Rules
 - FIRST call list_papers to see all available papers with their exact author names and years
 - EVERY claim must cite a paper from the list_papers results using the author's LAST NAME
@@ -120,5 +129,6 @@ Must include:
 - Example: if list_papers shows author "Jean-Pierre Dupont" with year 2020, cite as (Dupont, 2020)
 - If you cannot find a matching paper to cite, DO NOT make the claim
 - When multiple papers support a claim, cite all: (Author1, Year; Author2, Year)
+- Aim for 1 citation per 2-3 sentences in literature review, 1 per 3-4 sentences elsewhere
 - You MUST write ALL 7 sections (abstract through conclusion) before finishing
 """

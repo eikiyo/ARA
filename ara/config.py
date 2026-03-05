@@ -28,7 +28,7 @@ class ARAConfig:
     max_depth: int = 4
     max_steps_per_call: int = 150
     max_tool_calls_per_turn: int = 1
-    max_solve_seconds: int = 3600
+    max_solve_seconds: int = 5400  # 90 minutes — 11-phase pipeline needs time
     budget_limit_usd: float = 10.0
 
     # Paper quality gates
@@ -75,7 +75,7 @@ class ARAConfig:
             max_depth=_safe_int("ARA_MAX_DEPTH", 4),
             max_steps_per_call=_safe_int("ARA_MAX_STEPS", 150),
             max_tool_calls_per_turn=_safe_int("ARA_MAX_TOOL_CALLS_PER_TURN", 1),
-            max_solve_seconds=_safe_int("ARA_MAX_SOLVE_SECONDS", 1800),
+            max_solve_seconds=_safe_int("ARA_MAX_SOLVE_SECONDS", 5400),
             budget_limit_usd=_safe_float("ARA_BUDGET_LIMIT", 5.0),
             min_papers=_safe_int("ARA_MIN_PAPERS", 100),
             min_cited=_safe_int("ARA_MIN_CITED", 40),
