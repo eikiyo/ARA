@@ -36,9 +36,24 @@ _MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-haiku-4-5-20251001": 200_000,
     "gpt-4o": 128_000,
     "gpt-4.1": 1_000_000,
+    "gemini-2.0-flash": 1_000_000,
 }
 _DEFAULT_CONTEXT_WINDOW = 128_000
 _CONDENSATION_THRESHOLD = 0.75
+
+# Phase keyword → prompt registry key mapping (used to resolve subtask prompts)
+_PHASE_KEYWORD_MAP: dict[str, str] = {
+    "scout": "scout", "paper discovery": "scout",
+    "analyst triage": "analyst_triage", "triage": "analyst_triage",
+    "analyst deep read": "analyst_deep_read", "deep read": "analyst_deep_read",
+    "verifier": "verifier", "verify": "verifier", "validation": "verifier",
+    "hypothesis": "hypothesis", "hypotheses": "hypothesis",
+    "brancher": "brancher", "branch": "brancher", "iterative deepening": "brancher",
+    "brancher scout": "brancher_scout", "branch scout": "brancher_scout",
+    "brancher analyst": "brancher_analyst", "branch analyst": "brancher_analyst",
+    "critic": "critic", "showdown": "critic", "evaluation": "critic",
+    "writer": "writer", "draft": "writer",
+}
 
 
 def _summarize_args(args: dict[str, Any], max_len: int = 120) -> str:
@@ -227,6 +242,37 @@ class RLMEngine:
         except Exception as exc:
             return f"PASS\n(judge error: {exc})"
 
+    def _resolve_subtask_prompt(self, args: dict[str, Any]) -> str | None:
+        """Resolve a phase-specific system prompt for a subtask.
+
+        Checks the 'prompt' arg first, then infers from objective keywords.
+        Returns None to use the default system prompt.
+        """
+        from .prompts import PHASE_PROMPTS, BASE_PROMPT
+
+        # Explicit prompt arg: check if it names a phase
+        prompt_arg = str(args.get("prompt", "")).strip()
+        if prompt_arg:
+            # Check if it's a phase name reference like "<SCOUT_PROMPT>"
+            clean = prompt_arg.strip("<>").replace("_PROMPT", "").lower().replace("_", " ")
+            for keyword, phase_key in _PHASE_KEYWORD_MAP.items():
+                if keyword in clean:
+                    phase_prompt = PHASE_PROMPTS.get(phase_key)
+                    if phase_prompt:
+                        return f"{BASE_PROMPT}\n\n{phase_prompt}"
+                    break
+
+        # Infer from objective
+        obj = str(args.get("objective", "")).lower()
+        for keyword, phase_key in _PHASE_KEYWORD_MAP.items():
+            if keyword in obj:
+                phase_prompt = PHASE_PROMPTS.get(phase_key)
+                if phase_prompt:
+                    return f"{BASE_PROMPT}\n\n{phase_prompt}"
+                break
+
+        return None  # use default system prompt
+
     def _solve_recursive(
         self, objective: str, depth: int,
         context: ExternalContext,
@@ -237,6 +283,7 @@ class RLMEngine:
         model_override: BaseModel | None = None,
         replay_logger: ReplayLogger | None = None,
         turn_history: list[TurnSummary] | None = None,
+        system_prompt_override: str | None = None,
     ) -> str:
         model = model_override or self.model
         self._emit(f"[depth {depth}] objective: {objective}", on_event)
@@ -257,7 +304,8 @@ class RLMEngine:
             recent = turn_history[-3:]
             initial_msg_dict["turn_history"] = [t.to_dict() for t in recent]
         initial_message = json.dumps(initial_msg_dict, ensure_ascii=True)
-        conversation = model.create_conversation(self.system_prompt, initial_message)
+        sys_prompt = system_prompt_override or self.system_prompt
+        conversation = model.create_conversation(sys_prompt, initial_message)
 
         if replay_logger and replay_logger._seq == 0:
             replay_logger.write_header(
@@ -565,6 +613,8 @@ class RLMEngine:
                 effective_limit = depth + 1 + subtask_max_depth
             else:
                 effective_limit = None
+            # Resolve phase-specific system prompt for the subtask
+            subtask_prompt = self._resolve_subtask_prompt(args)
             self._emit(f"[d{depth}] >> entering subtask: {obj}", on_event)
             child_logger = replay_logger.child(depth, step) if replay_logger else None
             # Temporarily override max_depth if subtask specifies it
@@ -576,6 +626,7 @@ class RLMEngine:
                     objective=obj, depth=depth + 1, context=context,
                     on_event=on_event, on_step=on_step, deadline=deadline,
                     model_override=subtask_model, replay_logger=child_logger,
+                    system_prompt_override=subtask_prompt,
                 )
             finally:
                 if effective_limit is not None:
