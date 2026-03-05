@@ -56,8 +56,10 @@ class RLMEngine:
         model: BaseModel,
         tools: ARATools,
         config: ARAConfig,
+        writer_model: BaseModel | None = None,
     ):
         self.model = model
+        self.writer_model = writer_model or model
         self.tools = tools
         self.config = config
         self.cancel_flag = threading.Event()
@@ -100,6 +102,9 @@ class RLMEngine:
         if depth > self.config.max_depth:
             return json.dumps({"error": f"Max depth {self.config.max_depth} reached"})
 
+        # Select active model based on phase
+        active_model = self.writer_model if phase in ("writer", "paper_critic") else self.model
+
         # Build system prompt
         if system_prompt_override:
             system_prompt = system_prompt_override
@@ -117,7 +122,7 @@ class RLMEngine:
             depth=depth,
             phase=phase,
         )
-        conversation = self.model.create_conversation(
+        conversation = active_model.create_conversation(
             system_prompt=system_prompt,
             tool_defs=tool_defs,
         )
@@ -128,7 +133,7 @@ class RLMEngine:
             obs_text = "\n".join(f"- {o}" for o in context.observations[-20:])
             context_text += f"\n\n[Previous observations]\n{obs_text}"
 
-        self.model.append_user_message(conversation, context_text)
+        active_model.append_user_message(conversation, context_text)
 
         # Main loop
         last_text = ""
@@ -159,7 +164,7 @@ class RLMEngine:
                     if on_event:
                         on_event(StepEvent("text", data=text, depth=depth))
 
-                turn = self.model.generate(conversation, on_chunk=_on_chunk)
+                turn = active_model.generate(conversation, on_chunk=_on_chunk)
             except RateLimitError as exc:
                 # Rate limit exhausted — propagate up to stop the entire pipeline
                 _log.error("Rate limit exhausted at depth %d: %s", depth, exc)
@@ -183,7 +188,7 @@ class RLMEngine:
             # No tool calls → done
             if not turn.tool_calls:
                 if turn.text:
-                    self.model.append_assistant_turn(conversation, turn)
+                    active_model.append_assistant_turn(conversation, turn)
                 break
 
             # Pre-dedup spam detection: count DUPLICATE calls (same name+args)
@@ -201,14 +206,14 @@ class RLMEngine:
                     break
 
             if loop_detected:
-                self.model.append_assistant_turn(conversation, ModelTurn(text=turn.text, usage=turn.usage))
-                self.model.append_user_message(
+                active_model.append_assistant_turn(conversation, ModelTurn(text=turn.text, usage=turn.usage))
+                active_model.append_user_message(
                     conversation,
                     "STOP. You generated duplicate tool calls. "
                     "Summarize your findings and respond with text only.",
                 )
                 try:
-                    final = self.model.generate(conversation, on_chunk=_on_chunk)
+                    final = active_model.generate(conversation, on_chunk=_on_chunk)
                     if final.text:
                         last_text = final.text
                     if final.usage:
@@ -233,17 +238,17 @@ class RLMEngine:
 
             # Append assistant turn (with only the capped calls)
             capped_turn = ModelTurn(text=turn.text, tool_calls=capped_calls, usage=turn.usage)
-            self.model.append_assistant_turn(conversation, capped_turn)
+            active_model.append_assistant_turn(conversation, capped_turn)
 
             # Execute (cache prevents re-execution, no event for cached calls)
             results = self._execute_tools(
                 capped_calls, context, depth, on_event, _result_cache,
             )
-            self.model.append_tool_results(conversation, results)
+            active_model.append_tool_results(conversation, results)
 
             # Tell model about dropped calls so it doesn't re-send them blindly
             if dropped > 0:
-                self.model.append_user_message(
+                active_model.append_user_message(
                     conversation,
                     f"[System] {dropped} extra tool call(s) were dropped. Execute ONE tool at a time. "
                     "Wait for each result before calling the next tool.",
@@ -274,12 +279,12 @@ class RLMEngine:
                         break
 
             if loop_detected:
-                self.model.append_user_message(
+                active_model.append_user_message(
                     conversation,
                     "STOP. You are looping. Summarize findings and respond with text. No more tools.",
                 )
                 try:
-                    final = self.model.generate(conversation, on_chunk=_on_chunk)
+                    final = active_model.generate(conversation, on_chunk=_on_chunk)
                     if final.text:
                         last_text = final.text
                     if final.usage:
@@ -290,10 +295,10 @@ class RLMEngine:
                 break
 
             # Context condensation check
-            estimated_tokens = self.model.estimate_tokens(conversation)
-            window = self.model.context_window()
+            estimated_tokens = active_model.estimate_tokens(conversation)
+            window = active_model.context_window()
             if estimated_tokens > window * 0.75:
-                self._condense(conversation, context, _result_cache)
+                self._condense(conversation, context, _result_cache, active_model)
 
         return last_text or "[No response generated]"
 
@@ -476,11 +481,13 @@ class RLMEngine:
                 )
         return None
 
-    def _condense(self, conversation: Conversation, context: ExternalContext, result_cache: dict[str, str] | None = None) -> None:
+    def _condense(self, conversation: Conversation, context: ExternalContext, result_cache: dict[str, str] | None = None, active_model: BaseModel | None = None) -> None:
         _log.info("Condensing conversation (estimated tokens exceeds 75%% of context window)")
         if result_cache is not None:
             result_cache.clear()
         summary_parts = []
+
+        model = active_model or self.model
 
         # Preserve turn history summary
         if context.turn_history:
@@ -497,4 +504,4 @@ class RLMEngine:
             ))
 
         summary = "\n\n".join(summary_parts) if summary_parts else "Previous context condensed — continue from current state."
-        self.model.condense_conversation(conversation, summary)
+        model.condense_conversation(conversation, summary)

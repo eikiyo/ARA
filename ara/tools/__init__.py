@@ -14,7 +14,7 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from .defs import TOOL_DEFINITIONS
-from . import search, papers, verification, research, writing, pipeline
+from . import search, papers, verification, research, writing, pipeline, quality
 
 # Phase → allowed tool names (from arch.md §4.2)
 # "search_*" is a wildcard matching all search_ tools
@@ -26,7 +26,8 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "hypothesis": ["read_paper", "search_similar", "score_hypothesis", "request_approval", "track_cost"],
     "brancher": ["search_*", "search_similar", "embed_text", "request_approval", "track_cost"],
     "critic": ["read_paper", "search_similar", "request_approval", "track_cost"],
-    "writer": ["read_paper", "search_similar", "write_section", "get_citations", "request_approval", "track_cost"],
+    "writer": ["read_paper", "search_similar", "write_section", "get_citations", "generate_prisma_diagram", "request_approval", "track_cost"],
+    "paper_critic": ["read_paper", "search_similar", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "request_approval", "track_cost"],
 }
 
 
@@ -65,6 +66,10 @@ TOOL_DISPATCH: dict[str, Any] = {
     # Writing tools
     "write_section": writing.write_section,
     "get_citations": writing.get_citations,
+    # Quality tools
+    "generate_quality_audit": quality.generate_quality_audit,
+    "generate_prisma_diagram": quality.generate_prisma_diagram,
+    "validate_all_citations": quality.validate_all_citations,
     # Pipeline tools
     "request_approval": pipeline.request_approval,
     "get_rules": pipeline.get_rules,

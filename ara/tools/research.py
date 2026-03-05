@@ -37,6 +37,14 @@ def extract_claims(args: dict[str, Any], ctx: dict) -> str:
                 confidence=c.get("confidence", 0.5),
                 supporting_quotes=json.dumps(c.get("supporting_quotes", [])),
                 section=c.get("section", ""),
+                sample_size=c.get("sample_size", ""),
+                effect_size=c.get("effect_size", ""),
+                p_value=c.get("p_value", ""),
+                confidence_interval=c.get("confidence_interval", ""),
+                study_design=c.get("study_design", ""),
+                population=c.get("population", ""),
+                country=c.get("country", ""),
+                year_range=c.get("year_range", ""),
             )
             stored += 1
         return json.dumps({"stored": stored, "paper_id": paper_id})
@@ -55,7 +63,10 @@ def extract_claims(args: dict[str, Any], ctx: dict) -> str:
         "title": paper.get("title", ""),
         "abstract": paper.get("abstract", ""),
         "full_text": full_text,
-        "instruction": "Extract claims then call extract_claims again with paper_id and claims list to store them.",
+        "instruction": "Extract claims then call extract_claims again with paper_id and claims list to store them. "
+                       "For each claim include: claim_text, claim_type, confidence, supporting_quotes, section. "
+                       "Also extract when available: sample_size, effect_size, p_value, confidence_interval, "
+                       "study_design, population, country, year_range.",
     }, default=str)
 
 

@@ -219,7 +219,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "paper_id": {"type": "integer", "description": "Paper ID to extract claims from"},
                 "claims": {
                     "type": "array",
-                    "description": "List of extracted claims to store. Each: {claim_text, claim_type, confidence, supporting_quotes, section}",
+                    "description": "List of extracted claims to store. Each: {claim_text, claim_type, confidence, supporting_quotes, section, sample_size, effect_size, p_value, confidence_interval, study_design, population, country, year_range}",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -228,6 +228,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                             "confidence": {"type": "number"},
                             "supporting_quotes": {"type": "array", "items": {"type": "string"}},
                             "section": {"type": "string"},
+                            "sample_size": {"type": "string", "description": "e.g. N=1234"},
+                            "effect_size": {"type": "string", "description": "e.g. OR=2.3, Cohen's d=0.45"},
+                            "p_value": {"type": "string", "description": "e.g. p<0.001"},
+                            "confidence_interval": {"type": "string", "description": "e.g. 95% CI: 1.2-3.4"},
+                            "study_design": {"type": "string", "description": "e.g. cross-sectional, RCT, cohort"},
+                            "population": {"type": "string", "description": "e.g. adults aged 30-65"},
+                            "country": {"type": "string", "description": "e.g. Sweden, USA"},
+                            "year_range": {"type": "string", "description": "e.g. 2010-2018"},
                         },
                     },
                 },
@@ -293,6 +301,32 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "get_citations",
         "description": "Get all citations for the session in BibTeX format.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+
+    # ── Quality tools ────────────────────────────────────────────
+    {
+        "name": "generate_quality_audit",
+        "description": "Generate a comprehensive quality scorecard for the paper. Checks word counts, citation counts, table presence, section completeness, and PRISMA data.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "generate_prisma_diagram",
+        "description": "Generate a PRISMA flow diagram from search/screening data. Returns ASCII art for markdown and SVG for HTML.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "validate_all_citations",
+        "description": "Scan all written sections and verify every (Author, Year) citation against the paper database. Returns integrity report.",
         "parameters": {
             "type": "object",
             "properties": {},

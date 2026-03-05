@@ -15,7 +15,7 @@ from .analyst import ANALYST_TRIAGE_PROMPT, ANALYST_DEEP_READ_PROMPT
 from .verifier import VERIFIER_PROMPT
 from .hypothesis import HYPOTHESIS_PROMPT
 from .brancher import BRANCHER_PROMPT
-from .critic import CRITIC_PROMPT
+from .critic import CRITIC_PROMPT, PAPER_CRITIC_PROMPT
 from .writer import WRITER_PROMPT
 
 PHASE_PROMPTS: dict[str, str] = {
@@ -27,6 +27,7 @@ PHASE_PROMPTS: dict[str, str] = {
     "hypothesis": HYPOTHESIS_PROMPT,
     "brancher": BRANCHER_PROMPT,
     "critic": CRITIC_PROMPT,
+    "paper_critic": PAPER_CRITIC_PROMPT,
     "writer": WRITER_PROMPT,
 }
 

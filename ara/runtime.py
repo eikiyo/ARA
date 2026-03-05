@@ -99,11 +99,16 @@ class SessionRuntime:
 
     def _generate_output(self) -> None:
         ws = self.config.workspace
-        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        ara_output = ws / self.config.session_root_dir / "output"
+        sections_dir = ara_output / "sections"
         if not sections_dir.exists():
             return
         output_dir = ws / "output"
-        bib_path = ws / self.config.session_root_dir / "output" / "references.bib"
+        bib_path = ara_output / "references.bib"
+        apa_path = ara_output / "references_apa.txt"
+        prisma_svg = ara_output / "prisma.svg"
+        prisma_ascii = ara_output / "prisma_ascii.md"
+        quality_audit = output_dir / "quality_audit.json"
         try:
             files = generate_output(
                 output_dir=output_dir,
@@ -111,6 +116,10 @@ class SessionRuntime:
                 bib_path=bib_path if bib_path.exists() else None,
                 topic=self._context.topic,
                 paper_type=self._context.paper_type,
+                apa_path=apa_path if apa_path.exists() else None,
+                prisma_svg_path=prisma_svg if prisma_svg.exists() else None,
+                prisma_ascii_path=prisma_ascii if prisma_ascii.exists() else None,
+                quality_audit_path=quality_audit if quality_audit.exists() else None,
             )
             if files:
                 import logging

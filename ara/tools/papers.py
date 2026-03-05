@@ -14,8 +14,58 @@ from typing import Any
 import httpx
 
 _log = logging.getLogger(__name__)
-_MAX_DOWNLOAD_BYTES = 5_000_000  # 5MB limit for fulltext downloads
-_MAX_FULLTEXT_CHARS = 5000  # Truncate stored full text to 5KB
+_MAX_DOWNLOAD_BYTES = 10_000_000  # 10MB limit for fulltext downloads
+_MAX_FULLTEXT_CHARS = 25000  # Store up to ~5 pages of full text for deep analysis
+
+
+def _extract_text_from_pdf(pdf_bytes: bytes, max_chars: int = 25000) -> str | None:
+    """Extract text from PDF using pymupdf if available, fallback to basic extraction."""
+    # Try pymupdf (fitz) first — best quality
+    try:
+        import fitz  # pymupdf
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text_parts = []
+        total_chars = 0
+        for page in doc:
+            page_text = page.get_text("text")
+            text_parts.append(page_text)
+            total_chars += len(page_text)
+            if total_chars > max_chars:
+                break
+        doc.close()
+        full_text = "\n".join(text_parts)
+        if len(full_text) > max_chars:
+            full_text = full_text[:max_chars]
+        return full_text if len(full_text) > 200 else None
+    except ImportError:
+        _log.debug("pymupdf not installed, trying pdfplumber")
+    except Exception as exc:
+        _log.warning("pymupdf extraction failed: %s", exc)
+
+    # Try pdfplumber as fallback
+    try:
+        import pdfplumber
+        import io
+        pdf = pdfplumber.open(io.BytesIO(pdf_bytes))
+        text_parts = []
+        total_chars = 0
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            text_parts.append(page_text)
+            total_chars += len(page_text)
+            if total_chars > max_chars:
+                break
+        pdf.close()
+        full_text = "\n".join(text_parts)
+        if len(full_text) > max_chars:
+            full_text = full_text[:max_chars]
+        return full_text if len(full_text) > 200 else None
+    except ImportError:
+        _log.debug("pdfplumber not installed, PDF text extraction unavailable")
+    except Exception as exc:
+        _log.warning("pdfplumber extraction failed: %s", exc)
+
+    return None
 
 
 def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
@@ -47,16 +97,14 @@ def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     full_text = None
     try:
         with httpx.stream("GET", pdf_url, timeout=30, follow_redirects=True) as dl_resp:
-            if dl_resp.status_code != 200:
-                pass
-            else:
+            if dl_resp.status_code == 200:
                 content_type = dl_resp.headers.get("content-type", "")
                 content_length = int(dl_resp.headers.get("content-length", 0))
 
                 if content_length > _MAX_DOWNLOAD_BYTES:
                     _log.warning("Fulltext too large (%d bytes), skipping download", content_length)
-                elif "html" in content_type:
-                    # Read up to limit
+                else:
+                    # Download content
                     chunks = []
                     total = 0
                     for chunk in dl_resp.iter_bytes(chunk_size=8192):
@@ -64,14 +112,29 @@ def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
                         total += len(chunk)
                         if total > _MAX_DOWNLOAD_BYTES:
                             break
-                    html = b"".join(chunks).decode("utf-8", errors="replace")
-                    # Strip scripts, styles, tags
-                    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
-                    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
-                    text = re.sub(r"<[^>]+>", " ", text)
-                    text = re.sub(r"\s+", " ", text).strip()
-                    if len(text) > 200:
-                        full_text = text[:_MAX_FULLTEXT_CHARS]
+                    raw_bytes = b"".join(chunks)
+
+                    if "pdf" in content_type or pdf_url.endswith(".pdf"):
+                        # PDF extraction
+                        full_text = _extract_text_from_pdf(raw_bytes, _MAX_FULLTEXT_CHARS)
+                        if not full_text:
+                            _log.info("PDF text extraction failed for %s, URL stored for reference", doi)
+                    elif "html" in content_type:
+                        # HTML extraction (existing logic, enhanced)
+                        html_text = raw_bytes.decode("utf-8", errors="replace")
+                        text = re.sub(r"<script[^>]*>.*?</script>", "", html_text, flags=re.DOTALL)
+                        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
+                        text = re.sub(r"<[^>]+>", " ", text)
+                        text = re.sub(r"\s+", " ", text).strip()
+                        if len(text) > 200:
+                            full_text = text[:_MAX_FULLTEXT_CHARS]
+                    elif "xml" in content_type:
+                        # XML extraction (common for PubMed/Europe PMC)
+                        xml_text = raw_bytes.decode("utf-8", errors="replace")
+                        text = re.sub(r"<[^>]+>", " ", xml_text)
+                        text = re.sub(r"\s+", " ", text).strip()
+                        if len(text) > 200:
+                            full_text = text[:_MAX_FULLTEXT_CHARS]
     except Exception as exc:
         _log.warning("Failed to download fulltext from %s: %s", str(pdf_url)[:80], exc)
 

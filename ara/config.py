@@ -21,6 +21,7 @@ class ARAConfig:
 
     # Model
     model: str = "gemini-2.0-flash"
+    writer_model: str = "gemini-2.5-pro"
     google_api_key: str | None = None
 
     # Engine limits
@@ -29,6 +30,14 @@ class ARAConfig:
     max_tool_calls_per_turn: int = 1
     max_solve_seconds: int = 1800
     budget_limit_usd: float = 5.0
+
+    # Paper quality gates
+    min_papers: int = 50
+    min_cited: int = 40
+    min_paper_words: int = 6000
+    max_search_rounds: int = 4
+    paper_critic_max_revisions: int = 3
+    section_critic_max_revisions: int = 2
 
     # Behavior
     approval_gates: bool = True
@@ -61,10 +70,17 @@ class ARAConfig:
             workspace=ws,
             session_root_dir=os.getenv("ARA_SESSION_DIR", "ara_data"),
             model=os.getenv("ARA_MODEL", "gemini-2.0-flash"),
+            writer_model=os.getenv("ARA_WRITER_MODEL", "gemini-2.5-pro"),
             google_api_key=os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY"),
             max_depth=_safe_int("ARA_MAX_DEPTH", 4),
             max_steps_per_call=_safe_int("ARA_MAX_STEPS", 80),
             max_tool_calls_per_turn=_safe_int("ARA_MAX_TOOL_CALLS_PER_TURN", 1),
             max_solve_seconds=_safe_int("ARA_MAX_SOLVE_SECONDS", 1800),
             budget_limit_usd=_safe_float("ARA_BUDGET_LIMIT", 5.0),
+            min_papers=_safe_int("ARA_MIN_PAPERS", 50),
+            min_cited=_safe_int("ARA_MIN_CITED", 40),
+            min_paper_words=_safe_int("ARA_MIN_PAPER_WORDS", 6000),
+            max_search_rounds=_safe_int("ARA_MAX_SEARCH_ROUNDS", 4),
+            paper_critic_max_revisions=_safe_int("ARA_PAPER_CRITIC_MAX_REVISIONS", 3),
+            section_critic_max_revisions=_safe_int("ARA_SECTION_CRITIC_MAX_REVISIONS", 2),
         )

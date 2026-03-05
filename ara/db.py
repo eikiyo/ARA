@@ -26,6 +26,8 @@ _ALLOWED_COLUMNS: dict[str, set[str]] = {
         "claim_text", "claim_type", "confidence", "supporting_quotes", "section",
         "verification_status", "retraction_checked", "citation_count_at_check",
         "doi_valid", "verifier_notes", "contradicts",
+        "sample_size", "effect_size", "p_value", "confidence_interval",
+        "study_design", "population", "country", "year_range",
     },
     "hypotheses": {
         "hypothesis_text", "rank", "iteration", "novelty", "feasibility",
@@ -84,6 +86,14 @@ CREATE TABLE IF NOT EXISTS claims (
     doi_valid INTEGER,
     verifier_notes TEXT,
     contradicts TEXT,
+    sample_size TEXT,
+    effect_size TEXT,
+    p_value TEXT,
+    confidence_interval TEXT,
+    study_design TEXT,
+    population TEXT,
+    country TEXT,
+    year_range TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -166,10 +176,30 @@ CREATE TABLE IF NOT EXISTS cost_log (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS prisma_stats (
+    stat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(session_id),
+    stage TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    details TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quality_audit (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(session_id),
+    dimension TEXT NOT NULL,
+    score REAL,
+    details TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_papers_session ON papers(session_id);
 CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi);
 CREATE INDEX IF NOT EXISTS idx_claims_session ON claims(session_id);
 CREATE INDEX IF NOT EXISTS idx_hypotheses_session ON hypotheses(session_id);
+CREATE INDEX IF NOT EXISTS idx_prisma_session ON prisma_stats(session_id);
+CREATE INDEX IF NOT EXISTS idx_audit_session ON quality_audit(session_id);
 """
 
 
@@ -469,3 +499,47 @@ class ARADB:
             )
             self._conn.commit()
         return cur.lastrowid  # type: ignore
+
+    # ── PRISMA & Quality Audit ──────────────────────────────────
+
+    def store_prisma_stat(self, session_id: int, stage: str, count: int, details: str | None = None) -> None:
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO prisma_stats (session_id, stage, count, details, created_at) VALUES (?, ?, ?, ?, ?)",
+                (session_id, stage, count, details, now),
+            )
+            self._conn.commit()
+
+    def get_prisma_stats(self, session_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM prisma_stats WHERE session_id = ? ORDER BY stat_id", (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def store_quality_audit(self, session_id: int, dimension: str, score: float, details: str | None = None) -> None:
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO quality_audit (session_id, dimension, score, details, created_at) VALUES (?, ?, ?, ?, ?)",
+                (session_id, dimension, score, details, now),
+            )
+            self._conn.commit()
+
+    def get_quality_audit(self, session_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM quality_audit WHERE session_id = ? ORDER BY audit_id", (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_all_papers_with_claims(self, session_id: int) -> list[dict[str, Any]]:
+        """Get all papers that have at least one claim, with their claims attached."""
+        papers = self.get_cited_papers(session_id)
+        for p in papers:
+            pid = p["paper_id"]
+            claims = self._conn.execute(
+                "SELECT * FROM claims WHERE session_id = ? AND paper_id = ?",
+                (session_id, pid),
+            ).fetchall()
+            p["claims"] = [dict(c) for c in claims]
+        return papers
