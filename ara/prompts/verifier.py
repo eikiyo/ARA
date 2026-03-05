@@ -39,10 +39,10 @@ Present a verification summary:
 - Papers with suspiciously low citations for their age
 - Overall database quality score
 
-Call request_approval ONCE with the verification summary.
+Output the verification summary as text when done.
 
 ### STRICT RULES
 - Verify at most 100 papers (focus on most-cited ones)
 - Do NOT re-verify papers that have already been verified
-- Call request_approval exactly ONCE at the end
+- When done, output your summary as text and stop.
 """

@@ -42,16 +42,39 @@ def generate_quality_audit(args: dict[str, Any], ctx: dict) -> str:
     sections_present = []
     from .writing import _extract_citations_from_text
 
-    required_sections = [
-        "abstract", "introduction", "literature_review", "methods",
-        "results", "discussion", "conclusion"
-    ]
-    min_words = {
-        "abstract": 250, "introduction": 800, "literature_review": 1500,
-        "methods": 1000, "results": 1200, "discussion": 1000, "conclusion": 400,
-    }
+    cfg = ctx.get("config")
+    is_conceptual = cfg and cfg.paper_type == "conceptual" if cfg else False
+
+    if is_conceptual:
+        required_sections = [
+            "abstract", "introduction", "theoretical_background", "framework",
+            "propositions", "discussion", "conclusion"
+        ]
+    else:
+        required_sections = [
+            "abstract", "introduction", "literature_review", "methods",
+            "results", "discussion", "conclusion"
+        ]
+
+    if cfg:
+        min_words = {
+            "abstract": cfg.words_abstract, "introduction": cfg.words_introduction,
+            "literature_review": cfg.words_literature_review, "methods": cfg.words_methods,
+            "results": cfg.words_results, "discussion": cfg.words_discussion,
+            "conclusion": cfg.words_conclusion,
+            "theoretical_background": cfg.words_theoretical_background,
+            "framework": cfg.words_framework,
+            "propositions": cfg.words_propositions,
+        }
+    else:
+        min_words = {
+            "abstract": 250, "introduction": 800, "literature_review": 1500,
+            "methods": 1000, "results": 1200, "discussion": 1000, "conclusion": 400,
+            "theoretical_background": 1500, "framework": 2000, "propositions": 1500,
+        }
 
     all_citations: set[str] = set()
+    citation_frequency: dict[str, int] = {}  # Track how many times each citation appears
 
     for f in sections_dir.iterdir():
         if f.suffix == ".md" and f.is_file():
@@ -61,6 +84,11 @@ def generate_quality_audit(args: dict[str, Any], ctx: dict) -> str:
             citations = _extract_citations_from_text(content)
             unique_cites = set(f"{a},{y}" for a, y in citations)
             all_citations.update(unique_cites)
+
+            # Count citation frequency across all sections
+            for a, y in citations:
+                key = f"({a}, {y})"
+                citation_frequency[key] = citation_frequency.get(key, 0) + 1
 
             sections_present.append(section_name)
             total_words += words
@@ -83,9 +111,10 @@ def generate_quality_audit(args: dict[str, Any], ctx: dict) -> str:
     total_db_papers = db.paper_count(session_id)
     claims = db.get_claims(session_id)
 
-    # PRISMA stats
-    prisma_stats = db.get_prisma_stats(session_id)
-    audit["prisma"] = {s["stage"]: s["count"] for s in prisma_stats}
+    # PRISMA stats — skip for conceptual papers
+    if not is_conceptual:
+        prisma_stats = db.get_prisma_stats(session_id)
+        audit["prisma"] = {s["stage"]: s["count"] for s in prisma_stats}
 
     # Totals
     audit["totals"] = {
@@ -99,11 +128,14 @@ def generate_quality_audit(args: dict[str, Any], ctx: dict) -> str:
     }
 
     # Threshold checks
+    min_qual_cites = cfg.min_quality_citations if cfg else 40
+    min_qual_words = cfg.min_paper_words if cfg else 6000
+    min_qual_tables = cfg.min_quality_tables if cfg else 2
     table_count = sum(1 for s in audit["sections"].values() if s.get("has_tables"))
     audit["thresholds"] = {
-        "citations_40_plus": len(all_citations) >= 40,
-        "words_6000_plus": total_words >= 6000,
-        "tables_2_plus": table_count >= 2,
+        f"citations_{min_qual_cites}_plus": len(all_citations) >= min_qual_cites,
+        f"words_{min_qual_words}_plus": total_words >= min_qual_words,
+        f"tables_{min_qual_tables}_plus": table_count >= min_qual_tables,
         "all_required_sections": len(missing_sections) == 0,
         "all_sections_meet_minimum_words": all(
             audit["sections"].get(s, {}).get("meets_minimum", False)
@@ -111,6 +143,31 @@ def generate_quality_audit(args: dict[str, Any], ctx: dict) -> str:
         ),
         "papers_cited_in_db": len(cited_papers),
     }
+
+    # RoB and GRADE checks — only for systematic reviews, not conceptual papers
+    if not is_conceptual:
+        rob_data = db.get_risk_of_bias(session_id)
+        grade_data = db.get_grade_evidence(session_id)
+        audit["thresholds"]["risk_of_bias_assessed"] = len(rob_data) >= 10
+        audit["thresholds"]["grade_evidence_rated"] = len(grade_data) >= 3
+        audit["totals"]["rob_assessments"] = len(rob_data)
+        audit["totals"]["grade_ratings"] = len(grade_data)
+    else:
+        # Conceptual paper checks: propositions and framework presence
+        has_propositions = "propositions" in sections_present
+        has_framework = "framework" in sections_present
+        audit["thresholds"]["propositions_section_present"] = has_propositions
+        audit["thresholds"]["framework_section_present"] = has_framework
+
+    # Evidence concentration check — conceptual papers allow higher citation frequency
+    # for foundational works (threshold 12 vs 8 for reviews)
+    max_cite_threshold = 12 if is_conceptual else 8
+    max_cite_count = max(citation_frequency.values()) if citation_frequency else 0
+    dominant_cites = {k: v for k, v in citation_frequency.items() if v > max_cite_threshold}
+    audit["thresholds"]["no_single_study_dominance"] = len(dominant_cites) == 0
+    audit["totals"]["max_citation_frequency"] = max_cite_count
+    if dominant_cites:
+        audit["totals"]["dominant_citations"] = dominant_cites
 
     # Overall pass/fail
     all_pass = all(audit["thresholds"].values())
@@ -143,15 +200,26 @@ def generate_prisma_diagram(args: dict[str, Any], ctx: dict) -> str:
 
     # Fill from actual DB data if not manually set
     total_papers = db.paper_count(session_id)
-    cited_papers = len(db.get_cited_papers(session_id))
+    cited_papers = db.get_cited_papers(session_id)
+    included_count = len(cited_papers)
+
+    # Count papers selected for deep read (fulltext assessment stage)
+    selected_count = db._conn.execute(
+        "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
+        (session_id,),
+    ).fetchone()[0]
+
+    # Use selected_for_deep_read as "fulltext assessed" — more accurate than cited_papers
+    # because some papers may be assessed but excluded at fulltext stage
+    fulltext_default = max(selected_count, included_count)
 
     identified = prisma.get("records_identified", total_papers)
     duplicates = prisma.get("duplicates_removed", 0)
     screened = prisma.get("screened", identified - duplicates)
-    excluded_screen = prisma.get("excluded_screening", screened - cited_papers if screened > cited_papers else 0)
-    fulltext = prisma.get("fulltext_assessed", screened - excluded_screen)
-    excluded_ft = prisma.get("excluded_fulltext", fulltext - cited_papers if fulltext > cited_papers else 0)
-    included = prisma.get("included_final", cited_papers)
+    excluded_screen = prisma.get("excluded_screening", screened - fulltext_default if screened > fulltext_default else 0)
+    fulltext = prisma.get("fulltext_assessed", fulltext_default)
+    excluded_ft = prisma.get("excluded_fulltext", fulltext - included_count if fulltext > included_count else 0)
+    included = prisma.get("included_final", included_count)
 
     # ASCII PRISMA diagram for markdown
     ascii_diagram = f"""

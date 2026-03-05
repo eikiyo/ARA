@@ -19,7 +19,12 @@ from .critic import CRITIC_PROMPT, PAPER_CRITIC_PROMPT
 from .writer import WRITER_PROMPT
 from .synthesis import SYNTHESIS_PROMPT
 from .protocol import PROTOCOL_PROMPT
+from .conceptual import (
+    CONCEPTUAL_WRITER_PROMPT, CONCEPTUAL_SYNTHESIS_PROMPT,
+    CONCEPTUAL_CRITIC_PROMPT, CONCEPTUAL_HYPOTHESIS_PROMPT,
+)
 
+# Default prompts — systematic literature review
 PHASE_PROMPTS: dict[str, str] = {
     "manager": MANAGER_PROMPT,
     "scout": SCOUT_PROMPT,
@@ -33,6 +38,14 @@ PHASE_PROMPTS: dict[str, str] = {
     "paper_critic": PAPER_CRITIC_PROMPT,
     "writer": WRITER_PROMPT,
     "protocol": PROTOCOL_PROMPT,
+}
+
+# Conceptual paper prompt overrides — only the phases that differ
+CONCEPTUAL_PHASE_PROMPTS: dict[str, str] = {
+    "hypothesis": CONCEPTUAL_HYPOTHESIS_PROMPT,
+    "synthesis": CONCEPTUAL_SYNTHESIS_PROMPT,
+    "writer": CONCEPTUAL_WRITER_PROMPT,
+    "paper_critic": CONCEPTUAL_CRITIC_PROMPT,
 }
 
 _RECURSIVE_SECTION = """
@@ -75,8 +88,12 @@ def build_system_prompt(
     return "\n\n".join(parts)
 
 
-def build_phase_prompt(phase: str) -> str:
-    prompt = PHASE_PROMPTS.get(phase)
+def build_phase_prompt(phase: str, paper_type: str = "review") -> str:
+    # For conceptual papers, check if this phase has a conceptual override
+    if paper_type == "conceptual" and phase in CONCEPTUAL_PHASE_PROMPTS:
+        prompt = CONCEPTUAL_PHASE_PROMPTS[phase]
+    else:
+        prompt = PHASE_PROMPTS.get(phase)
     if not prompt:
         available = ", ".join(sorted(PHASE_PROMPTS.keys()))
         raise ValueError(f"Unknown phase '{phase}'. Available: {available}")
@@ -87,11 +104,13 @@ def build_phase_system_prompt(
     phase: str,
     topic: str = "",
     rules: list[dict[str, Any]] | None = None,
+    paper_type: str = "review",
 ) -> str:
-    parts = [build_phase_prompt(phase)]
+    parts = [build_phase_prompt(phase, paper_type=paper_type)]
 
+    paper_type_label = "Conceptual/Theoretical Paper" if paper_type == "conceptual" else "Systematic Literature Review"
     if topic:
-        parts.append(f"\n## Current Research\n- **Topic:** {topic}\n")
+        parts.append(f"\n## Current Research\n- **Topic:** {topic}\n- **Paper Type:** {paper_type_label}\n")
 
     if rules:
         rules_text = "\n## Active Rules\n"

@@ -162,6 +162,9 @@ def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     return json.dumps(result)
 
 
+_MAX_READ_PAPER_CHARS = 5000  # Default read_paper output cap — enough for abstract + metadata
+
+
 def read_paper(args: dict[str, Any], ctx: dict) -> str:
     paper_id = args.get("paper_id")
     if paper_id is None:
@@ -175,11 +178,23 @@ def read_paper(args: dict[str, Any], ctx: dict) -> str:
     if not paper:
         return json.dumps({"error": f"Paper {paper_id} not found"})
 
-    # Truncate full_text to prevent context bloat
-    if paper.get("full_text") and len(paper["full_text"]) > _MAX_FULLTEXT_CHARS:
-        paper["full_text"] = paper["full_text"][:_MAX_FULLTEXT_CHARS] + "... [truncated]"
+    include_fulltext = args.get("include_fulltext", False)
+
+    if not include_fulltext:
+        # Default: return metadata + abstract only (keeps context small)
+        paper.pop("full_text", None)
+        abstract = paper.get("abstract") or ""
+        if len(abstract) > 2000:
+            paper["abstract"] = abstract[:2000] + "... [truncated]"
+    else:
+        # Full text requested — cap at limit
+        if paper.get("full_text") and len(paper["full_text"]) > _MAX_FULLTEXT_CHARS:
+            paper["full_text"] = paper["full_text"][:_MAX_FULLTEXT_CHARS] + "... [truncated]"
 
     return json.dumps(paper, default=str)
+
+
+_MAX_LIST_PAPERS_CHARS = 80_000  # Cap list_papers output to ~80K chars to prevent context flooding
 
 
 def list_papers(args: dict[str, Any], ctx: dict) -> str:
@@ -190,19 +205,37 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
     if not db or not session_id:
         return json.dumps({"error": "Database or session not available"})
 
-    limit = args.get("limit", 200)
+    limit = min(args.get("limit", 200), 200)  # Hard cap at 200 per call
     offset = args.get("offset", 0)
 
+    # Allow filtering to only selected papers
+    selected_only = args.get("selected_only", False)
+    where = "WHERE session_id = ?"
+    params: list[Any] = [session_id]
+    if selected_only:
+        where += " AND selected_for_deep_read = 1"
+
+    # Sort by relevance_score if available, fallback to citation_count
+    order = "ORDER BY COALESCE(relevance_score, 0) DESC, citation_count DESC"
+
     rows = db._conn.execute(
-        "SELECT paper_id, title, abstract, authors, year, doi, source, citation_count, relevance_score "
-        "FROM papers WHERE session_id = ? ORDER BY citation_count DESC LIMIT ? OFFSET ?",
-        (session_id, limit, offset),
+        f"SELECT paper_id, title, abstract, authors, year, doi, source, citation_count, relevance_score, selected_for_deep_read "
+        f"FROM papers {where} {order} LIMIT ? OFFSET ?",
+        (*params, limit, offset),
     ).fetchall()
 
     compact = args.get("compact", False)  # Compact mode for writer: less abstract, more citation info
     papers = []
+    skipped_no_year = 0
+    total_chars = 0
     for row in rows:
         d = dict(row)
+
+        # Filter out papers with no year — these produce "(Author, n.d.)" citations
+        if not d.get("year"):
+            skipped_no_year += 1
+            continue
+
         authors_raw = json.loads(d.get("authors") or "[]")
         # Normalize author names to strings for easy reading
         author_names = []
@@ -224,15 +257,65 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
                 abstract = abstract[:300] + "..."
             d["abstract"] = abstract
         papers.append(d)
+        # Estimate chars for this paper entry
+        total_chars += len(str(d))
+        if total_chars > _MAX_LIST_PAPERS_CHARS:
+            _log.warning("list_papers output cap reached at %d papers (of %d rows)", len(papers), len(rows))
+            break
 
     total = db.paper_count(session_id)
 
-    return json.dumps({
+    result: dict[str, Any] = {
         "papers": papers,
         "total": total,
         "returned": len(papers),
         "offset": offset,
-    }, default=str)
+    }
+    if skipped_no_year > 0:
+        result["skipped_no_year"] = skipped_no_year
+        result["note"] = f"{skipped_no_year} papers excluded (missing publication year). Showing {len(papers)} of {total} total."
+    elif len(papers) < total:
+        result["note"] = f"Showing {len(papers)} of {total} papers. Use offset parameter to paginate."
+
+    return json.dumps(result, default=str)
+
+
+def rate_papers(args: dict[str, Any], ctx: dict) -> str:
+    """Batch-rate papers for relevance and mark selected for deep reading."""
+    ratings = args.get("ratings", [])
+    if not ratings:
+        return json.dumps({"error": "ratings list is required"})
+
+    db = ctx.get("db")
+    if not db:
+        return json.dumps({"error": "Database not available"})
+
+    updated = 0
+    selected = 0
+    for r in ratings:
+        paper_id = r.get("paper_id")
+        score = r.get("relevance_score", 0)
+        is_selected = 1 if r.get("selected", False) else 0
+        if paper_id is None:
+            continue
+        try:
+            with db._lock:
+                db._conn.execute(
+                    "UPDATE papers SET relevance_score = ?, selected_for_deep_read = ? WHERE paper_id = ?",
+                    (score, is_selected, paper_id),
+                )
+            updated += 1
+            if is_selected:
+                selected += 1
+        except Exception as exc:
+            _log.warning("Failed to rate paper %s: %s", paper_id, exc)
+
+    if updated > 0:
+        with db._lock:
+            db._conn.commit()
+
+    _log.info("RATE_PAPERS: %d updated, %d selected for deep read", updated, selected)
+    return json.dumps({"updated": updated, "selected_for_deep_read": selected})
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:

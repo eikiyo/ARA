@@ -20,11 +20,19 @@ _SECTION_ORDER = [
     "methods", "results", "discussion", "conclusion",
 ]
 
+_SECTION_ORDER_CONCEPTUAL = [
+    "title", "abstract", "introduction", "theoretical_background",
+    "framework", "propositions", "discussion", "conclusion",
+]
+
 _SECTION_HEADINGS = {
     "title": "",
     "abstract": "Abstract",
     "introduction": "Introduction",
     "literature_review": "Literature Review",
+    "theoretical_background": "Theoretical Background",
+    "framework": "Framework",
+    "propositions": "Propositions",
     "methods": "Methods",
     "results": "Results",
     "results_analysis": "Results Analysis",
@@ -187,6 +195,9 @@ def generate_output(
     output_dir.mkdir(parents=True, exist_ok=True)
     generated: dict[str, str] = {}
 
+    is_conceptual = paper_type == "conceptual"
+    section_order = _SECTION_ORDER_CONCEPTUAL if is_conceptual else _SECTION_ORDER
+
     sections = _load_sections(sections_dir)
     if not sections:
         _log.warning("No sections found in %s", sections_dir)
@@ -199,21 +210,22 @@ def generate_output(
     elif sections_dir.parent and (sections_dir.parent / "references_apa.txt").exists():
         apa_text = (sections_dir.parent / "references_apa.txt").read_text(encoding="utf-8")
 
-    # Load PRISMA
+    # Load PRISMA — skip for conceptual papers (no systematic search methodology)
     prisma_ascii = ""
     prisma_svg = ""
-    if prisma_ascii_path and prisma_ascii_path.exists():
-        prisma_ascii = prisma_ascii_path.read_text(encoding="utf-8")
-    elif sections_dir.parent and (sections_dir.parent / "prisma_ascii.md").exists():
-        prisma_ascii = (sections_dir.parent / "prisma_ascii.md").read_text(encoding="utf-8")
+    if not is_conceptual:
+        if prisma_ascii_path and prisma_ascii_path.exists():
+            prisma_ascii = prisma_ascii_path.read_text(encoding="utf-8")
+        elif sections_dir.parent and (sections_dir.parent / "prisma_ascii.md").exists():
+            prisma_ascii = (sections_dir.parent / "prisma_ascii.md").read_text(encoding="utf-8")
 
-    if prisma_svg_path and prisma_svg_path.exists():
-        prisma_svg = prisma_svg_path.read_text(encoding="utf-8")
-    elif sections_dir.parent and (sections_dir.parent / "prisma.svg").exists():
-        prisma_svg = (sections_dir.parent / "prisma.svg").read_text(encoding="utf-8")
+        if prisma_svg_path and prisma_svg_path.exists():
+            prisma_svg = prisma_svg_path.read_text(encoding="utf-8")
+        elif sections_dir.parent and (sections_dir.parent / "prisma.svg").exists():
+            prisma_svg = (sections_dir.parent / "prisma.svg").read_text(encoding="utf-8")
 
     # Build markdown
-    md = _build_markdown(sections, topic, apa_text, prisma_ascii)
+    md = _build_markdown(sections, topic, apa_text, prisma_ascii, section_order)
     md_path = output_dir / "paper.md"
     md_path.write_text(md, encoding="utf-8")
     generated["paper.md"] = str(md_path)
@@ -223,7 +235,7 @@ def generate_output(
     if bib_path and bib_path.exists():
         bib_text = bib_path.read_text(encoding="utf-8")
 
-    html_content = _build_html(sections, topic, apa_text, bib_text, prisma_svg)
+    html_content = _build_html(sections, topic, apa_text, bib_text, prisma_svg, section_order)
     html_path = output_dir / "paper.html"
     html_path.write_text(html_content, encoding="utf-8")
     generated["paper.html"] = str(html_path)
@@ -275,12 +287,16 @@ def _load_sections(sections_dir: Path) -> dict[str, str]:
     return sections
 
 
-def _build_markdown(sections: dict[str, str], topic: str, apa_text: str, prisma_ascii: str) -> str:
+def _build_markdown(
+    sections: dict[str, str], topic: str, apa_text: str, prisma_ascii: str,
+    section_order: list[str] | None = None,
+) -> str:
+    order = section_order or _SECTION_ORDER
     parts: list[str] = []
     if topic:
         parts.append(f"# {topic}\n")
 
-    for name in _SECTION_ORDER:
+    for name in order:
         if name in sections:
             heading = _SECTION_HEADINGS.get(name, name.replace("_", " ").title())
             if heading:
@@ -290,7 +306,7 @@ def _build_markdown(sections: dict[str, str], topic: str, apa_text: str, prisma_
 
     # Add any extra sections not in standard order
     for name, content in sections.items():
-        if name not in _SECTION_ORDER:
+        if name not in order:
             heading = _SECTION_HEADINGS.get(name, name.replace("_", " ").title())
             parts.append(f"## {heading}\n")
             parts.append(content)
@@ -436,7 +452,10 @@ def _render_table(rows: list[str]) -> str:
     return html_out
 
 
-def _build_html(sections: dict[str, str], topic: str, apa_text: str, bib_text: str, prisma_svg: str) -> str:
+def _build_html(
+    sections: dict[str, str], topic: str, apa_text: str, bib_text: str, prisma_svg: str,
+    section_order: list[str] | None = None,
+) -> str:
     parts: list[str] = [
         "<!DOCTYPE html>",
         "<html lang='en'><head>",
@@ -446,10 +465,11 @@ def _build_html(sections: dict[str, str], topic: str, apa_text: str, bib_text: s
         f"<style>{_HTML_CSS}</style>",
         "</head><body>",
     ]
+    order = section_order or _SECTION_ORDER
     if topic:
         parts.append(f"<h1>{html.escape(topic)}</h1>")
 
-    for name in _SECTION_ORDER:
+    for name in order:
         if name in sections:
             heading = _SECTION_HEADINGS.get(name, name.replace("_", " ").title())
             content = sections[name]
@@ -462,7 +482,7 @@ def _build_html(sections: dict[str, str], topic: str, apa_text: str, bib_text: s
 
     # Extra sections
     for name, content in sections.items():
-        if name not in _SECTION_ORDER:
+        if name not in order:
             heading = _SECTION_HEADINGS.get(name, name.replace("_", " ").title())
             parts.append(f"<h2>{html.escape(heading)}</h2>")
             parts.append(_md_to_html(content))

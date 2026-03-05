@@ -17,7 +17,7 @@ from .tools import ARATools
 
 
 def build_engine(cfg: ARAConfig) -> RLMEngine:
-    tools = ARATools(workspace=cfg.workspace, approval_gates=cfg.approval_gates)
+    tools = ARATools(workspace=cfg.workspace, approval_gates=cfg.approval_gates, config=cfg)
 
     model_name = (cfg.model or "gemini-2.0-flash").strip()
     writer_model_name = (cfg.writer_model or "gemini-2.5-pro").strip()

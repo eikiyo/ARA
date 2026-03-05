@@ -39,6 +39,68 @@ class ARAConfig:
     paper_critic_max_revisions: int = 3
     section_critic_max_revisions: int = 2
 
+    # Deep read targets
+    min_claims: int = 100
+    min_deep_read_papers: int = 30
+
+    # Snowball
+    snowball_top_papers: int = 15
+    snowball_refs_per_paper: int = 8
+
+    # Triage
+    triage_batch_size: int = 40
+
+    # Per-phase step budgets
+    steps_scout: int = 60
+    steps_protocol: int = 15
+    steps_verifier: int = 80
+    steps_triage: int = 20
+    steps_deep_read: int = 120
+    steps_brancher: int = 40
+    steps_hypothesis: int = 30
+    steps_critic: int = 20
+    steps_synthesis: int = 40
+
+    # Writer section word minimums
+    words_abstract: int = 250
+    words_introduction: int = 800
+    words_literature_review: int = 1500
+    words_methods: int = 1000
+    words_results: int = 1200
+    words_discussion: int = 1000
+    words_conclusion: int = 400
+
+    # Writer section citation minimums
+    cites_introduction: int = 8
+    cites_literature_review: int = 20
+    cites_methods: int = 3
+    cites_results: int = 8
+    cites_discussion: int = 10
+    cites_conclusion: int = 3
+
+    # Quality audit thresholds
+    min_quality_citations: int = 40
+    min_quality_tables: int = 2
+
+    # Triage
+    triage_step_budget: int = 20
+
+    # Search date range
+    search_start_year: int = 2014
+    search_end_year: int | None = None  # None = current year
+
+    # Paper type: "review" (systematic lit review) or "conceptual" (theoretical/framework paper)
+    paper_type: str = "review"
+
+    # Conceptual paper section word minimums (used when paper_type="conceptual")
+    words_theoretical_background: int = 1500
+    words_framework: int = 2000
+    words_propositions: int = 1500
+
+    # Scope mode: "broad" (default) or "narrow"
+    # Narrow mode reduces targets for focused reviews on specific subtopics
+    scope_mode: str = "broad"
+
     # Behavior
     approval_gates: bool = True
 
@@ -76,11 +138,48 @@ class ARAConfig:
             max_steps_per_call=_safe_int("ARA_MAX_STEPS", 150),
             max_tool_calls_per_turn=_safe_int("ARA_MAX_TOOL_CALLS_PER_TURN", 1),
             max_solve_seconds=_safe_int("ARA_MAX_SOLVE_SECONDS", 5400),
-            budget_limit_usd=_safe_float("ARA_BUDGET_LIMIT", 5.0),
+            budget_limit_usd=_safe_float("ARA_BUDGET_LIMIT", 15.0),
             min_papers=_safe_int("ARA_MIN_PAPERS", 300),
             min_cited=_safe_int("ARA_MIN_CITED", 60),
             min_paper_words=_safe_int("ARA_MIN_PAPER_WORDS", 6000),
             max_search_rounds=_safe_int("ARA_MAX_SEARCH_ROUNDS", 6),
             paper_critic_max_revisions=_safe_int("ARA_PAPER_CRITIC_MAX_REVISIONS", 3),
             section_critic_max_revisions=_safe_int("ARA_SECTION_CRITIC_MAX_REVISIONS", 2),
+            min_claims=_safe_int("ARA_MIN_CLAIMS", 100),
+            min_deep_read_papers=_safe_int("ARA_MIN_DEEP_READ_PAPERS", 30),
+            snowball_top_papers=_safe_int("ARA_SNOWBALL_TOP_PAPERS", 15),
+            snowball_refs_per_paper=_safe_int("ARA_SNOWBALL_REFS_PER_PAPER", 8),
+            triage_batch_size=_safe_int("ARA_TRIAGE_BATCH_SIZE", 40),
+            triage_step_budget=_safe_int("ARA_TRIAGE_STEP_BUDGET", 20),
+            min_quality_citations=_safe_int("ARA_MIN_QUALITY_CITATIONS", 40),
+            min_quality_tables=_safe_int("ARA_MIN_QUALITY_TABLES", 2),
+            words_abstract=_safe_int("ARA_WORDS_ABSTRACT", 250),
+            words_introduction=_safe_int("ARA_WORDS_INTRODUCTION", 800),
+            words_literature_review=_safe_int("ARA_WORDS_LITERATURE_REVIEW", 1500),
+            words_methods=_safe_int("ARA_WORDS_METHODS", 1000),
+            words_results=_safe_int("ARA_WORDS_RESULTS", 1200),
+            words_discussion=_safe_int("ARA_WORDS_DISCUSSION", 1000),
+            words_conclusion=_safe_int("ARA_WORDS_CONCLUSION", 400),
+            cites_introduction=_safe_int("ARA_CITES_INTRODUCTION", 8),
+            cites_literature_review=_safe_int("ARA_CITES_LITERATURE_REVIEW", 20),
+            cites_methods=_safe_int("ARA_CITES_METHODS", 3),
+            cites_results=_safe_int("ARA_CITES_RESULTS", 8),
+            cites_discussion=_safe_int("ARA_CITES_DISCUSSION", 10),
+            cites_conclusion=_safe_int("ARA_CITES_CONCLUSION", 3),
+            search_start_year=_safe_int("ARA_SEARCH_START_YEAR", 2014),
+            scope_mode=os.getenv("ARA_SCOPE_MODE", "broad"),
+            paper_type=os.getenv("ARA_PAPER_TYPE", "review"),
+            words_theoretical_background=_safe_int("ARA_WORDS_THEORETICAL_BACKGROUND", 1500),
+            words_framework=_safe_int("ARA_WORDS_FRAMEWORK", 2000),
+            words_propositions=_safe_int("ARA_WORDS_PROPOSITIONS", 1500),
         )
+
+    def apply_narrow_scope(self) -> None:
+        """Switch to narrow scope — halves targets for focused subtopic reviews."""
+        self.scope_mode = "narrow"
+        self.min_papers = max(100, self.min_papers // 2)
+        self.min_cited = max(30, self.min_cited // 2)
+        self.min_claims = max(50, self.min_claims // 2)
+        self.min_deep_read_papers = max(15, self.min_deep_read_papers // 2)
+        self.min_quality_citations = max(20, self.min_quality_citations // 2)
+        self.snowball_top_papers = max(5, self.snowball_top_papers // 2)

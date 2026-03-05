@@ -19,17 +19,17 @@ from . import search, papers, verification, research, writing, pipeline, quality
 # Phase → allowed tool names (from arch.md §4.2)
 # "search_*" is a wildcard matching all search_ tools
 PHASE_TOOLS: dict[str, list[str]] = {
-    "scout": ["search_*", "request_approval", "track_cost"],
-    "analyst_triage": ["list_papers", "read_paper", "search_similar", "embed_text", "request_approval", "track_cost"],
-    "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "search_similar", "request_approval", "track_cost"],
-    "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "read_paper", "request_approval", "track_cost"],
-    "hypothesis": ["read_paper", "search_similar", "score_hypothesis", "request_approval", "track_cost"],
-    "brancher": ["search_*", "search_similar", "embed_text", "request_approval", "track_cost"],
-    "critic": ["read_paper", "search_similar", "request_approval", "track_cost"],
-    "synthesis": ["list_papers", "read_paper", "search_similar", "request_approval", "track_cost"],
-    "protocol": ["list_papers", "read_paper", "search_similar", "write_section", "request_approval", "track_cost"],
-    "writer": ["list_papers", "read_paper", "search_similar", "write_section", "get_citations", "generate_prisma_diagram", "request_approval", "track_cost"],
-    "paper_critic": ["read_paper", "search_similar", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "request_approval", "track_cost"],
+    "scout": ["search_*"],
+    "analyst_triage": ["list_papers", "rate_papers"],
+    "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "assess_risk_of_bias", "search_similar", "list_papers"],
+    "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "verify_claim"],
+    "hypothesis": ["read_paper", "search_similar", "score_hypothesis"],
+    "brancher": ["search_*", "search_similar"],
+    "critic": ["read_paper", "search_similar", "list_papers", "get_risk_of_bias_table", "get_grade_table"],
+    "synthesis": ["list_papers", "read_paper", "search_similar", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table"],
+    "protocol": ["list_papers", "write_section"],
+    "writer": ["list_papers", "read_paper", "search_similar", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table"],
+    "paper_critic": ["read_paper", "search_similar", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
 }
 
 
@@ -59,12 +59,18 @@ TOOL_DISPATCH: dict[str, Any] = {
     "read_paper": papers.read_paper,
     "list_papers": papers.list_papers,
     "search_similar": papers.search_similar,
+    "rate_papers": papers.rate_papers,
     # Verification tools
     "check_retraction": verification.check_retraction,
     "get_citation_count": verification.get_citation_count,
     "validate_doi": verification.validate_doi,
     # Research tools
     "extract_claims": research.extract_claims,
+    "verify_claim": research.verify_claim,
+    "assess_risk_of_bias": research.assess_risk_of_bias,
+    "rate_grade_evidence": research.rate_grade_evidence,
+    "get_risk_of_bias_table": research.get_risk_of_bias_table,
+    "get_grade_table": research.get_grade_table,
     "score_hypothesis": research.score_hypothesis,
     "branch_search": research.branch_search,
     # Writing tools
@@ -91,11 +97,14 @@ class ARATools:
         db: Any = None,
         session_id: int | None = None,
         approval_gates: bool = True,
+        config: Any = None,
     ):
         self.workspace = workspace or Path(".")
         self.db = db
         self.session_id = session_id
         self.approval_gates = approval_gates
+        self.config = config
+        self.central_db = getattr(db, '_central', None) if db else None
 
     def get_definitions(self, include_subtask: bool = True, depth: int = 0, phase: str = "") -> list[dict[str, Any]]:
         # At depth 0 (manager), only expose delegation + pipeline tools
@@ -152,12 +161,16 @@ class ARATools:
                     return json.dumps({"error": f"Tool '{tool_name}' missing required parameter: {req}"})
 
         # Inject context for tools that need it
-        ctx = {
+        ctx: dict[str, Any] = {
             "workspace": self.workspace,
             "db": self.db,
             "session_id": self.session_id,
             "approval_gates": self.approval_gates,
+            "central_db": self.central_db,
         }
+        if self.config:
+            ctx["min_papers"] = self.config.min_papers
+            ctx["config"] = self.config
 
         try:
             result = handler(arguments, ctx)

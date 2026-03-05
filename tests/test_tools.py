@@ -71,7 +71,7 @@ def test_phase_tool_filtering():
     scout_names = {d["name"] for d in scout_defs}
     assert "search_all" in scout_names
     assert "search_semantic_scholar" in scout_names
-    assert "embed_text" in scout_names
+    assert "embed_text" not in scout_names  # Embedding removed from scout phase
     assert "read_paper" not in scout_names
     assert "extract_claims" not in scout_names
     assert "write_section" not in scout_names

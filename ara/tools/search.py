@@ -551,7 +551,7 @@ _ALL_SEARCH_FNS = [
 ]
 
 
-_MIN_PAPERS = 300  # Skip searching if DB already has this many (target: 300+)
+_MIN_PAPERS = 300  # Fallback; overridden by config.min_papers at runtime
 _SEARCH_ALL_LOCK = threading.Lock()
 
 
@@ -563,6 +563,7 @@ def reset_search_all_state() -> None:
 def search_all(args: dict[str, Any], ctx: dict) -> str:
     """Search all 9 academic APIs in parallel with one call.
 
+    LOCAL-FIRST: Searches the persistent central DB before hitting external APIs.
     Returns a summary to the model (counts + top 10 papers) to save tokens.
     Full results are auto-stored in the DB by the tool dispatch layer.
     Uses DB paper count guard — if enough papers exist, skip.
@@ -570,9 +571,10 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
     # Check DB — if we already have enough papers, skip
     db = ctx.get("db")
     session_id = ctx.get("session_id")
+    min_papers = ctx.get("min_papers", _MIN_PAPERS)
     if db and session_id:
         existing = db.paper_count(session_id)
-        if existing >= _MIN_PAPERS:
+        if existing >= min_papers:
             return json.dumps({
                 "status": "done",
                 "total_in_db": existing,
@@ -582,6 +584,22 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
     query = args.get("query", "")
     limit = args.get("limit", 20)
     _log.info("SEARCH_ALL: query=%r limit=%d", query, limit)
+
+    # LOCAL-FIRST: Check central DB for matching papers before hitting APIs
+    central_papers: list[dict[str, Any]] = []
+    central_db = ctx.get("central_db")
+    if central_db and query:
+        # Search by multiple keywords from the query
+        keywords = [w for w in query.split() if len(w) > 3][:5]
+        seen_ids: set[int] = set()
+        for kw in keywords:
+            for p in central_db.search_by_keyword(kw, limit=50):
+                if p["paper_id"] not in seen_ids:
+                    seen_ids.add(p["paper_id"])
+                    p["source"] = f"central_db:{p.get('source', 'cached')}"
+                    central_papers.append(p)
+        if central_papers:
+            _log.info("SEARCH_ALL: Found %d papers in central DB before API calls", len(central_papers))
 
     results: dict[str, Any] = {}
     errors: list[str] = []
@@ -600,6 +618,12 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
 
     all_papers = []
     per_source: dict[str, int] = {}
+
+    # Include central DB results first
+    if central_papers:
+        per_source["central_db"] = len(central_papers)
+        all_papers.extend(central_papers)
+
     for name, papers_list in results.items():
         per_source[name] = len(papers_list)
         all_papers.extend(papers_list)

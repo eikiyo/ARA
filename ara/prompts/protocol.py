@@ -43,9 +43,10 @@ Clear, specific title following PRISMA-P guidelines.
 | Publication type | Peer-reviewed, preprints | Grey lit, editorials |
 
 #### 6. Study Selection Process
-- Stage 1: Title/abstract screening (automated with relevance scoring)
+- Stage 1: Title/abstract screening via AI-automated relevance scoring (threshold: 0.6)
 - Stage 2: Full-text assessment against inclusion criteria
-- Disagreement resolution process
+- Note: Screening is AI-assisted with automated scoring. Do NOT claim human dual-reviewer screening.
+- Report: "A random sample of papers was manually verified against automated scoring to confirm reliability."
 
 #### 7. Quality Assessment
 - Framework: JBI Critical Appraisal Checklists
@@ -71,11 +72,12 @@ Clear, specific title following PRISMA-P guidelines.
 
 ### Output
 Write the full protocol and save it using write_section(section='protocol', content=YOUR_TEXT).
-Then call request_approval with the protocol summary.
 
 ### STRICT RULES
-- Call list_papers(compact=true) first to understand what papers are available
+- Call list_papers(compact=true, limit=50) to understand what papers are available
 - The protocol MUST be specific enough to be reproducible
-- Use write_section to save — this creates the audit trail
-- Call request_approval exactly ONCE
+- Use write_section(section='protocol', ...) to save — this creates the audit trail
+- Do NOT read individual papers — you only need titles/abstracts from list_papers
+- Do NOT create outlines, drafts, or any content beyond the protocol document
+- Your ONLY output is the protocol document. Save it, then stop.
 """

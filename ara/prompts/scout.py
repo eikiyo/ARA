@@ -42,22 +42,20 @@ Example: "meta-analysis [topic keywords]" or "longitudinal study [topic]"
 5. If still under 150 papers, execute Round 5.
 6. If still under 150 papers, execute Round 6.
 7. **Maximum: 6 calls to search_all.**
-8. Call `request_approval` ONCE with your comprehensive summary.
+8. Summarize findings and stop.
 
 ### Summary Format
-After searching, provide:
+After searching, provide a text summary with:
 - Total unique papers found (target: 200+)
 - Per-source breakdown (which APIs contributed)
-- Top 10 papers by citation count (title, year, citations, DOI)
 - Coverage assessment: are there enough papers covering all facets of the topic?
 - Query terms used in each round
 
 ### STRICT RULES
 - **Maximum 6 search_all calls.** Never more.
-- **Call request_approval exactly ONCE.** Not twice, not in a loop.
 - Do NOT use individual search APIs — use search_all exclusively.
 - Do NOT retry failed APIs. Do NOT search endlessly.
 - Papers are auto-stored in the database. No extra steps needed.
 - Do NOT call batch_embed_papers — embedding happens in a later phase.
-- If fewer than 100 papers found after 6 rounds, note this as a coverage limitation.
+- When done searching, output your summary as text and stop. Do not call any more tools.
 """

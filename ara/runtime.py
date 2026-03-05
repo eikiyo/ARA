@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from .central_db import CentralDB
 from .config import ARAConfig
 from .db import ARADB
 from .engine import RLMEngine, ExternalContext, StepCallback, StepEvent, TurnSummary
@@ -49,7 +50,9 @@ class SessionRuntime:
         resume: bool = False,
     ) -> SessionRuntime:
         db_path = config.workspace / config.session_root_dir / "session.db"
-        db = ARADB(db_path)
+        # Initialize persistent central DB
+        central = CentralDB()  # ~/.ara/central.db
+        db = ARADB(db_path, central_db=central)
 
         if resume:
             # Find most recent active session
@@ -63,17 +66,18 @@ class SessionRuntime:
                 rt = cls(engine=engine, config=config, db=db,
                          session_id=sid, db_session_id=db_session_id)
                 rt._context.topic = session.get("topic", "") if session else ""
-                rt._context.paper_type = session.get("paper_type", "research_article") if session else "research_article"
+                rt._context.paper_type = session.get("paper_type", config.paper_type) if session else config.paper_type
                 return rt
             raise SessionError("No active session to resume")
 
         sid = f"session-{uuid.uuid4().hex[:8]}"
         return cls(engine=engine, config=config, db=db, session_id=sid)
 
-    def start_research(self, topic: str, paper_type: str = "research_article") -> None:
+    def start_research(self, topic: str, paper_type: str | None = None) -> None:
         self._context.topic = topic
-        self._context.paper_type = paper_type
-        db_sid = self.db.create_session(topic=topic, paper_type=paper_type)
+        resolved_type = paper_type or self.config.paper_type or "review"
+        self._context.paper_type = resolved_type
+        db_sid = self.db.create_session(topic=topic, paper_type=resolved_type)
         self.db_session_id = db_sid
         self.engine.tools.session_id = db_sid
 

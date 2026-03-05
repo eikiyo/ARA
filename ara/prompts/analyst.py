@@ -21,6 +21,15 @@ Your task is to rank all discovered papers by relevance to the research topic an
    - REMOVE irrelevant papers (e.g., papers from wrong fields that were false-positive matches)
    - EXCLUDE any papers flagged as retracted in the verification phase
 
+   **MANDATORY EXCLUSION CRITERIA — score 0.0 and selected=false:**
+   - **Systematic reviews / meta-analyses** — these are secondary sources; include only primary studies (exception: keep 3-5 landmark reviews for Discussion comparison, but mark them `selected=false` for deep reading)
+   - **Protocols / study designs without results** — no data to extract
+   - **Editorials / commentaries / opinion pieces** — not empirical evidence
+   - **Papers with no publication year** — cannot be properly cited
+   - **Papers whose population does NOT match the research topic** — e.g., if the topic is about healthcare professionals, exclude studies on general adults, students, or children
+   - **Papers outside the specified date range** — check the protocol's date range
+   - **Duplicate studies** — same dataset published in multiple papers; keep only the most complete version
+
 3. **Rank papers** from highest to lowest relevance score.
 
 4. **Select papers for deep reading** (target: 80-120 papers):
@@ -29,16 +38,15 @@ Your task is to rank all discovered papers by relevance to the research topic an
    - Mix of: seminal works, recent contributions, methodological papers, review papers
    - Include papers from different geographic/institutional contexts
 
-5. **Present ranking** and call request_approval ONCE.
+5. **ALWAYS call rate_papers** with ratings for EVERY paper in the batch. No exceptions.
 
 ### CRITICAL RULES
-- Use `list_papers()` — ONE call gets ALL papers. Do NOT call read_paper 100+ times.
-- Call `request_approval` exactly ONCE at the end.
-- Exclude papers clearly from unrelated fields (check title and abstract carefully).
-
-### Output Format
-Present a markdown table:
-| Rank | Paper ID | Title | Year | Citations | Source | Relevance | Selected | Rationale |
+- Step 1: Call list_papers() to get papers.
+- Step 2: Evaluate each paper's title and abstract for relevance.
+- Step 3: Call rate_papers() with ALL ratings. This is MANDATORY — never skip it.
+- Do NOT call read_paper — the title and abstract from list_papers is sufficient.
+- Set selected=true for papers scoring >= 0.6 relevance.
+- Set selected=false for papers scoring < 0.6.
 """
 
 ANALYST_DEEP_READ_PROMPT = """## Analyst Deep Read Phase — Structured Claim and Data Extraction
@@ -51,6 +59,7 @@ For each paper:
 1. Call `read_paper(paper_id=N)` to get full content
 2. Read the title, abstract, and any full text carefully
 3. Call `extract_claims(paper_id=N, claims=[...])` with 3-5 claim objects
+4. Call `assess_risk_of_bias(paper_id=N, ...)` with bias ratings for the study
 
 ### EXACT Tool Call Format — COPY THIS STRUCTURE
 
@@ -103,6 +112,32 @@ extract_claims({
 })
 ```
 
+### Step 2: Assess Risk of Bias (MANDATORY for every paper)
+
+After extracting claims from a paper, ALSO call `assess_risk_of_bias` to rate the study's methodological quality:
+
+```json
+assess_risk_of_bias({
+  "paper_id": 42,
+  "framework": "JBI",
+  "selection_bias": "low",
+  "performance_bias": "moderate",
+  "detection_bias": "low",
+  "attrition_bias": "high",
+  "reporting_bias": "low",
+  "overall_risk": "moderate",
+  "notes": "High attrition (32% dropout) limits confidence; otherwise well-designed cohort"
+})
+```
+
+Rate each domain as: **low** / **moderate** / **high** / **unclear**
+- **Selection bias**: Was the sample representative? Random/consecutive selection?
+- **Performance bias**: Were groups treated equally? Blinding adequate?
+- **Detection bias**: Were outcomes measured objectively? Assessor blinding?
+- **Attrition bias**: Was follow-up complete? How was missing data handled?
+- **Reporting bias**: Were all pre-specified outcomes reported?
+- **Overall risk**: Holistic judgment across all domains
+
 ### CRITICAL: claim_text MUST be a non-empty string
 - NEVER send claims with empty claim_text
 - NEVER send an empty claims array
@@ -132,5 +167,5 @@ extract_claims({
 - Target: 150+ total claims across all papers
 - Aim to process at least 50 papers
 
-Call request_approval when done with a count of claims extracted.
+When done, output a text summary with the count of claims extracted.
 """

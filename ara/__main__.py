@@ -32,6 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true", help="Resume existing session.")
     parser.add_argument("--no-tui", action="store_true", help="Plain text mode.")
     parser.add_argument("--no-gates", action="store_true", help="Auto-approve all phase gates.")
+    parser.add_argument("--paper-type", choices=["review", "conceptual"], default=None,
+                        help="Paper type: 'review' (systematic lit review) or 'conceptual' (theoretical framework).")
+    parser.add_argument("--central-db-stats", action="store_true",
+                        help="Show persistent central database statistics and exit.")
+    parser.add_argument("--import-session-db", metavar="PATH",
+                        help="Import papers from an existing session.db into the central database.")
     return parser
 
 
@@ -46,6 +52,28 @@ def main() -> None:
     cfg = ARAConfig.from_env(args.workspace)
     settings_store = SettingsStore(workspace=cfg.workspace, session_root_dir=cfg.session_root_dir)
     settings = settings_store.load()
+
+    # Handle --central-db-stats
+    if args.central_db_stats:
+        from .central_db import CentralDB
+        cdb = CentralDB()
+        import json as _json
+        stats = cdb.stats()
+        print(_json.dumps(stats, indent=2))
+        cdb.close()
+        return
+
+    # Handle --import-session-db
+    if args.import_session_db:
+        from pathlib import Path
+        from .central_db import CentralDB
+        cdb = CentralDB()
+        result = cdb.import_from_session_db(Path(args.import_session_db))
+        import json as _json
+        print(_json.dumps(result, indent=2))
+        print(f"\nCentral DB now has {cdb.paper_count()} total papers.")
+        cdb.close()
+        return
 
     # Handle --configure-keys
     if args.configure_keys:
@@ -69,6 +97,8 @@ def main() -> None:
         cfg.max_steps_per_call = args.max_steps
     if args.no_gates:
         cfg.approval_gates = False
+    if args.paper_type:
+        cfg.paper_type = args.paper_type
     if args.model:
         cfg.model = args.model
     elif settings.default_model:

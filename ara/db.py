@@ -1,7 +1,7 @@
 # Location: ara/db.py
-# Purpose: SQLite database layer — sessions, papers, claims, hypotheses, branches
-# Functions: ARADB (all CRUD operations)
-# Calls: sqlite3
+# Purpose: SQLite session database layer — sessions, papers, claims, hypotheses, branches
+# Functions: ARADB (all CRUD operations), delegates paper storage to CentralDB
+# Calls: sqlite3, central_db.CentralDB
 # Imports: sqlite3, json, datetime
 
 from __future__ import annotations
@@ -204,6 +204,39 @@ CREATE TABLE IF NOT EXISTS phase_checkpoints (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS risk_of_bias (
+    rob_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(session_id),
+    paper_id INTEGER NOT NULL REFERENCES papers(paper_id),
+    framework TEXT NOT NULL DEFAULT 'JBI',
+    selection_bias TEXT DEFAULT 'unclear',
+    performance_bias TEXT DEFAULT 'unclear',
+    detection_bias TEXT DEFAULT 'unclear',
+    attrition_bias TEXT DEFAULT 'unclear',
+    reporting_bias TEXT DEFAULT 'unclear',
+    overall_risk TEXT DEFAULT 'unclear',
+    notes TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS grade_evidence (
+    grade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(session_id),
+    outcome TEXT NOT NULL,
+    n_studies INTEGER NOT NULL DEFAULT 0,
+    study_designs TEXT,
+    risk_of_bias_rating TEXT DEFAULT 'not serious',
+    inconsistency TEXT DEFAULT 'not serious',
+    indirectness TEXT DEFAULT 'not serious',
+    imprecision TEXT DEFAULT 'not serious',
+    publication_bias TEXT DEFAULT 'undetected',
+    effect_size_range TEXT,
+    certainty TEXT NOT NULL DEFAULT 'low',
+    direction TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_papers_session ON papers(session_id);
 CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi);
 CREATE INDEX IF NOT EXISTS idx_claims_session ON claims(session_id);
@@ -211,6 +244,8 @@ CREATE INDEX IF NOT EXISTS idx_hypotheses_session ON hypotheses(session_id);
 CREATE INDEX IF NOT EXISTS idx_prisma_session ON prisma_stats(session_id);
 CREATE INDEX IF NOT EXISTS idx_audit_session ON quality_audit(session_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON phase_checkpoints(session_id);
+CREATE INDEX IF NOT EXISTS idx_rob_session ON risk_of_bias(session_id);
+CREATE INDEX IF NOT EXISTS idx_grade_session ON grade_evidence(session_id);
 """
 
 
@@ -219,8 +254,9 @@ def _now() -> str:
 
 
 class ARADB:
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, central_db: Any | None = None):
         self._path = db_path
+        self._central = central_db  # CentralDB instance (optional)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
@@ -245,6 +281,43 @@ class ARADB:
             "session_id INTEGER NOT NULL REFERENCES sessions(session_id), "
             "phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', "
             "result_summary TEXT, created_at TEXT NOT NULL)"
+        )
+        # Add unique index on (session_id, doi) to prevent duplicate papers
+        try:
+            self._conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_papers_session_doi "
+                "ON papers(session_id, doi) WHERE doi IS NOT NULL"
+            )
+        except Exception:
+            pass  # Index may already exist or partial indexes not supported
+        # Ensure risk_of_bias and grade_evidence tables exist (for older DBs)
+        self._conn.executescript(
+            "CREATE TABLE IF NOT EXISTS risk_of_bias ("
+            "rob_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "session_id INTEGER NOT NULL REFERENCES sessions(session_id), "
+            "paper_id INTEGER NOT NULL REFERENCES papers(paper_id), "
+            "framework TEXT NOT NULL DEFAULT 'JBI', "
+            "selection_bias TEXT DEFAULT 'unclear', "
+            "performance_bias TEXT DEFAULT 'unclear', "
+            "detection_bias TEXT DEFAULT 'unclear', "
+            "attrition_bias TEXT DEFAULT 'unclear', "
+            "reporting_bias TEXT DEFAULT 'unclear', "
+            "overall_risk TEXT DEFAULT 'unclear', "
+            "notes TEXT, created_at TEXT NOT NULL);\n"
+            "CREATE TABLE IF NOT EXISTS grade_evidence ("
+            "grade_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "session_id INTEGER NOT NULL REFERENCES sessions(session_id), "
+            "outcome TEXT NOT NULL, "
+            "n_studies INTEGER NOT NULL DEFAULT 0, "
+            "study_designs TEXT, "
+            "risk_of_bias_rating TEXT DEFAULT 'not serious', "
+            "inconsistency TEXT DEFAULT 'not serious', "
+            "indirectness TEXT DEFAULT 'not serious', "
+            "imprecision TEXT DEFAULT 'not serious', "
+            "publication_bias TEXT DEFAULT 'undetected', "
+            "effect_size_range TEXT, "
+            "certainty TEXT NOT NULL DEFAULT 'low', "
+            "direction TEXT, notes TEXT, created_at TEXT NOT NULL);"
         )
         self._conn.commit()
 
@@ -293,41 +366,67 @@ class ARADB:
 
     # ── Papers ──────────────────────────────────────────────────
 
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        """Normalize title for dedup — lowercase, strip punctuation/whitespace."""
+        import re
+        t = title.lower().strip()
+        t = re.sub(r'[^\w\s]', '', t)  # Remove punctuation
+        t = re.sub(r'\s+', ' ', t)     # Collapse whitespace
+        return t
+
     def store_papers(self, session_id: int, papers: list[dict[str, Any]]) -> int:
         now = _now()
         stored = 0
+        skipped = 0
+
+        # Also store in central DB if available
+        if self._central:
+            try:
+                self._central.store_papers(papers)
+            except Exception as exc:
+                _log.warning("CentralDB store failed (continuing with session DB): %s", exc)
+
         with self._lock:
             for p in papers:
-                doi = p.get("doi") or None  # Normalize empty string to None
+                doi = (p.get("doi") or "").strip() or None  # Normalize empty string to None
                 title = p.get("title", "").strip()
                 if not title:
                     continue
-                # Dedup by DOI first, then title
+                norm_title = self._normalize_title(title)
+                # Dedup by DOI first, then normalized title
                 if doi:
                     existing = self._conn.execute(
                         "SELECT paper_id FROM papers WHERE session_id = ? AND doi = ?",
                         (session_id, doi),
                     ).fetchone()
                     if existing:
+                        skipped += 1
                         continue
-                else:
-                    existing = self._conn.execute(
-                        "SELECT paper_id FROM papers WHERE session_id = ? AND title = ?",
-                        (session_id, title),
-                    ).fetchone()
-                    if existing:
-                        continue
+                # Always check title too (catches DOI-less dupes and DOI variants)
+                existing = self._conn.execute(
+                    "SELECT paper_id FROM papers WHERE session_id = ? AND LOWER(REPLACE(title, '.', '')) LIKE ?",
+                    (session_id, f"%{norm_title[:80]}%"),
+                ).fetchone()
+                if existing:
+                    skipped += 1
+                    continue
 
                 authors_json = json.dumps(p.get("authors", []))
-                self._conn.execute(
-                    "INSERT INTO papers (session_id, title, abstract, authors, year, doi, source, url, citation_count, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (session_id, title, p.get("abstract"), authors_json,
-                     p.get("year"), doi, p.get("source", "unknown"),
-                     p.get("url"), p.get("citation_count", 0), now),
-                )
-                stored += 1
+                try:
+                    self._conn.execute(
+                        "INSERT INTO papers (session_id, title, abstract, authors, year, doi, source, url, citation_count, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (session_id, title, p.get("abstract"), authors_json,
+                         p.get("year"), doi, p.get("source", "unknown"),
+                         p.get("url"), p.get("citation_count", 0), now),
+                    )
+                    stored += 1
+                except sqlite3.IntegrityError:
+                    skipped += 1  # Unique constraint violation — duplicate
             self._conn.commit()
+        if skipped > 0:
+            _log.info("store_papers: stored=%d, skipped=%d duplicates", stored, skipped)
         return stored
 
     def get_paper(self, paper_id: int) -> dict[str, Any] | None:
@@ -385,6 +484,14 @@ class ARADB:
                 "UPDATE papers SET full_text = ? WHERE doi = ?", (text, doi),
             )
             self._conn.commit()
+        # Also store in central DB
+        if self._central:
+            try:
+                central_paper = self._central.get_paper_by_doi(doi)
+                if central_paper:
+                    self._central.store_fulltext(central_paper["paper_id"], text)
+            except Exception:
+                pass  # Non-critical
 
     def get_cited_papers(self, session_id: int) -> list[dict[str, Any]]:
         # Return only papers that have claims extracted (i.e., actually analyzed/cited)
@@ -419,6 +526,16 @@ class ARADB:
                 (emb_json, paper_id),
             )
             self._conn.commit()
+        # Also store in central DB by DOI lookup
+        if self._central:
+            try:
+                paper = self.get_paper(paper_id)
+                if paper and paper.get("doi"):
+                    central_paper = self._central.get_paper_by_doi(paper["doi"])
+                    if central_paper:
+                        self._central.store_embedding(central_paper["paper_id"], embedding)
+            except Exception:
+                pass  # Non-critical
 
     def get_unembedded_papers(self, session_id: int) -> list[dict[str, Any]]:
         rows = self._conn.execute(
@@ -597,6 +714,79 @@ class ARADB:
     def get_quality_audit(self, session_id: int) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM quality_audit WHERE session_id = ? ORDER BY audit_id", (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Risk of Bias ─────────────────────────────────────────────
+
+    def store_risk_of_bias(
+        self, session_id: int, paper_id: int, *,
+        framework: str = "JBI",
+        selection_bias: str = "unclear",
+        performance_bias: str = "unclear",
+        detection_bias: str = "unclear",
+        attrition_bias: str = "unclear",
+        reporting_bias: str = "unclear",
+        overall_risk: str = "unclear",
+        notes: str | None = None,
+    ) -> int:
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO risk_of_bias "
+                "(session_id, paper_id, framework, selection_bias, performance_bias, "
+                "detection_bias, attrition_bias, reporting_bias, overall_risk, notes, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, paper_id, framework, selection_bias, performance_bias,
+                 detection_bias, attrition_bias, reporting_bias, overall_risk, notes, now),
+            )
+            self._conn.commit()
+        return cur.lastrowid  # type: ignore
+
+    def get_risk_of_bias(self, session_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT r.*, p.title, p.authors, p.year FROM risk_of_bias r "
+            "JOIN papers p ON r.paper_id = p.paper_id "
+            "WHERE r.session_id = ? ORDER BY r.rob_id",
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── GRADE Evidence ─────────────────────────────────────────
+
+    def store_grade_evidence(
+        self, session_id: int, outcome: str, *,
+        n_studies: int = 0,
+        study_designs: str | None = None,
+        risk_of_bias_rating: str = "not serious",
+        inconsistency: str = "not serious",
+        indirectness: str = "not serious",
+        imprecision: str = "not serious",
+        publication_bias: str = "undetected",
+        effect_size_range: str | None = None,
+        certainty: str = "low",
+        direction: str | None = None,
+        notes: str | None = None,
+    ) -> int:
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO grade_evidence "
+                "(session_id, outcome, n_studies, study_designs, risk_of_bias_rating, "
+                "inconsistency, indirectness, imprecision, publication_bias, "
+                "effect_size_range, certainty, direction, notes, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, outcome, n_studies, study_designs, risk_of_bias_rating,
+                 inconsistency, indirectness, imprecision, publication_bias,
+                 effect_size_range, certainty, direction, notes, now),
+            )
+            self._conn.commit()
+        return cur.lastrowid  # type: ignore
+
+    def get_grade_evidence(self, session_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM grade_evidence WHERE session_id = ? ORDER BY grade_id",
+            (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
 

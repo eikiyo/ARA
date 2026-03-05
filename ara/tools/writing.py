@@ -18,26 +18,40 @@ _log = logging.getLogger(__name__)
 _section_rejection_counts: dict[str, int] = {}
 _MAX_SECTION_REJECTIONS = 3  # After this many citation rejections, save anyway
 
-# Minimum word counts per section for AAA-grade output
+# Fallback minimums — overridden by config at runtime via ctx
 _MIN_WORDS: dict[str, int] = {
-    "abstract": 250,
-    "introduction": 800,
-    "literature_review": 1500,
-    "methods": 1000,
-    "results": 1200,
-    "discussion": 1000,
-    "conclusion": 400,
+    "abstract": 50, "introduction": 150, "literature_review": 300,
+    "methods": 200, "results": 250, "discussion": 200, "conclusion": 80,
+}
+_MIN_CITATIONS: dict[str, int] = {
+    "introduction": 2, "literature_review": 4, "methods": 1,
+    "results": 2, "discussion": 2, "conclusion": 1,
 }
 
-# Minimum citation counts per section for AAA-grade output
-_MIN_CITATIONS: dict[str, int] = {
-    "introduction": 8,
-    "literature_review": 20,
-    "methods": 3,
-    "results": 8,
-    "discussion": 10,
-    "conclusion": 3,
-}
+
+def _get_min_words(ctx: dict) -> dict[str, int]:
+    """Get word minimums from config if available."""
+    cfg = ctx.get("config")
+    if cfg:
+        return {
+            "abstract": cfg.words_abstract, "introduction": cfg.words_introduction,
+            "literature_review": cfg.words_literature_review, "methods": cfg.words_methods,
+            "results": cfg.words_results, "discussion": cfg.words_discussion,
+            "conclusion": cfg.words_conclusion,
+        }
+    return _MIN_WORDS
+
+
+def _get_min_citations(ctx: dict) -> dict[str, int]:
+    """Get citation minimums from config if available."""
+    cfg = ctx.get("config")
+    if cfg:
+        return {
+            "introduction": cfg.cites_introduction, "literature_review": cfg.cites_literature_review,
+            "methods": cfg.cites_methods, "results": cfg.cites_results,
+            "discussion": cfg.cites_discussion, "conclusion": cfg.cites_conclusion,
+        }
+    return _MIN_CITATIONS
 
 # Pattern to match citation formats:
 #   (Author, Year) — standard APA
@@ -153,8 +167,8 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
     warnings: list[str] = []
     errors: list[str] = []
 
-    # Check minimum word count
-    min_words = _MIN_WORDS.get(section_key, 0)
+    # Check minimum word count (from config if available)
+    min_words = _get_min_words(ctx).get(section_key, 0)
     if min_words > 0 and word_count < min_words:
         warnings.append(
             f"Section '{section}' has {word_count} words, minimum is {min_words}. "
@@ -192,8 +206,8 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
                     f"These should be removed or replaced with verified sources."
                 )
 
-    # Check minimum citation density
-    min_cites = _MIN_CITATIONS.get(section_key, 0)
+    # Check minimum citation density (from config if available)
+    min_cites = _get_min_citations(ctx).get(section_key, 0)
     total_citations = len(citations_found)
     if min_cites > 0 and total_citations < min_cites:
         warnings.append(

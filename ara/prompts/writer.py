@@ -53,20 +53,27 @@ Must include:
 Must include:
 - **Search Strategy**: Exact databases searched (name all 9 APIs), date ranges, Boolean search strings used, number of initial hits per database
 - **Inclusion/Exclusion Criteria Table**: Two-column markdown table listing all criteria
-- **Screening Process**: PRISMA-style description — records identified, duplicates removed, screened by title/abstract, full-text assessed, included in final review
+- **Screening Process**: PRISMA-style description — records identified, duplicates removed, screened by title/abstract, full-text assessed, included in final review. Use EXACT PRISMA numbers from the pipeline — do NOT invent numbers.
+- **Screening Methodology**: Describe screening as AI-automated relevance scoring with a pre-specified threshold of 0.6. Do NOT claim human dual-reviewer screening. State this honestly: "Title and abstract screening was conducted using automated relevance scoring, with papers scoring ≥0.6 selected for full-text review. A random subset of 20 papers was manually verified against automated scores to confirm screening reliability."
 - **Quality Assessment Framework**: Name the framework used (e.g., Newcastle-Ottawa Scale, GRADE, JBI Critical Appraisal) and describe how quality was assessed
 - **Data Extraction Protocol**: What data was extracted from each paper and how it was categorized
 - **Analysis Approach**: How findings were synthesized (thematic analysis, narrative synthesis, vote counting, etc.)
-- **Limitations of Methodology**: Explicit acknowledgment of methodological constraints
+- **Limitations of Methodology**: Explicit acknowledgment of methodological constraints. MUST include: "Screening was conducted using automated AI-assisted relevance scoring rather than independent human dual-reviewer screening, which is a limitation of this review."
+- **Date Range**: State the exact date range used. This MUST match what the protocol specifies. Do NOT say "no start-date limitation" if the protocol specifies a start date.
 
 #### 6. Results/Analysis (minimum 1200 words)
 Must include:
 - **Study Selection Results**: PRISMA flow numbers (exact counts for each stage)
 - **Study Characteristics Table**: Markdown table with: Author/Year, Country, Design, Sample Size, Population, Key Variables, Main Findings
-- **Risk of Bias Assessment**: Summary of risk of bias across included studies (use JBI framework data from synthesis)
+- **Risk of Bias Assessment**: Use data from `get_risk_of_bias_table()` — present the stored per-study JBI assessments as a formatted table
 - **Thematic Results**: Organized by research question or theme, NOT by paper
-- **GRADE Evidence Certainty Table**: For each outcome, rate evidence certainty (High/Moderate/Low/Very Low) with justification
-- Effect sizes with confidence intervals where available (e.g., "Cohen's d = 0.45, 95% CI: 0.22-0.68")
+- **GRADE Evidence Certainty Table**: Use data from `get_grade_table()` — present the stored GRADE ratings with justification for each domain downgrade
+- **Quantitative Summary**: For each outcome, report: number of studies, total sample size, effect size range, median effect, confidence intervals. Use the quantitative summary table from synthesis. At least 70% of Results paragraphs MUST contain a specific number.
+- **Evidence Concentration**: Match confidence language to evidence base size:
+  - 5+ concordant studies: "The evidence consistently demonstrates..."
+  - 3-4 studies: "Several studies suggest..."
+  - 1-2 studies: "Preliminary evidence from [Author] (Year) indicates..." — NEVER present single-study findings as established
+- **Geographic Heterogeneity**: Dedicated subsection comparing findings across regions. Use the geographic comparison table from synthesis. Note regional differences in effect magnitude and potential explanations.
 - Report heterogeneity across studies for each outcome (consistent/mixed/contradictory)
 
 #### 7. Discussion (minimum 1000 words)
@@ -77,11 +84,27 @@ Must include ALL of these subsections:
   - Key confounders (SES, parenting quality, pre-existing conditions)
   - Evidence from natural experiments or quasi-experimental designs
   - Effect modification by subgroup (age, SES, content type)
-- **Comparison with Existing Reviews**: Compare findings with at least 3 other published reviews — what this review adds vs. prior work
+- **Comparison with Existing Reviews**: Compare findings with at least 3 other published reviews — what this review adds vs. prior work. The novel contribution MUST be grounded in specific evidence from this review that prior reviews lacked. Do NOT claim novelty without citing the specific prior reviews and explaining what they missed.
 - **Theoretical Integration**: Not just name-dropping theories — use theoretical frameworks to generate testable predictions evaluated against the evidence
-- **Limitations**: Dedicated subsection addressing: search limitations, language bias, publication bias, lack of dual-reviewer screening, heterogeneity, generalizability constraints, cross-sectional dominance
-- **Policy and Practice Implications**: Specific, actionable, evidence-graded recommendations
-- **Future Research Directions**: At least 3 specific, testable hypotheses with suggested methodologies
+- **Limitations**: Dedicated subsection addressing: search limitations, language bias, publication bias, lack of dual-reviewer screening, heterogeneity, generalizability constraints, cross-sectional dominance. USE the hypothesis's Q1 ("what would make this wrong?") and Q4 ("weakest point") answers to write honest, specific limitations — not generic disclaimers.
+- **Policy and Practice Implications**: Specific, actionable, evidence-graded recommendations. USE the hypothesis's Q5 ("so what?") answer — who changes behavior, what decisions change?
+- **Future Research Directions**: At least 3 specific, testable hypotheses with suggested methodologies. Informed by Q1 (falsification conditions suggest what to test next).
+
+#### 7b. Confidence Language Rules (MANDATORY throughout paper)
+
+Match language strength to GRADE certainty level:
+- **High certainty**: "The evidence demonstrates...", "Research consistently shows..."
+- **Moderate certainty**: "The evidence suggests...", "Findings indicate..."
+- **Low certainty**: "Preliminary evidence suggests...", "Limited research indicates..."
+- **Very Low certainty**: "Very limited evidence from [n] studies tentatively suggests..."
+
+Match language strength to study count:
+- **5+ concordant studies**: "The evidence consistently demonstrates..."
+- **3-4 studies**: "Several studies suggest..."
+- **1-2 studies**: "One study by [Author] (Year) found..." — NEVER present as established fact
+- **Single study**: Use hedging: "preliminary", "initial", "one study reported"
+
+**NEVER overstate conclusions**: If you only have 10-15 observational studies, you CANNOT claim "robust evidence". Use "emerging evidence from observational studies suggests..."
 
 #### 8. Conclusion (minimum 400 words)
 Must include:
@@ -98,10 +121,12 @@ Must include:
 
 ### Process
 
-**Step 0 — Load Available Papers (MANDATORY FIRST STEP):**
+**Step 0 — Load Available Data (MANDATORY FIRST STEP):**
 1. Call `list_papers` to get ALL papers in the database with their authors, years, and titles
-2. Study the returned author names and years carefully — these are the ONLY valid citations
-3. Build a mental citation map: which papers support which themes
+2. Call `get_risk_of_bias_table()` to retrieve per-study risk of bias assessments
+3. Call `get_grade_table()` to retrieve GRADE evidence certainty ratings per outcome
+4. Study the returned author names and years carefully — these are the ONLY valid citations
+5. Build a mental citation map: which papers support which themes
 
 **Pass 1 — Detailed Outline:**
 1. Generate comprehensive outline with section headings, subsection headings, and 2-3 sentence summaries per subsection

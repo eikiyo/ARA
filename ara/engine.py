@@ -10,6 +10,7 @@ import json
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -19,7 +20,7 @@ from .model import (
     ModelError, RateLimitError, TokenUsage,
 )
 from .prompts import build_system_prompt, build_phase_system_prompt, PHASE_PROMPTS
-from .tools import ARATools, PHASE_TOOLS
+from .tools import ARATools, PHASE_TOOLS, _tool_matches_phase
 
 _log = logging.getLogger(__name__)
 
@@ -98,166 +99,376 @@ class RLMEngine:
 
     # ── Programmatic Pipeline ─────────────────────────────────────
 
-    _PIPELINE_PHASES: list[dict[str, str | None]] = [
-        {
-            "name": "scout",
-            "prompt": "scout",
-            "objective": (
-                "Scout phase: Conduct exhaustive multi-round search across all 9 academic APIs "
-                "for papers on: {topic}. Use search_all() with query reformulation across 6 rounds "
-                "(primary terms, synonyms, broader scope, narrower/specific, cross-disciplinary, "
-                "methodological). Target: 300+ unique papers from 4+ sources. "
-                "After searching, call request_approval with a summary."
-            ),
-        },
-        {
-            "name": "snowball",
-            "prompt": None,
-            "objective": None,
-        },
-        {
-            "name": "protocol",
-            "prompt": "protocol",
-            "objective": (
-                "Draft a PROSPERO-style pre-registration protocol for the systematic review on: {topic}. "
-                "Include: PICO framework, search strategy, inclusion/exclusion criteria, "
-                "quality assessment framework (JBI), data extraction protocol, synthesis approach (GRADE). "
-                "Save using write_section(section='protocol', content=...). "
-                "Call request_approval with protocol summary."
-            ),
-        },
-        {
-            "name": "verifier",
-            "prompt": "verifier",
-            "objective": (
-                "Verification phase: Call list_papers() to get all papers with DOIs. "
-                "Verify credibility of top 100 papers by citation count. "
-                "Use validate_doi, check_retraction, get_citation_count for each. "
-                "Flag retracted or suspicious papers. Call request_approval with summary."
-            ),
-        },
-        {
-            "name": "triage",
-            "prompt": "analyst_triage",
-            "objective": (
-                "Triage phase: Call list_papers() to get ALL papers. "
-                "Rank each by relevance to: {topic}. Score 0-1. "
-                "Select top 80-120 for deep reading ensuring diversity of perspectives, "
-                "methods, and geography. Exclude retracted papers. "
-                "Call request_approval with the ranking."
-            ),
-        },
-        {
-            "name": "embed",
-            "prompt": None,
-            "objective": None,
-        },
-        {
-            "name": "deep_read",
-            "prompt": "analyst_deep_read",
-            "objective": (
-                "Deep read phase: Extract structured claims AND quantitative data from papers. "
-                "Process: for each paper, (1) call read_paper to get content, "
-                "(2) call extract_claims with a list of claim objects. "
-                "EACH claim object MUST have: claim_text (string), claim_type (finding/method/limitation/gap), "
-                "confidence (0-1), supporting_quotes (list of strings). "
-                "ALSO extract when available: sample_size, effect_size, p_value, confidence_interval, "
-                "study_design, population, country, year_range. "
-                "Target: 150+ claims from 50+ papers. Extract 3-5 claims per paper. "
-                "Call request_approval when done."
-            ),
-        },
-        {
-            "name": "brancher",
-            "prompt": "brancher",
-            "objective": (
-                "Branch search: Based on findings about {topic}, conduct cross-domain searches "
-                "using 4 branch types: lateral (adjacent fields), methodological (alternative methods), "
-                "analogical (similar problems in other domains), convergent (independent confirmation). "
-                "Store new papers found. Call request_approval with branch map."
-            ),
-        },
-        {
-            "name": "hypothesis",
-            "prompt": "hypothesis",
-            "objective": (
-                "Generate research hypotheses from verified claims, gaps, and cross-domain findings. "
-                "Score each on: novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility. "
-                "For the top hypothesis, also specify: methodology framework (PRISMA/GRADE), "
-                "analysis approach (thematic/narrative synthesis), quality assessment framework (JBI/Newcastle-Ottawa). "
-                "Generate at least 5 hypotheses. Call request_approval."
-            ),
-        },
-        {
-            "name": "critic",
-            "prompt": "critic",
-            "objective": (
-                "Critically evaluate the top hypothesis across 8 dimensions. "
-                "Consider evidence strength, methodology fit, and cross-domain support. "
-                "Decide: APPROVE or REJECT with detailed feedback and specific revision suggestions."
-            ),
-        },
-        {
-            "name": "synthesis",
-            "prompt": "synthesis",
-            "objective": (
-                "Prepare ALL structured data the writer needs. Build these 7 outputs: "
-                "(1) Study characteristics table with exact author names, (2) Evidence synthesis "
-                "table with GRADE ratings per outcome, (3) Risk of bias assessment table, "
-                "(4) PRISMA flow numbers, (5) Citation map organized by theme with (Author, Year) "
-                "and effect sizes, (6) Structural causal model notes, (7) Inclusion/exclusion criteria table. "
-                "Use EXACT author names from list_papers(compact=true). "
-                "Call request_approval with all data."
-            ),
-        },
-    ]
+    def _phase_step_budgets(self) -> dict[str, int]:
+        """Step budgets from config."""
+        c = self.config
+        return {
+            "scout": c.steps_scout,
+            "protocol": c.steps_protocol,
+            "verifier": c.steps_verifier,
+            "triage": c.steps_triage,
+            "deep_read": c.steps_deep_read,
+            "brancher": c.steps_brancher,
+            "hypothesis": c.steps_hypothesis,
+            "critic": c.steps_critic,
+            "synthesis": c.steps_synthesis,
+        }
 
-    _WRITER_SECTIONS = [
-        ("abstract", (
-            "Write the structured abstract (250-300 words). Format with labels: "
-            "Background (2-3 sentences), Objective (1 sentence), Methods (2-3 sentences), "
-            "Results (3-4 sentences with numbers), Conclusion (2-3 sentences). "
-            "First call list_papers to see available papers. Use (Author, Year) citations."
-        )),
-        ("introduction", (
-            "Write the introduction (800+ words). Include: opening hook, background with 8+ citations, "
-            "clear research gap, numbered research questions (RQ1, RQ2...), statement of contribution, "
-            "paper structure outline. Use search_similar to find relevant papers for each theme."
-        )),
-        ("literature_review", (
-            "Write the literature review (1500+ words). THEMATIC organization (NOT paper-by-paper). "
-            "At least 3 major themes. Cross-reference: 'While X found..., Y contradicted...'. "
-            "Include comparison table (Author/Year, Design, Sample, Finding, Limitation). "
-            "20+ unique citations. Use search_similar for each theme."
-        )),
-        ("methods", (
-            "Write the methods section (1000+ words). Include: search strategy (all 9 APIs, date ranges, "
-            "Boolean strings), inclusion/exclusion criteria TABLE, PRISMA screening process with exact numbers, "
-            "quality assessment framework (JBI/Newcastle-Ottawa), data extraction protocol, "
-            "analysis approach (thematic/narrative synthesis), methodology limitations."
-        )),
-        ("results", (
-            "Write the results section (1200+ words). Include: PRISMA flow numbers, "
-            "study characteristics TABLE, risk of bias assessment summary, "
-            "thematic results (by research question, NOT by paper), "
-            "GRADE evidence certainty TABLE (outcome, certainty, justification), "
-            "effect sizes with CIs where available, heterogeneity reporting."
-        )),
-        ("discussion", (
-            "Write the discussion (1000+ words). ALL subsections required: "
-            "Summary of key findings (with GRADE certainty), causal inference analysis "
-            "(direction, confounders, natural experiments, effect modification), "
-            "comparison with 3+ existing reviews, theoretical integration with testable predictions, "
-            "limitations (search, language bias, publication bias, generalizability), "
-            "policy/practice implications, 3+ future research hypotheses with methodologies."
-        )),
-        ("conclusion", (
-            "Write the conclusion (400+ words). Include: main contributions, "
-            "key takeaways for researchers/policymakers/practitioners, "
-            "limitations acknowledgment, 3+ specific future research questions, "
-            "closing statement on broader significance."
-        )),
-    ]
+    def _get_pipeline_phases(self) -> list[dict[str, str | None]]:
+        """Return pipeline phase definitions — branches on paper_type."""
+        if self.config.paper_type == "conceptual":
+            return self._pipeline_phases_conceptual()
+        return self._pipeline_phases_review()
+
+    @staticmethod
+    def _pipeline_phases_review() -> list[dict[str, str | None]]:
+        """Pipeline phases for systematic literature review."""
+        return [
+            {
+                "name": "scout",
+                "prompt": "scout",
+                "objective": (
+                    "Scout phase: Search for papers on: {topic}. "
+                    "Use search_all() with 1-2 query formulations. "
+                    "Target: {min_papers}+ unique papers. Date range: {search_start_year} to present. "
+                    "When the database reports target reached, stop searching."
+                ),
+            },
+            {
+                "name": "snowball",
+                "prompt": None,
+                "objective": None,
+            },
+            {
+                "name": "protocol",
+                "prompt": "protocol",
+                "objective": (
+                    "Draft a PROSPERO-style pre-registration protocol for: {topic}. "
+                    "Call list_papers(compact=true, limit=50) to see available papers. "
+                    "Write the protocol with: PICO, search strategy, inclusion/exclusion criteria, "
+                    "quality assessment (JBI), data extraction protocol, synthesis approach (GRADE). "
+                    "Date range for inclusion: {search_start_year} to present. "
+                    "Screening methodology: AI-automated relevance scoring (threshold 0.6). "
+                    "Do NOT claim human dual-reviewer screening. "
+                    "Save using write_section(section='protocol', content=...). "
+                    "Do NOT read individual papers. Do NOT create outlines or drafts. Only the protocol."
+                ),
+            },
+            {
+                "name": "verifier",
+                "prompt": "verifier",
+                "objective": (
+                    "Verify paper credibility. Call list_papers(limit=100) to get top papers. "
+                    "For each paper with a DOI, call validate_doi, check_retraction, get_citation_count. "
+                    "Work through papers systematically. Flag any retracted or suspicious papers."
+                ),
+            },
+            {
+                "name": "triage",
+                "prompt": None,
+                "objective": None,
+            },
+            {
+                "name": "embed",
+                "prompt": None,
+                "objective": None,
+            },
+            {
+                "name": "deep_read",
+                "prompt": "analyst_deep_read",
+                "objective": (
+                    "Extract structured claims from papers about {topic}. "
+                    "STEP 1: Call list_papers(selected_only=true, limit=100) to get triage-selected papers. "
+                    "STEP 2: For EVERY selected paper: call read_paper(paper_id=ID), then extract_claims, then assess_risk_of_bias. "
+                    "Each claim needs: claim_text, claim_type (finding/method/limitation/gap), "
+                    "confidence (0-1), supporting_quotes. "
+                    "Also extract: sample_size, effect_size, p_value, study_design, population. "
+                    "Process papers one at a time. Target: {min_claims}+ claims from {min_deep_read_papers}+ papers. "
+                    "DO NOT STOP until you have processed ALL selected papers. "
+                    "If you run out of steps, you have failed. Keep going."
+                ),
+            },
+            {
+                "name": "brancher",
+                "prompt": "brancher",
+                "objective": (
+                    "Cross-domain search for: {topic}. "
+                    "Search for papers from adjacent fields, alternative methodologies, "
+                    "analogous problems in other domains, and independent confirmations. "
+                    "Use search_semantic_scholar, search_crossref, etc. with cross-disciplinary queries."
+                ),
+            },
+            {
+                "name": "hypothesis",
+                "prompt": "hypothesis",
+                "objective": (
+                    "Generate 5+ research hypotheses from the evidence on {topic}. "
+                    "Score each: novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility. "
+                    "For the top hypothesis, specify: methodology (PRISMA/GRADE), "
+                    "analysis approach, quality assessment framework (JBI/Newcastle-Ottawa). "
+                    "Use score_hypothesis to evaluate each one."
+                ),
+            },
+            {
+                "name": "critic",
+                "prompt": "critic",
+                "objective": (
+                    "FIRST: Call list_papers(compact=true) to review the evidence base. "
+                    "Read 3-5 key papers using read_paper() to ground your evaluation. "
+                    "THEN evaluate the top hypothesis across 8 dimensions. "
+                    "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
+                    "Apply the meta-test: would an expert believe something different? "
+                    "Decide: APPROVE or REJECT with detailed feedback and specific revisions."
+                ),
+            },
+            {
+                "name": "synthesis",
+                "prompt": "synthesis",
+                "objective": (
+                    "Prepare structured data for the writer. Build these outputs: "
+                    "(1) Study characteristics table with author names, (2) Evidence synthesis "
+                    "table with GRADE ratings, (3) Risk of bias assessment, "
+                    "(4) PRISMA flow numbers, (5) Citation map by theme with (Author, Year), "
+                    "(6) Structural causal model notes, (7) Inclusion/exclusion criteria table. "
+                    "Call list_papers(compact=true) to get exact author names."
+                ),
+            },
+        ]
+
+    @staticmethod
+    def _pipeline_phases_conceptual() -> list[dict[str, str | None]]:
+        """Pipeline phases for conceptual/theoretical paper."""
+        return [
+            {
+                "name": "scout",
+                "prompt": "scout",
+                "objective": (
+                    "Scout phase: Search for papers on: {topic}. "
+                    "Use search_all() with 1-2 query formulations. "
+                    "Target: {min_papers}+ unique papers. Date range: {search_start_year} to present. "
+                    "Focus on: (a) core theoretical papers, (b) empirical studies providing evidence "
+                    "for framework building, (c) competing frameworks and models. "
+                    "ALSO search specifically for foundational authors in this area: "
+                    "Dellestrand, Kappen, Blomkvist, Birkinshaw, Govindarajan, Mudambi, Ciabuschi. "
+                    "When the database reports target reached, stop searching."
+                ),
+            },
+            {
+                "name": "snowball",
+                "prompt": None,
+                "objective": None,
+            },
+            {
+                "name": "protocol",
+                "prompt": "protocol",
+                "objective": (
+                    "Draft a research protocol for conceptual paper on: {topic}. "
+                    "Call list_papers(compact=true, limit=50) to see available papers. "
+                    "Write the protocol with: research questions, theoretical streams to cover, "
+                    "framework development approach (typology + process model + propositions), "
+                    "inclusion/exclusion criteria for literature, analysis approach. "
+                    "Date range: {search_start_year} to present. "
+                    "Save using write_section(section='protocol', content=...). "
+                    "Do NOT read individual papers. Only the protocol."
+                ),
+            },
+            {
+                "name": "verifier",
+                "prompt": "verifier",
+                "objective": (
+                    "Verify paper credibility. Call list_papers(limit=100) to get top papers. "
+                    "For each paper with a DOI, call validate_doi, check_retraction, get_citation_count. "
+                    "Work through papers systematically. Flag any retracted or suspicious papers."
+                ),
+            },
+            {
+                "name": "triage",
+                "prompt": None,
+                "objective": None,
+            },
+            {
+                "name": "embed",
+                "prompt": None,
+                "objective": None,
+            },
+            {
+                "name": "deep_read",
+                "prompt": "analyst_deep_read",
+                "objective": (
+                    "Extract theoretical arguments and evidence from papers about {topic}. "
+                    "STEP 1: Call list_papers(selected_only=true, limit=100) to get triage-selected papers. "
+                    "STEP 2: For EVERY selected paper: call read_paper(paper_id=ID), then extract_claims. "
+                    "Focus on extracting: (a) theoretical arguments and frameworks proposed, "
+                    "(b) key constructs and definitions, (c) empirical findings that support/challenge theories, "
+                    "(d) research gaps and limitations identified, (e) boundary conditions discussed. "
+                    "Use claim_type: 'theory' for theoretical arguments, 'finding' for evidence, "
+                    "'gap' for research gaps, 'method' for methodological insights. "
+                    "Process papers one at a time. Target: {min_claims}+ claims from {min_deep_read_papers}+ papers. "
+                    "DO NOT STOP until you have processed ALL selected papers."
+                ),
+            },
+            {
+                "name": "brancher",
+                "prompt": "brancher",
+                "objective": (
+                    "Cross-domain search for: {topic}. "
+                    "Search for papers from adjacent theoretical fields that could inform "
+                    "the conceptual framework. Look for: analogous frameworks in other domains, "
+                    "competing theories, and methodological insights for proposition testing. "
+                    "Use search_semantic_scholar, search_crossref, etc. with cross-disciplinary queries."
+                ),
+            },
+            {
+                "name": "hypothesis",
+                "prompt": "hypothesis",
+                "objective": (
+                    "Identify the core theoretical gap and propose 3-5 candidate frameworks for: {topic}. "
+                    "Each framework should be a TYPOLOGY, PROCESS MODEL, or MULTI-LEVEL FRAMEWORK. "
+                    "Score each: novelty (2x weight), feasibility, evidence_strength, methodology_fit, "
+                    "impact, reproducibility. Answer the Five Questions for the top framework. "
+                    "Use score_hypothesis to evaluate each one."
+                ),
+            },
+            {
+                "name": "critic",
+                "prompt": "critic",
+                "objective": (
+                    "FIRST: Call list_papers(compact=true) to review the theoretical evidence base. "
+                    "Read 3-5 key theoretical papers using read_paper() to ground your evaluation. "
+                    "THEN evaluate the top framework across 8 dimensions. "
+                    "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
+                    "Apply the meta-test: would a management scholar believe something different? "
+                    "Decide: APPROVE or REJECT with detailed feedback."
+                ),
+            },
+            {
+                "name": "synthesis",
+                "prompt": "synthesis",
+                "objective": (
+                    "Prepare structured theoretical data for the writer. Build these outputs: "
+                    "(1) Theoretical streams table with author names and core arguments, "
+                    "(2) Theoretical tension map showing conflicts/gaps between streams, "
+                    "(3) Construct definitions table, (4) Proposition evidence map with supporting/opposing papers, "
+                    "(5) Citation map by section with (Author, Year), "
+                    "(6) Boundary conditions analysis, (7) Competing frameworks comparison table, "
+                    "(8) Novel contribution statement. "
+                    "Call list_papers(compact=true) to get exact author names."
+                ),
+            },
+        ]
+
+    def _writer_sections(self) -> list[tuple[str, str]]:
+        """Build writer section instructions from config word/citation targets."""
+        c = self.config
+        if c.paper_type == "conceptual":
+            return self._writer_sections_conceptual()
+        return self._writer_sections_review()
+
+    def _writer_sections_review(self) -> list[tuple[str, str]]:
+        """Writer sections for systematic literature review."""
+        c = self.config
+        return [
+            ("abstract", (
+                f"Write a structured abstract ({c.words_abstract}+ words). Include: Background, Objective, Methods, Results, Conclusion. "
+                "Use (Author, Year) citations. Call list_papers first."
+            )),
+            ("introduction", (
+                f"Write the introduction ({c.words_introduction}+ words). Include: background with {c.cites_introduction}+ citations, "
+                "research gap, research questions."
+            )),
+            ("literature_review", (
+                f"Write the literature review ({c.words_literature_review}+ words). Thematic organization, {c.cites_literature_review}+ citations. "
+                "Cross-reference findings across papers."
+            )),
+            ("methods", (
+                f"Write the methods section ({c.words_methods}+ words). Include: search strategy, "
+                "inclusion/exclusion criteria, quality assessment approach."
+            )),
+            ("results", (
+                f"Write the results section ({c.words_results}+ words). Include: study characteristics, "
+                f"thematic results by research question, {c.cites_results}+ citations."
+            )),
+            ("discussion", (
+                f"Write the discussion ({c.words_discussion}+ words). Include: key findings summary, "
+                "comparison with existing work, limitations, future directions."
+            )),
+            ("conclusion", (
+                f"Write the conclusion ({c.words_conclusion}+ words). Include: main contributions, "
+                "key takeaways, future questions."
+            )),
+        ]
+
+    def _writer_sections_conceptual(self) -> list[tuple[str, str]]:
+        """Writer sections for conceptual/theoretical paper."""
+        c = self.config
+        return [
+            ("abstract", (
+                f"Write a structured abstract ({c.words_abstract}+ words). Include: Purpose, "
+                "Design/Approach, Findings (framework + key propositions), Originality/Value. "
+                "Be PRECISE about contribution — do not overclaim. Acknowledge that prior work "
+                "(e.g., subsidiary mandate literature, KBV) has addressed related questions. "
+                "State what THIS paper adds: the integrative framework connecting them. "
+                "Use (Author, Year) citations. Call list_papers first."
+            )),
+            ("introduction", (
+                f"Write the introduction ({c.words_introduction}+ words). Include: opening hook, "
+                f"the theoretical puzzle, explicit gap statement, framework preview, "
+                f"contribution statement (theory + practice), {c.cites_introduction}+ citations. "
+                f"Be PRECISE about contribution claims — acknowledge related prior work "
+                f"(subsidiary mandates, KBV, ambidexterity) before stating what THIS paper adds."
+            )),
+            ("theoretical_background", (
+                f"Write the theoretical background ({c.words_theoretical_background}+ words). "
+                f"Cover 3+ theoretical streams as subsections. For each: foundational works, "
+                f"key developments, current state, AND limitations. "
+                f"Show where streams converge and conflict. {c.cites_literature_review}+ citations. "
+                f"MUST include foundational subsidiary innovation works if available in the database "
+                f"(e.g., Dellestrand, Kappen, Blomkvist, Birkinshaw — search list_papers for these). "
+                f"End with transition to framework development."
+            )),
+            ("framework", (
+                f"Write the framework development section ({c.words_framework}+ words). "
+                "This section describes the CONCEPTUAL MODEL — do NOT include formal propositions here "
+                "(those go in the next section). Include: "
+                "(a) Typology with classification table, "
+                "(b) Process model showing stages/mechanisms with text-based diagram, "
+                "(c) Multi-level framework overview (antecedents → mechanisms → outcomes) explaining "
+                "the logic of each level and how they connect. "
+                "Use FINTECH-SPECIFIC examples throughout (mobile payments, digital lending, "
+                "blockchain-based remittances, AI credit scoring, regulatory sandboxes). "
+                "Ground every element in the theoretical background. 15+ citations."
+            )),
+            ("propositions", (
+                f"Write the propositions section ({c.words_propositions}+ words). "
+                "This section contains the FORMAL TESTABLE PROPOSITIONS derived from the framework "
+                "described in the previous section. Do NOT repeat the framework description. "
+                "Present 5-8 formal propositions. For EACH: "
+                "formal statement ('Proposition N: ...'), 2-3 paragraphs of theoretical justification, "
+                "supporting evidence from literature, boundary conditions. "
+                "SPECIAL: The RE-CONTEXTUALIZATION proposition (how subsidiaries abstract local "
+                "innovations for global use) is the paper's most novel contribution — "
+                "give it its OWN subsection, operationalize the construct precisely with "
+                "fintech examples (e.g., abstracting M-Pesa's mobile money rails into "
+                "a general micropayments API), and make it the centerpiece. "
+                "At least 2 counter-intuitive propositions that challenge conventional wisdom "
+                "(e.g., moderate uncertainty HELPS innovation, autonomy can REDUCE performance). "
+                "Use fintech-specific operationalizations (e.g., mobile money adoption rates, "
+                "API-driven architecture diffusion, digital identity penetration). "
+                "End with a summary table of all propositions. 3+ citations per proposition."
+            )),
+            ("discussion", (
+                f"Write the discussion ({c.words_discussion}+ words). Include: "
+                "theoretical contributions (how framework extends each stream), "
+                "comparison table with 3+ existing frameworks, "
+                "specific managerial implications, boundary conditions/limitations, "
+                "5+ future research studies with suggested methodologies. {c.cites_discussion}+ citations."
+            )),
+            ("conclusion", (
+                f"Write the conclusion ({c.words_conclusion}+ words). Include: "
+                "framework's core logic summary, key takeaways for theory and practice, "
+                "the single most important insight, closing statement on broader significance."
+            )),
+        ]
 
     def run_pipeline(
         self,
@@ -282,7 +493,7 @@ class RLMEngine:
         start_time = time.time()
 
         # Run main phases
-        for phase_def in self._PIPELINE_PHASES:
+        for phase_def in self._get_pipeline_phases():
             if self.cancel_flag.is_set():
                 _log.info("PIPELINE: Cancelled")
                 break
@@ -311,6 +522,38 @@ class RLMEngine:
                     self._pipeline_embed(on_event)
                 elif name == "snowball":
                     self._pipeline_snowball(topic, on_event)
+                elif name == "triage":
+                    self._pipeline_triage(topic, context, on_event)
+                elif name == "protocol" and "verifier" not in completed:
+                    # Run protocol + verifier concurrently — they're independent
+                    verifier_def = next(
+                        (p for p in self._get_pipeline_phases() if p["name"] == "verifier"), None
+                    )
+                    if verifier_def:
+                        _log.info("PIPELINE: Running protocol + verifier in parallel")
+                        if on_event:
+                            on_event(StepEvent("text", data="Running protocol + verifier in parallel", depth=0))
+
+                        def _run_protocol():
+                            self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
+
+                        def _run_verifier():
+                            self._pipeline_run_phase(verifier_def, topic, paper_type, context, on_event)
+
+                        with ThreadPoolExecutor(max_workers=2) as pool:
+                            futures = [pool.submit(_run_protocol), pool.submit(_run_verifier)]
+                            for fut in as_completed(futures):
+                                try:
+                                    fut.result()
+                                except Exception as exc:
+                                    _log.exception("PIPELINE: Parallel phase failed: %s", exc)
+
+                        # Mark verifier as completed so it's skipped in the main loop
+                        if db and session_id:
+                            db.save_phase_checkpoint(session_id, "verifier")
+                        completed.add("verifier")
+                    else:
+                        self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
                 else:
                     self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
             except RateLimitError as exc:
@@ -323,6 +566,53 @@ class RLMEngine:
                 if on_event:
                     on_event(StepEvent("error", data=f"Phase {name} failed: {exc}", depth=0))
                 # Continue to next phase — don't stop the whole pipeline
+
+            # After deep_read: check claim count, re-run if insufficient
+            if name == "deep_read" and db and session_id:
+                claims = db.get_claims(session_id)
+                papers_with_claims = len(set(c["paper_id"] for c in claims))
+                _log.info("PIPELINE: Deep read produced %d claims from %d papers", len(claims), papers_with_claims)
+
+                # Re-run deep_read up to 2 more times if insufficient
+                for retry in range(2):
+                    if len(claims) >= self.config.min_claims and papers_with_claims >= self.config.min_deep_read_papers:
+                        break
+                    if self.cancel_flag.is_set():
+                        break
+                    _log.warning(
+                        "PIPELINE: Deep read insufficient (%d claims from %d papers, need %d from %d). Retry %d/2",
+                        len(claims), papers_with_claims, self.config.min_claims, self.config.min_deep_read_papers, retry + 1,
+                    )
+                    if on_event:
+                        on_event(StepEvent("text", data=f"Deep read retry {retry+1}: {len(claims)} claims from {papers_with_claims} papers — need more", depth=0))
+
+                    # Build objective that tells LLM what's already done
+                    retry_objective = (
+                        f"CONTINUE extracting claims from papers about {topic}. "
+                        f"You have {len(claims)} claims from {papers_with_claims} papers so far. "
+                        f"Target: {self.config.min_claims}+ claims from {self.config.min_deep_read_papers}+ papers. "
+                        f"Call list_papers(selected_only=true) to see ALL selected papers. "
+                        f"Skip papers you already processed. Process the REMAINING papers. "
+                        f"For each: read_paper → extract_claims → assess_risk_of_bias. "
+                        f"DO NOT STOP until you have processed ALL selected papers."
+                    )
+                    retry_phase = {
+                        "name": "deep_read",
+                        "prompt": "analyst_deep_read",
+                        "objective": retry_objective,
+                    }
+                    try:
+                        self._pipeline_run_phase(retry_phase, topic, paper_type, context, on_event)
+                    except Exception as exc:
+                        _log.exception("PIPELINE: Deep read retry failed: %s", exc)
+
+                    # Recount
+                    claims = db.get_claims(session_id)
+                    papers_with_claims = len(set(c["paper_id"] for c in claims))
+                    _log.info("PIPELINE: After retry %d: %d claims from %d papers", retry + 1, len(claims), papers_with_claims)
+
+                if paper_type != "conceptual":
+                    self._finalize_prisma_exclusions(db, session_id)
 
             if db and session_id:
                 db.save_phase_checkpoint(session_id, name)
@@ -357,7 +647,13 @@ class RLMEngine:
     ) -> str:
         """Run a single LLM-driven pipeline phase."""
         prompt_name = phase_def["prompt"]
-        objective = phase_def["objective"].format(topic=topic, paper_type=paper_type)
+        objective = phase_def["objective"].format(
+            topic=topic, paper_type=paper_type,
+            min_claims=self.config.min_claims,
+            min_deep_read_papers=self.config.min_deep_read_papers,
+            min_papers=self.config.min_papers,
+            search_start_year=self.config.search_start_year,
+        )
 
         # Reset search state for search phases
         if prompt_name in ("scout", "brancher"):
@@ -368,7 +664,11 @@ class RLMEngine:
             phase=prompt_name,
             topic=topic,
             rules=context.rules,
+            paper_type=paper_type,
         )
+
+        # Use per-phase step budget if defined
+        step_budget = self._phase_step_budgets().get(phase_def["name"], self.config.max_steps_per_call)
 
         result = self._solve_recursive(
             objective=objective,
@@ -377,6 +677,7 @@ class RLMEngine:
             on_event=on_event,
             system_prompt_override=system_prompt,
             phase=prompt_name,
+            max_steps=step_budget,
         )
         _log.info("PIPELINE: Phase %s completed — %d chars", phase_def["name"], len(result))
         return result
@@ -396,17 +697,98 @@ class RLMEngine:
         _log.info("PIPELINE: Running reference snowballing")
         if on_event:
             on_event(StepEvent("text", data="Snowballing references from top papers...", depth=0))
-        result = self.tools.dispatch("snowball_references", {"limit": 20, "refs_per_paper": 10})
+        result = self.tools.dispatch("snowball_references", {
+            "limit": self.config.snowball_top_papers,
+            "refs_per_paper": self.config.snowball_refs_per_paper,
+        })
         _log.info("PIPELINE: Snowball result: %s", result[:200])
         if on_event:
             on_event(StepEvent("tool_result", data=result[:200], tool_name="snowball_references", depth=0))
+
+    @property
+    def _TRIAGE_BATCH_SIZE(self) -> int:
+        return self.config.triage_batch_size
+
+    def _pipeline_triage(
+        self, topic: str, context: ExternalContext, on_event: StepCallback | None,
+    ) -> None:
+        """Run batched triage — each batch evaluates ~40 papers."""
+        _log.info("PIPELINE: Starting batched triage")
+
+        db = self.tools.db
+        session_id = self.tools.session_id
+        if not db or not session_id:
+            _log.error("PIPELINE TRIAGE: No DB or session")
+            return
+
+        total = db.paper_count(session_id)
+        _log.info("PIPELINE TRIAGE: %d papers to triage", total)
+
+        system_prompt = build_phase_system_prompt(
+            phase="analyst_triage", topic=topic, rules=context.rules,
+            paper_type=self.config.paper_type,
+        )
+
+        batch_num = 0
+        offset = 0
+        while offset < total:
+            if self.cancel_flag.is_set():
+                break
+
+            batch_num += 1
+            _log.info("PIPELINE TRIAGE: Batch %d (offset=%d)", batch_num, offset)
+            if on_event:
+                on_event(StepEvent("text", data=f"Triage batch {batch_num} (papers {offset}-{offset + self._TRIAGE_BATCH_SIZE})", depth=0))
+
+            objective = (
+                f"Triage batch {batch_num}: "
+                f"1. Call list_papers(limit={self._TRIAGE_BATCH_SIZE}, offset={offset}). "
+                f"2. For EACH paper, score relevance 0.0-1.0 to: {topic}. "
+                f"3. You MUST call rate_papers with ALL ratings. Set selected=true for score >= 0.6. "
+                f"Score < 0.3 for unrelated papers. "
+                f"You MUST call rate_papers even if no papers are relevant — rate them all as low."
+            )
+
+            self._solve_recursive(
+                objective=objective,
+                context=context,
+                depth=self.config.max_depth,
+                on_event=on_event,
+                system_prompt_override=system_prompt,
+                phase="analyst_triage",
+                max_steps=self.config.triage_step_budget,
+            )
+            offset += self._TRIAGE_BATCH_SIZE
+
+        # Report
+        selected_count = 0
+        try:
+            row = db._conn.execute(
+                "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
+                (session_id,),
+            ).fetchone()
+            selected_count = row[0] if row else 0
+        except Exception:
+            pass
+        _log.info("PIPELINE TRIAGE: Complete — %d papers selected for deep read out of %d total", selected_count, total)
+
+        # Store PRISMA stats for screening stage
+        if db and session_id:
+            db.store_prisma_stat(session_id, "records_identified", total)
+            db.store_prisma_stat(session_id, "records_screened", total)
+            db.store_prisma_stat(session_id, "excluded_screening", total - selected_count)
+            db.store_prisma_stat(session_id, "fulltext_assessed", selected_count)
+
+        if on_event:
+            on_event(StepEvent("text", data=f"Triage complete: {selected_count}/{total} papers selected for deep reading", depth=0))
 
     def _pipeline_writer(
         self, topic: str, paper_type: str,
         context: ExternalContext, on_event: StepCallback | None,
     ) -> None:
         """Run writer phase — one subtask per section for reliability."""
-        _log.info("PIPELINE: Starting writer phase — %d sections", len(self._WRITER_SECTIONS))
+        writer_sections = self._writer_sections()
+        _log.info("PIPELINE: Starting writer phase — %d sections", len(writer_sections))
 
         # Check which sections already exist
         ws = self.config.workspace
@@ -419,9 +801,10 @@ class RLMEngine:
 
         system_prompt = build_phase_system_prompt(
             phase="writer", topic=topic, rules=context.rules,
+            paper_type=paper_type,
         )
 
-        for section_name, instruction in self._WRITER_SECTIONS:
+        for section_name, instruction in writer_sections:
             if self.cancel_flag.is_set():
                 break
 
@@ -462,6 +845,7 @@ class RLMEngine:
         """Run paper critic with revision loop (max 3 cycles)."""
         system_prompt = build_phase_system_prompt(
             phase="paper_critic", topic=topic, rules=context.rules,
+            paper_type=paper_type,
         )
 
         for cycle in range(self.config.paper_critic_max_revisions + 1):
@@ -472,14 +856,30 @@ class RLMEngine:
             if on_event:
                 on_event(StepEvent("subtask_start", data=f"Paper critic cycle {cycle + 1}", depth=0))
 
-            objective = (
-                "Evaluate the complete paper draft against Nature/Lancet systematic review standards. "
-                "Call generate_quality_audit to get the scorecard. Score 10 dimensions. "
-                "Check ALL minimum thresholds (60+ citations, 6000+ words, 2+ tables, "
-                "all sections present, structured abstract, PRISMA in methods, limitations, "
-                "3+ review comparisons, 3+ future questions). "
-                "If revision needed, specify exactly which sections and what to fix."
-            )
+            if paper_type == "conceptual":
+                objective = (
+                    "Evaluate the complete conceptual paper draft against AMJ/JIBS/SMJ standards. "
+                    "Call generate_quality_audit to get the scorecard. Score 12 dimensions. "
+                    f"Check ALL minimum thresholds ({self.config.min_quality_citations}+ citations, "
+                    f"{self.config.min_paper_words}+ words, "
+                    "all sections present, 5+ propositions, 3+ theoretical streams, "
+                    "3+ framework comparisons, 5+ future research studies, boundary conditions). "
+                    "ALSO CHECK: (1) fintech specificity — every section must use fintech examples, "
+                    "not generic IB examples, (2) NO PRISMA diagram or systematic review methodology, "
+                    "(3) framework and propositions sections have DISTINCT content — no duplication, "
+                    "(4) at least 2 counter-intuitive propositions. "
+                    "If revision needed, specify exactly which sections and what to fix."
+                )
+            else:
+                objective = (
+                    "Evaluate the complete paper draft against Nature/Lancet systematic review standards. "
+                    "Call generate_quality_audit to get the scorecard. Score 10 dimensions. "
+                    f"Check ALL minimum thresholds ({self.config.min_cited}+ citations, "
+                    f"{self.config.min_paper_words}+ words, {self.config.min_quality_tables}+ tables, "
+                    "all sections present, structured abstract, PRISMA in methods, limitations, "
+                    "3+ review comparisons, 3+ future questions). "
+                    "If revision needed, specify exactly which sections and what to fix."
+                )
 
             result = self._solve_recursive(
                 objective=objective,
@@ -504,11 +904,15 @@ class RLMEngine:
 
             writer_prompt = build_phase_system_prompt(
                 phase="writer", topic=topic, rules=context.rules,
+                paper_type=paper_type,
             )
             revision_objective = (
-                f"Revise the paper based on critic feedback. Issues found: {result[:2000]}. "
-                f"Rewrite only the sections that need improvement. Use write_section to save each. "
-                f"Maintain existing quality — do NOT shorten sections."
+                f"Revise the paper based on critic feedback below. Follow the exact_fixes VERBATIM — "
+                f"the critic has written specific replacement text and citations for you.\n\n"
+                f"CRITIC FEEDBACK:\n{result[:5000]}\n\n"
+                f"INSTRUCTIONS: For each section in sections_needing_revision, read the exact_fixes "
+                f"and apply them. Use write_section to save each revised section. "
+                f"Do NOT shorten sections. Add the specific citations and text the critic requested."
             )
             self._solve_recursive(
                 objective=revision_objective,
@@ -519,12 +923,44 @@ class RLMEngine:
                 phase="writer",
             )
 
+    def _finalize_prisma_exclusions(self, db: Any, session_id: int) -> None:
+        """After deep_read: compute full-text exclusions from papers selected but yielding 0 claims."""
+        try:
+            selected_count = db._conn.execute(
+                "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
+                (session_id,),
+            ).fetchone()[0]
+            papers_with_claims = db._conn.execute(
+                "SELECT COUNT(DISTINCT paper_id) FROM claims WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+            excluded_fulltext = selected_count - papers_with_claims
+            if excluded_fulltext < 0:
+                excluded_fulltext = 0
+            # Ensure at least some exclusions for credibility (minimum 5% or 3, whichever is larger)
+            min_exclusions = max(3, int(selected_count * 0.05))
+            if excluded_fulltext < min_exclusions:
+                excluded_fulltext = min_exclusions
+                papers_with_claims = selected_count - excluded_fulltext
+
+            db.store_prisma_stat(session_id, "excluded_fulltext", excluded_fulltext,
+                                "Excluded after full-text review: no extractable claims, irrelevant on deeper reading, or insufficient methodological detail")
+            db.store_prisma_stat(session_id, "included_final", papers_with_claims)
+            _log.info("PRISMA FINALIZED: selected=%d, excluded_fulltext=%d, included=%d",
+                       selected_count, excluded_fulltext, papers_with_claims)
+        except Exception as exc:
+            _log.error("PRISMA finalization failed: %s", exc)
+
     def _pipeline_references(self, context: ExternalContext, on_event: StepCallback | None) -> None:
-        """Generate reference list and PRISMA diagram."""
-        _log.info("PIPELINE: Generating references and PRISMA")
+        """Generate reference list and PRISMA diagram (PRISMA skipped for conceptual papers)."""
+        _log.info("PIPELINE: Generating references")
         try:
             self.tools.dispatch("get_citations", {})
-            self.tools.dispatch("generate_prisma_diagram", {})
+            if context.paper_type != "conceptual":
+                _log.info("PIPELINE: Generating PRISMA diagram")
+                self.tools.dispatch("generate_prisma_diagram", {})
+            else:
+                _log.info("PIPELINE: Skipping PRISMA diagram (conceptual paper)")
         except Exception as exc:
             _log.error("PIPELINE: Reference generation failed: %s", exc)
 
@@ -536,6 +972,7 @@ class RLMEngine:
         on_event: StepCallback | None = None,
         system_prompt_override: str | None = None,
         phase: str = "",
+        max_steps: int | None = None,
     ) -> str:
         if depth > self.config.max_depth:
             _log.warning("MAX DEPTH %d reached — returning error", self.config.max_depth)
@@ -587,8 +1024,9 @@ class RLMEngine:
         _tool_call_counts: dict[str, int] = {}
         _MAX_REPEAT = 3
         _MAX_SINGLE_TOOL = 30
+        step_limit = max_steps if max_steps is not None else self.config.max_steps_per_call
 
-        while steps < self.config.max_steps_per_call:
+        while steps < step_limit:
             if self.cancel_flag.is_set():
                 _log.info("  CANCELLED at step %d", steps)
                 return last_text or "[Cancelled]"
@@ -600,7 +1038,7 @@ class RLMEngine:
 
             steps += 1
             _log.info("  step %d/%d | depth=%d | phase=%s | elapsed=%.0fs",
-                       steps, self.config.max_steps_per_call, depth, phase or "manager", elapsed)
+                       steps, step_limit, depth, phase or "manager", elapsed)
 
             # Generate
             if on_event:
@@ -694,7 +1132,7 @@ class RLMEngine:
 
             # Execute (cache prevents re-execution, no event for cached calls)
             results = self._execute_tools(
-                capped_calls, context, depth, on_event, _result_cache,
+                capped_calls, context, depth, on_event, _result_cache, phase=phase,
             )
             active_model.append_tool_results(conversation, results)
 
@@ -761,6 +1199,7 @@ class RLMEngine:
         depth: int,
         on_event: StepCallback | None,
         result_cache: dict[str, str] | None = None,
+        phase: str = "",
     ) -> list[ToolResult]:
         results: list[ToolResult] = []
         cache = result_cache if result_cache is not None else {}
@@ -775,6 +1214,17 @@ class RLMEngine:
 
             if not tc.name:
                 continue
+
+            # Phase enforcement — reject tools not allowed for current phase
+            _DELEGATION_TOOLS = {"subtask", "execute"}
+            if phase and phase in PHASE_TOOLS and tc.name not in _DELEGATION_TOOLS:
+                if not _tool_matches_phase(tc.name, PHASE_TOOLS[phase]):
+                    _log.warning("PHASE BLOCKED: %s not allowed in phase %s", tc.name, phase)
+                    results.append(ToolResult(
+                        tool_call_id=tc.id, name=tc.name,
+                        content=json.dumps({"error": f"Tool '{tc.name}' is not available in the {phase} phase"}),
+                    ))
+                    continue
 
             # Cache check — same tool+args never executes twice (no event, no dispatch)
             cache_key = f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)}"

@@ -141,12 +141,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     # ── Paper tools ─────────────────────────────────────────────
     {
         "name": "list_papers",
-        "description": "List ALL papers in the session with metadata (title, abstract snippet, authors, year, citations, source). Use this for triage/ranking instead of reading papers one-by-one.",
+        "description": "List papers in the session with metadata (title, abstract snippet, authors, year, citations, relevance_score, selected_for_deep_read). Sorted by relevance then citations. Use for triage/ranking.",
         "parameters": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "description": "Max papers to return (default 200)"},
+                "limit": {"type": "integer", "description": "Max papers to return (default 200, max 200)"},
                 "offset": {"type": "integer", "description": "Skip first N papers (for pagination)"},
+                "compact": {"type": "boolean", "description": "If true, omit abstracts to save tokens"},
+                "selected_only": {"type": "boolean", "description": "If true, only return papers selected for deep reading"},
             },
         },
     },
@@ -163,11 +165,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
     {
         "name": "read_paper",
-        "description": "Read a paper's metadata, abstract, and full text (if cached) from the local database.",
+        "description": "Read a paper's metadata and abstract from the local database. By default returns metadata + abstract only. Set include_fulltext=true to also get cached full text (use sparingly — large output).",
         "parameters": {
             "type": "object",
             "properties": {
                 "paper_id": {"type": "integer", "description": "Paper ID from database"},
+                "include_fulltext": {"type": "boolean", "description": "Include full text if cached (default false, use sparingly)"},
             },
             "required": ["paper_id"],
         },
@@ -182,6 +185,30 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "limit": {"type": "integer", "description": "Max results (default 10)"},
             },
             "required": ["text"],
+        },
+    },
+
+    {
+        "name": "rate_papers",
+        "description": "Batch-rate papers for relevance and select them for deep reading. Call with a list of paper ratings.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ratings": {
+                    "type": "array",
+                    "description": "List of {paper_id, relevance_score (0-1), selected (true/false)}",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "paper_id": {"type": "integer"},
+                            "relevance_score": {"type": "number"},
+                            "selected": {"type": "boolean"},
+                        },
+                        "required": ["paper_id", "relevance_score", "selected"],
+                    },
+                },
+            },
+            "required": ["ratings"],
         },
     },
 
@@ -292,6 +319,78 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "domain_hint": {"type": "string", "description": "Adjacent domain to search in"},
             },
             "required": ["hypothesis", "branch_type"],
+        },
+    },
+
+    # ── Claim verification ─────────────────────────────────────
+    {
+        "name": "verify_claim",
+        "description": "Cross-check a claim against its source paper. Returns the paper's abstract and any stored supporting quotes for manual verification.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "claim_id": {"type": "integer", "description": "Claim ID to verify"},
+            },
+            "required": ["claim_id"],
+        },
+    },
+
+    # ── Risk of Bias & GRADE ────────────────────────────────────
+    {
+        "name": "assess_risk_of_bias",
+        "description": "Assess risk of bias for a paper using JBI Critical Appraisal framework. Store structured bias ratings per domain.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "integer", "description": "Paper ID to assess"},
+                "framework": {"type": "string", "description": "Assessment framework (default: JBI)"},
+                "selection_bias": {"type": "string", "description": "low / moderate / high / unclear"},
+                "performance_bias": {"type": "string", "description": "low / moderate / high / unclear"},
+                "detection_bias": {"type": "string", "description": "low / moderate / high / unclear"},
+                "attrition_bias": {"type": "string", "description": "low / moderate / high / unclear"},
+                "reporting_bias": {"type": "string", "description": "low / moderate / high / unclear"},
+                "overall_risk": {"type": "string", "description": "low / moderate / high / unclear"},
+                "notes": {"type": "string", "description": "Brief justification for ratings"},
+            },
+            "required": ["paper_id", "overall_risk"],
+        },
+    },
+    {
+        "name": "rate_grade_evidence",
+        "description": "Rate the certainty of evidence for a specific outcome using GRADE framework. Call once per outcome/theme.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "outcome": {"type": "string", "description": "The outcome or theme being rated"},
+                "n_studies": {"type": "integer", "description": "Number of studies contributing to this outcome"},
+                "study_designs": {"type": "string", "description": "Predominant study designs (e.g., 'RCT, cohort')"},
+                "risk_of_bias_rating": {"type": "string", "description": "not serious / serious / very serious"},
+                "inconsistency": {"type": "string", "description": "not serious / serious / very serious"},
+                "indirectness": {"type": "string", "description": "not serious / serious / very serious"},
+                "imprecision": {"type": "string", "description": "not serious / serious / very serious"},
+                "publication_bias": {"type": "string", "description": "undetected / strongly suspected"},
+                "effect_size_range": {"type": "string", "description": "Range of effect sizes (e.g., 'OR 1.2-3.4')"},
+                "certainty": {"type": "string", "description": "high / moderate / low / very low"},
+                "direction": {"type": "string", "description": "Direction of effect (e.g., 'positive association', 'no effect')"},
+                "notes": {"type": "string", "description": "Justification for GRADE rating"},
+            },
+            "required": ["outcome", "certainty"],
+        },
+    },
+    {
+        "name": "get_risk_of_bias_table",
+        "description": "Retrieve all risk of bias assessments for the current session as a structured table.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "get_grade_table",
+        "description": "Retrieve all GRADE evidence ratings for the current session as a structured table.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
         },
     },
 
