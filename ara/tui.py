@@ -1,5 +1,5 @@
 # Location: ara/tui.py
-# Purpose: Rich TUI — REPL, splash screen, step display, activity spinner
+# Purpose: Rich TUI — REPL, splash screen, step display, activity spinner, status bar
 # Functions: RichREPL, ChatContext, run_rich_repl
 # Calls: runtime.py, config.py, engine.py, builder.py
 # Imports: re, threading, time, dataclasses, datetime, pathlib, rich, prompt_toolkit
@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from .config import ARAConfig
@@ -110,11 +111,27 @@ class _StepState:
 _KEY_ARGS: dict[str, str] = {
     "search_semantic_scholar": "query",
     "search_arxiv": "query",
+    "search_crossref": "query",
+    "search_openalex": "query",
+    "search_pubmed": "query",
+    "search_core": "query",
+    "search_dblp": "query",
+    "search_europe_pmc": "query",
+    "search_base": "query",
     "request_approval": "phase",
     "embed_text": "text",
     "subtask": "objective",
     "execute": "objective",
     "think": "note",
+    "branch_search": "query",
+    "fetch_fulltext": "doi",
+    "check_retraction": "doi",
+    "validate_doi": "doi",
+    "get_citation_count": "doi",
+    "write_section": "section_name",
+    "score_hypothesis": "hypothesis_text",
+    "extract_claims": "paper_id",
+    "read_paper": "paper_id",
 }
 
 
@@ -174,6 +191,135 @@ def dispatch_slash_command(
         return "handled"
     return None
 
+
+# ============================================================================
+# STATUS BAR
+# ============================================================================
+
+@dataclass
+class _StatusBarState:
+    """Mutable state for the bottom status bar."""
+    model_name: str = ""
+    provider: str = ""
+    current_phase: str = "idle"
+    current_step: int = 0
+    max_steps: int = 100
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    context_window: int = 128_000
+    budget_cap: float = 0.0
+    budget_spent: float = 0.0
+    is_processing: bool = False
+
+
+def _build_progress_bar(pct: float, width: int = 16) -> str:
+    """Build a text-based progress bar."""
+    filled = int(pct / 100 * width)
+    filled = max(0, min(width, filled))
+    bar = "\u2588" * filled + "\u2591" * (width - filled)
+    return bar
+
+
+def _build_toolbar_text(state: _StatusBarState) -> list[tuple[str, str]]:
+    """Build prompt_toolkit formatted text for the status bar."""
+    # Calculate token percentage
+    total_tokens = state.total_input_tokens + state.total_output_tokens
+    ctx_pct = (state.total_input_tokens / state.context_window * 100) if state.context_window > 0 else 0
+    ctx_pct = min(ctx_pct, 100)
+
+    # Progress bar
+    bar = _build_progress_bar(ctx_pct)
+
+    # Left side
+    parts: list[tuple[str, str]] = []
+
+    # Separator line (empty line above toolbar for visual gap)
+    parts.append(("class:toolbar.sep", "\n"))
+
+    # Model indicator
+    model_short = state.model_name
+    if len(model_short) > 20:
+        model_short = model_short[:18] + ".."
+    parts.append(("class:toolbar.model", f" {model_short} "))
+    parts.append(("class:toolbar.dim", " | "))
+
+    # Progress bar + percentage
+    if ctx_pct < 50:
+        bar_style = "class:toolbar.bar-ok"
+    elif ctx_pct < 80:
+        bar_style = "class:toolbar.bar-warn"
+    else:
+        bar_style = "class:toolbar.bar-crit"
+    parts.append((bar_style, bar))
+    parts.append(("class:toolbar.text", f" {ctx_pct:.0f}%"))
+    parts.append(("class:toolbar.dim", " | "))
+
+    # Token usage
+    tok_in = _format_token_count(state.total_input_tokens)
+    tok_out = _format_token_count(state.total_output_tokens)
+    ctx_win = _format_token_count(state.context_window)
+    parts.append(("class:toolbar.text", f"Tokens: {tok_in}/{ctx_win}"))
+    parts.append(("class:toolbar.dim", " | "))
+
+    # Phase
+    phase_display = state.current_phase.replace("_", " ").title()
+    if state.is_processing:
+        parts.append(("class:toolbar.phase-active", f"Phase: {phase_display}"))
+    else:
+        parts.append(("class:toolbar.text", f"Phase: {phase_display}"))
+    parts.append(("class:toolbar.dim", " | "))
+
+    # Step
+    if state.is_processing and state.current_step > 0:
+        parts.append(("class:toolbar.text", f"Step: {state.current_step}/{state.max_steps}"))
+    else:
+        parts.append(("class:toolbar.text", f"Step: -/{state.max_steps}"))
+
+    # Right side — budget remaining (pad to right-align)
+    if state.budget_cap > 0:
+        remaining = max(0, state.budget_cap - state.budget_spent)
+        budget_text = f"Budget: ${remaining:.2f} remaining"
+    else:
+        budget_text = "Budget: unlimited"
+
+    # Calculate padding for right alignment (approximate terminal width)
+    left_len = sum(len(text) for _, text in parts)
+    try:
+        import shutil
+        term_width = shutil.get_terminal_size().columns
+    except Exception:
+        term_width = 120
+    pad = max(1, term_width - left_len - len(budget_text) - 2)
+    parts.append(("class:toolbar.text", " " * pad))
+
+    if state.budget_cap > 0 and remaining < state.budget_cap * 0.2:
+        parts.append(("class:toolbar.budget-low", budget_text))
+    else:
+        parts.append(("class:toolbar.budget", budget_text))
+    parts.append(("class:toolbar.text", " "))
+
+    return parts
+
+
+# prompt_toolkit style for the toolbar
+_TOOLBAR_STYLE_DICT = {
+    "toolbar":              "bg:#1a1a2e #e0e0e0",
+    "toolbar.sep":          "bg:#0d0d1a #333",
+    "toolbar.model":        "bg:#16213e bold #00d4ff",
+    "toolbar.dim":          "bg:#1a1a2e #555555",
+    "toolbar.text":         "bg:#1a1a2e #aaaaaa",
+    "toolbar.bar-ok":       "bg:#1a1a2e #00d4ff",
+    "toolbar.bar-warn":     "bg:#1a1a2e #ffaa00",
+    "toolbar.bar-crit":     "bg:#1a1a2e #ff4444",
+    "toolbar.phase-active": "bg:#1a1a2e bold #00ff88",
+    "toolbar.budget":       "bg:#1a1a2e #888888",
+    "toolbar.budget-low":   "bg:#1a1a2e bold #ff4444",
+}
+
+
+# ============================================================================
+# ACTIVITY DISPLAY
+# ============================================================================
 
 class _ActivityDisplay:
     def __init__(self, console: Any) -> None:
@@ -282,10 +428,15 @@ class _ActivityDisplay:
         return Text.from_markup(f"\u2800 {header}\n{snippet}")
 
 
+# ============================================================================
+# RICH REPL
+# ============================================================================
+
 class RichREPL:
     def __init__(self, ctx: ChatContext, startup_info: dict[str, str] | None = None) -> None:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.history import FileHistory
+        from prompt_toolkit.styles import Style
         from rich.console import Console
         self.ctx = ctx
         self.console = Console()
@@ -294,10 +445,58 @@ class RichREPL:
         self._agent_thread: threading.Thread | None = None
         self._agent_result: str | None = None
         self._activity = _ActivityDisplay(self.console)
+
+        # Status bar state
+        self._status = _StatusBarState(
+            model_name=_get_model_display_name(ctx.runtime.engine),
+            provider=ctx.cfg.provider,
+            max_steps=ctx.cfg.max_steps_per_call,
+            context_window=_MODEL_CONTEXT_WINDOWS.get(
+                getattr(ctx.runtime.engine.model, "model", ""), _DEFAULT_CONTEXT_WINDOW
+            ),
+            budget_cap=ctx.cfg.budget_limit_usd,
+        )
+
+        # Load budget from DB if available
+        if ctx.runtime.db:
+            try:
+                # Use the first session or create one
+                import sqlite3
+                cursor = ctx.runtime.db.conn.cursor()
+                cursor.execute("SELECT budget_cap, budget_spent FROM research_sessions ORDER BY session_id DESC LIMIT 1")
+                row = cursor.fetchone()
+                if row:
+                    self._status.budget_cap = float(row[0] or 0)
+                    self._status.budget_spent = float(row[1] or 0)
+            except Exception:
+                pass
+
+        # prompt_toolkit style
+        pt_style = Style.from_dict(_TOOLBAR_STYLE_DICT)
+
         history_dir = Path.home() / ".ara"
         history_dir.mkdir(parents=True, exist_ok=True)
         self.session: PromptSession[str] = PromptSession(
             history=FileHistory(str(history_dir / "repl_history")),
+            style=pt_style,
+            bottom_toolbar=self._toolbar,
+            reserve_space_for_menu=6,
+        )
+
+    def _toolbar(self) -> list[tuple[str, str]]:
+        """Return formatted text for the bottom toolbar."""
+        return _build_toolbar_text(self._status)
+
+    def _update_status_tokens(self) -> None:
+        """Refresh token counts from engine."""
+        tokens = self.ctx.runtime.engine.session_tokens
+        total_in = sum(v["input"] for v in tokens.values())
+        total_out = sum(v["output"] for v in tokens.values())
+        self._status.total_input_tokens = total_in
+        self._status.total_output_tokens = total_out
+        self._status.model_name = _get_model_display_name(self.ctx.runtime.engine)
+        self._status.context_window = _MODEL_CONTEXT_WINDOWS.get(
+            getattr(self.ctx.runtime.engine.model, "model", ""), _DEFAULT_CONTEXT_WINDOW
         )
 
     def _on_event(self, msg: str) -> None:
@@ -305,7 +504,10 @@ class RichREPL:
         body = msg[m.end():] if m else msg
         step_label = ""
         if m and m.group(2):
-            step_label = f"Step {m.group(2)}/{self.ctx.cfg.max_steps_per_call}"
+            step_num = int(m.group(2))
+            step_label = f"Step {step_num}/{self.ctx.cfg.max_steps_per_call}"
+            self._status.current_step = step_num
+            self._status.is_processing = True
         if _RE_CALLING.search(body):
             self._flush_step()
             self._activity.start(mode="thinking", step_label=step_label)
@@ -341,6 +543,9 @@ class RichREPL:
                 input_tokens=step_event.get("input_tokens", 0),
                 output_tokens=step_event.get("output_tokens", 0),
             )
+            # Update status bar after each step
+            self._update_status_tokens()
+            self._status.current_step = step_event.get("step", 0)
             return
         if name == "final":
             self._flush_step()
@@ -401,6 +606,8 @@ class RichREPL:
         except Exception as exc:
             self._agent_result = f"Agent error: {type(exc).__name__}: {exc}"
         finally:
+            self._status.is_processing = False
+            self._update_status_tokens()
             try:
                 app = self.session.app
                 if app is not None:
@@ -414,6 +621,7 @@ class RichREPL:
         self._flush_step()
         self.console.print()
         self.console.print(Markdown(answer), justify="left")
+        self._update_status_tokens()
         tokens = self.ctx.runtime.engine.session_tokens
         total_in = sum(v["input"] for v in tokens.values())
         total_out = sum(v["output"] for v in tokens.values())
@@ -461,6 +669,9 @@ class RichREPL:
                     continue
                 self.console.print()
                 self._agent_result = None
+                self._status.is_processing = True
+                self._status.current_step = 0
+                self._status.current_phase = "processing"
                 self._agent_thread = threading.Thread(target=self._run_agent, args=(user_input,), daemon=True)
                 self._agent_thread.start()
                 while self._agent_thread.is_alive():

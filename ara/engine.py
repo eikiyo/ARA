@@ -278,6 +278,16 @@ class RLMEngine:
             try:
                 turn = model.complete(conversation)
             except ModelError as exc:
+                err_text = str(exc).lower()
+                if "invalid tool call" in err_text or "invalid_request_error" in err_text:
+                    self._emit(f"[d{depth}/s{step}] tool call error, retrying...", on_event)
+                    # Ask model to respond without tool calls
+                    retry_msg = ToolResult(
+                        tool_call_id="error", name="system",
+                        content="Your previous tool call had invalid arguments. Please try again with simpler arguments, or provide a text response instead.",
+                    )
+                    model.append_tool_results(conversation, [retry_msg])
+                    continue
                 self._emit(f"[d{depth}/s{step}] model error: {exc}", on_event)
                 return f"Model error at depth {depth}, step {step}: {exc}"
             finally:

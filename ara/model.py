@@ -364,20 +364,23 @@ class OpenAICompatibleModel:
 
     def complete(self, conversation: Conversation) -> ModelTurn:
         is_reasoning = self._is_reasoning_model()
+        is_local = "localhost" in self.base_url or "127.0.0.1" in self.base_url
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": conversation._provider_messages,
             "tools": to_openai_tools(defs=self.tool_defs, strict=self.strict_tools),
             "tool_choice": "auto",
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
+        if not is_local:
+            payload["stream_options"] = {"include_usage": True}
         if conversation.stop_sequences:
             payload["stop"] = conversation.stop_sequences
         if not is_reasoning:
             payload["temperature"] = self.temperature
         effort = (self.reasoning_effort or "").strip().lower()
-        if effort:
+        is_local = "localhost" in self.base_url or "127.0.0.1" in self.base_url
+        if effort and not is_local:
             payload["reasoning_effort"] = effort
         url = self.base_url.rstrip("/") + "/chat/completions"
         headers = {
@@ -420,7 +423,7 @@ class OpenAICompatibleModel:
             parsed = _accumulate_openai_stream(events)
         except ModelError as exc:
             text = str(exc).lower()
-            if effort and "reasoning_effort" in text and ("unsupported" in text or "unknown" in text):
+            if effort and ("reasoning_effort" in text or "does not support thinking" in text or "does not support" in text):
                 payload.pop("reasoning_effort", None)
                 events = _http_stream_sse(
                     url=url, method="POST", headers=headers, payload=payload,

@@ -78,7 +78,7 @@ def _load_credentials(cfg: ARAConfig, args: argparse.Namespace) -> CredentialBun
         creds = updated
         if changed:
             store.save(creds)
-    if not creds.has_any():
+    if not creds.has_any() and not (args.provider and args.provider.lower() == "ollama"):
         print("No API keys configured. Run `ara --configure-keys` or set env vars.")
     return creds
 
