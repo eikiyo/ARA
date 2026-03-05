@@ -75,7 +75,6 @@ class ARATools:
                         "objective": {"type": "string", "description": "What the subtask should accomplish"},
                         "acceptance_criteria": {"type": "string", "description": "How to judge if the subtask succeeded"},
                         "prompt": {"type": "string", "description": "Phase name for system prompt (scout, analyst_triage, etc.)"},
-                        "model": {"type": "string", "description": "Model to use (optional, defaults to current)"},
                     },
                     "required": ["objective"],
                 },
@@ -125,9 +124,14 @@ class ARATools:
             return
         try:
             data = json.loads(result_str)
-            papers = data.get("papers", [])
-            if papers:
+        except json.JSONDecodeError as exc:
+            _log.warning("Failed to parse search results for storage: %s", exc)
+            return
+
+        papers = data.get("papers", [])
+        if papers:
+            try:
                 stored = self.db.store_papers(self.session_id, papers)
                 _log.info("Auto-stored %d/%d papers in DB", stored, len(papers))
-        except (json.JSONDecodeError, Exception) as exc:
-            _log.warning("Failed to auto-store search results: %s", exc)
+            except Exception as exc:
+                _log.error("Failed to store papers in DB: %s", exc)

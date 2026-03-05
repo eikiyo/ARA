@@ -12,6 +12,8 @@ from typing import Any
 
 def extract_claims(args: dict[str, Any], ctx: dict) -> str:
     paper_id = args.get("paper_id")
+    claims = args.get("claims")
+
     if paper_id is None:
         return json.dumps({"error": "paper_id is required"})
 
@@ -19,32 +21,72 @@ def extract_claims(args: dict[str, Any], ctx: dict) -> str:
     if not db:
         return json.dumps({"error": "Database not available"})
 
+    session_id = ctx.get("session_id")
+
+    # If claims are provided, store them in DB
+    if claims and isinstance(claims, list) and session_id:
+        stored = 0
+        for c in claims:
+            if not isinstance(c, dict) or not c.get("claim_text"):
+                continue
+            db.store_claim(
+                session_id=session_id,
+                paper_id=paper_id,
+                claim_text=c["claim_text"],
+                claim_type=c.get("claim_type", "finding"),
+                confidence=c.get("confidence", 0.5),
+                supporting_quotes=json.dumps(c.get("supporting_quotes", [])),
+                section=c.get("section", ""),
+            )
+            stored += 1
+        return json.dumps({"stored": stored, "paper_id": paper_id})
+
+    # Otherwise return paper content for LLM to extract claims from
     paper = db.get_paper(paper_id)
     if not paper:
         return json.dumps({"error": f"Paper {paper_id} not found"})
 
-    # Return paper content for LLM to process
-    # The LLM itself extracts claims and stores via the engine
     return json.dumps({
         "paper_id": paper_id,
         "title": paper.get("title", ""),
         "abstract": paper.get("abstract", ""),
         "full_text": paper.get("full_text", ""),
-        "instruction": "Extract structured claims from this paper. For each claim, identify: claim_text, claim_type (finding/method/limitation/gap), confidence (0-1), supporting_quotes, and section.",
+        "instruction": "Extract claims then call extract_claims again with paper_id and claims list to store them.",
     }, default=str)
 
 
 def score_hypothesis(args: dict[str, Any], ctx: dict) -> str:
     hypothesis = args.get("hypothesis", "")
-    context = args.get("context", "")
+    scores = args.get("scores")
     if not hypothesis:
         return json.dumps({"error": "hypothesis is required"})
 
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+
+    # If scores provided, store the hypothesis with scores in DB
+    if scores and isinstance(scores, dict) and db and session_id:
+        dims = ["novelty", "feasibility", "evidence_strength", "methodology_fit", "impact", "reproducibility"]
+        dim_values = [float(scores.get(d, 0) or 0) for d in dims]
+        overall = sum(dim_values) / len(dims)
+        hyp_id = db.store_hypothesis(
+            session_id=session_id,
+            hypothesis_text=hypothesis,
+            novelty=scores.get("novelty"),
+            feasibility=scores.get("feasibility"),
+            evidence_strength=scores.get("evidence_strength"),
+            methodology_fit=scores.get("methodology_fit"),
+            impact=scores.get("impact"),
+            reproducibility=scores.get("reproducibility"),
+            overall_score=overall,
+        )
+        return json.dumps({"stored": True, "hypothesis_id": hyp_id, "overall_score": round(overall, 3)})
+
+    # Otherwise return instructions for LLM to score
     return json.dumps({
         "hypothesis": hypothesis,
-        "context": context,
-        "instruction": "Score this hypothesis on 6 dimensions (0.0-1.0): novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility. Also suggest any domain-specific custom dimensions.",
-        "dimensions": ["novelty", "feasibility", "evidence_strength", "methodology_fit", "impact", "reproducibility"],
+        "context": args.get("context", ""),
+        "instruction": "Score this hypothesis then call score_hypothesis again with the scores dict to store. Keys: novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility (each 0.0-1.0).",
     })
 
 

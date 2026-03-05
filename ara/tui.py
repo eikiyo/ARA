@@ -13,6 +13,7 @@ from typing import Any
 
 from .config import ARAConfig
 from .engine import StepEvent
+from .model import GeminiModel, ModelError
 from .runtime import SessionRuntime
 from .settings import SettingsStore
 
@@ -24,11 +25,6 @@ class ChatContext:
     settings_store: SettingsStore
 
 
-def _get_model_display_name(engine: Any) -> str:
-    model = getattr(engine, "model", None)
-    return getattr(model, "model", "unknown") if model else "unknown"
-
-
 def dispatch_slash_command(
     text: str, ctx: ChatContext,
     emit: Any = None,
@@ -36,17 +32,17 @@ def dispatch_slash_command(
     if not text.startswith("/"):
         return "not_command"
 
-    cmd = text.strip().lower().split()
-    name = cmd[0]
+    cmd = text.strip().split()
+    name = cmd[0].lower()
 
-    if name == "/quit" or name == "/exit":
+    if name in ("/quit", "/exit"):
         return "quit"
 
     if name == "/help":
         help_text = (
             "Commands:\n"
             "  /help          — Show this help\n"
-            "  /model <name>  — Switch model\n"
+            "  /model <name>  — Switch Gemini model\n"
             "  /status        — Show session status\n"
             "  /gates on|off  — Toggle approval gates\n"
             "  /clear         — Clear conversation\n"
@@ -58,13 +54,25 @@ def dispatch_slash_command(
 
     if name == "/model" and len(cmd) > 1:
         new_model = cmd[1]
-        from .builder import infer_provider_for_model, _create_model
-        provider = infer_provider_for_model(new_model) or ctx.cfg.provider
-        try:
-            ctx.runtime.engine.model = _create_model(provider, new_model, ctx.cfg)
-            ctx.cfg.model = new_model
+        if not new_model.startswith("gemini"):
             if emit:
-                emit(f"Switched to {new_model} ({provider})")
+                emit(f"Only Gemini models supported. Got: {new_model}")
+            return "handled"
+        if not ctx.cfg.google_api_key:
+            if emit:
+                emit("No Google API key configured.")
+            return "handled"
+        try:
+            ctx.runtime.engine.model = GeminiModel(
+                model=new_model, api_key=ctx.cfg.google_api_key,
+            )
+            ctx.cfg.model = new_model
+            # Persist
+            settings = ctx.settings_store.load()
+            settings.default_model = new_model
+            ctx.settings_store.save(settings)
+            if emit:
+                emit(f"Switched to {new_model}")
         except Exception as exc:
             if emit:
                 emit(f"Failed to switch: {exc}")
@@ -73,10 +81,10 @@ def dispatch_slash_command(
     if name == "/status":
         info = (
             f"Session: {ctx.runtime.session_id}\n"
-            f"Provider: {ctx.cfg.provider}\n"
-            f"Model: {_get_model_display_name(ctx.runtime.engine)}\n"
+            f"Model: {getattr(ctx.runtime.engine.model, 'model', 'unknown')}\n"
             f"Tokens: {ctx.runtime.engine.total_tokens.input_tokens}in / "
             f"{ctx.runtime.engine.total_tokens.output_tokens}out\n"
+            f"Gates: {'ON' if ctx.cfg.approval_gates else 'OFF'}\n"
         )
         if emit:
             emit(info)
@@ -84,7 +92,7 @@ def dispatch_slash_command(
 
     if name == "/gates":
         if len(cmd) > 1:
-            ctx.cfg.approval_gates = cmd[1] != "off"
+            ctx.cfg.approval_gates = cmd[1].lower() != "off"
             ctx.runtime.engine.tools.approval_gates = ctx.cfg.approval_gates
             if emit:
                 emit(f"Approval gates: {'ON' if ctx.cfg.approval_gates else 'OFF'}")
@@ -100,9 +108,6 @@ def dispatch_slash_command(
 
 def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) -> None:
     from rich.console import Console
-    from rich.panel import Panel
-    from rich.live import Live
-    from rich.text import Text
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import InMemoryHistory
 
@@ -143,7 +148,6 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
             elif event.event_type == "error":
                 activity_lines.append(f"  [red]error:[/red] {event.data[:80]}")
 
-            # Keep only last 20 lines
             if len(activity_lines) > 20:
                 del activity_lines[:len(activity_lines) - 20]
 
@@ -165,7 +169,8 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
         if r in ("clear", "handled"):
             continue
 
-        activity_lines.clear()
+        with lock:
+            activity_lines.clear()
 
         # Run solve in thread so we can show activity
         result_holder: list[str] = []
@@ -186,7 +191,11 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
             while thread.is_alive():
                 with lock:
                     if activity_lines:
-                        console.print(activity_lines[-1])
+                        line = activity_lines[-1]
+                    else:
+                        line = None
+                if line:
+                    console.print(line)
                 time.sleep(0.5)
         except KeyboardInterrupt:
             ctx.runtime.cancel()
@@ -194,6 +203,13 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
             thread.join(timeout=5)
 
         thread.join()
+
+        # Drain remaining activity
+        with lock:
+            remaining = list(activity_lines)
+            activity_lines.clear()
+        for line in remaining[-3:]:
+            console.print(line)
 
         if error_holder:
             console.print(f"\n[red]Error:[/red] {error_holder[0]}")

@@ -6,8 +6,8 @@
 
 import json
 from ara.model import (
-    Conversation, EchoFallbackModel, ModelTurn, ToolCall,
-    ToolResult, TokenUsage,
+    Conversation, EchoFallbackModel, GeminiModel, ModelTurn, ToolCall,
+    ToolResult, TokenUsage, _tool_defs_to_gemini,
 )
 
 
@@ -29,6 +29,12 @@ def test_echo_fallback():
     turn = model.generate(conv, on_chunk=lambda c: chunks.append(c))
     assert "test note" in turn.text
     assert len(chunks) == 1
+
+
+def test_echo_fallback_context_window():
+    model = EchoFallbackModel()
+    assert model.context_window() == 4096
+    assert model.estimate_tokens(Conversation()) == 0
 
 
 def test_tool_call_dataclass():
@@ -54,7 +60,6 @@ def test_model_turn():
 
 
 def test_gemini_tool_defs_conversion():
-    from ara.model import _tool_defs_to_gemini
     defs = [{
         "name": "search_arxiv",
         "description": "Search arXiv",
@@ -66,40 +71,15 @@ def test_gemini_tool_defs_conversion():
     }]
     try:
         tools = _tool_defs_to_gemini(defs)
-        assert len(tools) == 1  # One Tool object with function_declarations
+        assert len(tools) == 1
     except ImportError:
         pass  # google-genai not installed in test env
 
 
-def test_openai_tool_defs_conversion():
-    from ara.model import _tool_defs_to_openai
-    defs = [{
-        "name": "search_arxiv",
-        "description": "Search arXiv",
-        "parameters": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-        },
-    }]
-    tools = _tool_defs_to_openai(defs)
-    assert len(tools) == 1
-    assert tools[0]["type"] == "function"
-    assert tools[0]["function"]["name"] == "search_arxiv"
-
-
-def test_anthropic_tool_defs_conversion():
-    from ara.model import _tool_defs_to_anthropic
-    defs = [{
-        "name": "search_arxiv",
-        "description": "Search arXiv",
-        "parameters": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-        },
-    }]
-    tools = _tool_defs_to_anthropic(defs)
-    assert len(tools) == 1
-    assert tools[0]["name"] == "search_arxiv"
-    assert "input_schema" in tools[0]
+def test_gemini_model_creation():
+    try:
+        model = GeminiModel(model="gemini-2.0-flash", api_key="test-key")
+        assert model.model == "gemini-2.0-flash"
+        assert model.context_window() == 1_048_576
+    except ImportError:
+        pass  # google-genai not installed in test env

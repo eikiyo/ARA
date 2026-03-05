@@ -13,11 +13,13 @@ from typing import Any
 
 def write_section(args: dict[str, Any], ctx: dict) -> str:
     section = args.get("section", "")
-    content_guidance = args.get("content_guidance", "")
+    content = args.get("content", "") or args.get("content_guidance", "")
     citations_json = args.get("citations", "[]")
 
     if not section:
         return json.dumps({"error": "section name is required"})
+    if not content:
+        return json.dumps({"error": "content is required — write the section text and pass it here"})
 
     workspace = ctx.get("workspace", Path("."))
     output_dir = workspace / "ara_data" / "output" / "sections"
@@ -25,12 +27,12 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
 
     # Save section to file
     section_file = output_dir / f"{section}.md"
-    section_file.write_text(content_guidance, encoding="utf-8")
+    section_file.write_text(content, encoding="utf-8")
 
     return json.dumps({
         "section": section,
         "saved_to": str(section_file),
-        "instruction": f"Write the {section} section with proper academic formatting and citations.",
+        "word_count": len(content.split()),
     })
 
 

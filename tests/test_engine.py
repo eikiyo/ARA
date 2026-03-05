@@ -134,9 +134,29 @@ def test_engine_max_depth():
     cfg = ARAConfig(max_depth=0)
     engine = RLMEngine(model=model, tools=tools, config=cfg)
 
-    # At depth 0, should still run
+    # At depth 0, should still run (depth > max_depth is the check)
     result = engine.solve("test")
     assert result == "Mock response"
+
+
+def test_engine_tool_call_cap():
+    """Model returning more tool calls than max_tool_calls_per_turn gets capped."""
+    class ManyToolsModel(MockModel):
+        def generate(self, conversation, on_chunk=None):
+            self._call_count += 1
+            if self._call_count == 1:
+                # Return 25 tool calls
+                calls = [ToolCall(id=f"c{i}", name="get_rules", arguments={}) for i in range(25)]
+                return ModelTurn(text="", tool_calls=calls, usage=TokenUsage(50, 20))
+            return ModelTurn(text="Done", usage=TokenUsage(50, 20))
+
+    model = ManyToolsModel()
+    tools = ARATools()
+    cfg = ARAConfig(max_tool_calls_per_turn=5)
+    engine = RLMEngine(model=model, tools=tools, config=cfg)
+
+    result = engine.solve("test")
+    assert result == "Done"
 
 
 def test_echo_fallback_integration():

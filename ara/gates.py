@@ -73,15 +73,31 @@ def run_approval_gate(
     # Prompt for decision
     print("\n  [a] Approve  [r] Reject  [e] Edit")
     try:
-        choice = input("  > ").strip().lower()
+        # Use sys.stdin directly to avoid conflicts with prompt_toolkit
+        import sys
+        sys.stdout.write("  > ")
+        sys.stdout.flush()
+        choice = sys.stdin.readline().strip().lower()
+        if not choice:
+            choice = "a"
     except (EOFError, KeyboardInterrupt):
         choice = "a"
 
     if choice.startswith("r"):
-        reason = input("  Rejection reason: ").strip() if choice == "r" else ""
+        try:
+            sys.stdout.write("  Rejection reason: ")
+            sys.stdout.flush()
+            reason = sys.stdin.readline().strip()
+        except (EOFError, KeyboardInterrupt):
+            reason = ""
         decision = f"rejected: {reason}" if reason else "rejected"
     elif choice.startswith("e"):
-        changes = input("  Describe changes: ").strip()
+        try:
+            sys.stdout.write("  Describe changes: ")
+            sys.stdout.flush()
+            changes = sys.stdin.readline().strip()
+        except (EOFError, KeyboardInterrupt):
+            changes = ""
         decision = f"edited: {changes}" if changes else "approved"
     else:
         decision = "approved"

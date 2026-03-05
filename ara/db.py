@@ -207,8 +207,10 @@ class ARADB:
         now = _now()
         stored = 0
         for p in papers:
-            doi = p.get("doi")
-            title = p.get("title", "")
+            doi = p.get("doi") or None  # Normalize empty string to None
+            title = p.get("title", "").strip()
+            if not title:
+                continue
             # Dedup by DOI first, then title
             if doi:
                 existing = self._conn.execute(
@@ -278,8 +280,34 @@ class ARADB:
         )
         self._conn.commit()
 
+    def store_fulltext_content(self, doi: str, text: str) -> None:
+        self._conn.execute(
+            "UPDATE papers SET full_text = ? WHERE doi = ?", (text, doi),
+        )
+        self._conn.commit()
+
     def get_cited_papers(self, session_id: int) -> list[dict[str, Any]]:
-        return self.get_papers(session_id)
+        # Return only papers that have claims extracted (i.e., actually analyzed/cited)
+        rows = self._conn.execute(
+            "SELECT DISTINCT p.* FROM papers p "
+            "INNER JOIN claims c ON p.paper_id = c.paper_id AND p.session_id = c.session_id "
+            "WHERE p.session_id = ? "
+            "ORDER BY p.citation_count DESC",
+            (session_id,),
+        ).fetchall()
+        if not rows:
+            # Fallback: return papers selected for deep read
+            rows = self._conn.execute(
+                "SELECT * FROM papers WHERE session_id = ? AND selected_for_deep_read = 1 "
+                "ORDER BY citation_count DESC",
+                (session_id,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            d = dict(row)
+            d["authors"] = json.loads(d.get("authors") or "[]")
+            results.append(d)
+        return results
 
     # ── Claims ──────────────────────────────────────────────────
 

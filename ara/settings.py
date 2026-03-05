@@ -10,63 +10,23 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VALID_REASONING_EFFORTS: set[str] = {"low", "medium", "high"}
-
 
 @dataclass(slots=True)
 class PersistentSettings:
-    default_provider: str | None = None
     default_model: str | None = None
-    default_reasoning_effort: str | None = None
-    default_model_google: str | None = None
-    default_model_openai: str | None = None
-    default_model_anthropic: str | None = None
-    default_model_openrouter: str | None = None
-    default_model_ollama: str | None = None
-
-    def default_model_for_provider(self, provider: str) -> str | None:
-        per = {
-            "google": self.default_model_google,
-            "openai": self.default_model_openai,
-            "anthropic": self.default_model_anthropic,
-            "openrouter": self.default_model_openrouter,
-            "ollama": self.default_model_ollama,
-        }
-        return per.get(provider) or self.default_model or None
 
     def to_json(self) -> dict[str, str]:
         payload: dict[str, str] = {}
-        for attr in (
-            "default_provider", "default_model", "default_reasoning_effort",
-            "default_model_google", "default_model_openai",
-            "default_model_anthropic", "default_model_openrouter",
-            "default_model_ollama",
-        ):
-            val = getattr(self, attr)
-            if val:
-                payload[attr] = val
+        if self.default_model:
+            payload["default_model"] = self.default_model
         return payload
 
     @classmethod
     def from_json(cls, payload: dict | None) -> PersistentSettings:
         if not isinstance(payload, dict):
             return cls()
-        def _s(key: str) -> str | None:
-            v = str(payload.get(key, "")).strip()
-            return v or None
-        effort = _s("default_reasoning_effort")
-        if effort and effort not in VALID_REASONING_EFFORTS:
-            effort = None
-        return cls(
-            default_provider=_s("default_provider"),
-            default_model=_s("default_model"),
-            default_reasoning_effort=effort,
-            default_model_google=_s("default_model_google"),
-            default_model_openai=_s("default_model_openai"),
-            default_model_anthropic=_s("default_model_anthropic"),
-            default_model_openrouter=_s("default_model_openrouter"),
-            default_model_ollama=_s("default_model_ollama"),
-        )
+        model = str(payload.get("default_model", "")).strip() or None
+        return cls(default_model=model)
 
 
 @dataclass(slots=True)

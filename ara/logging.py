@@ -22,9 +22,6 @@ def setup_logging(workspace: Path, session_root_dir: str = "ara_data") -> None:
             logging.FileHandler(str(log_file), encoding="utf-8"),
         ],
     )
-    # Keep httpx and other noisy loggers quiet
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("openai").setLevel(logging.WARNING)
-    logging.getLogger("anthropic").setLevel(logging.WARNING)
     logging.getLogger("google").setLevel(logging.WARNING)

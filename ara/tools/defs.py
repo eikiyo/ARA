@@ -149,7 +149,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
     {
         "name": "search_similar",
-        "description": "Vector similarity search across papers in the current session.",
+        "description": "Search for similar papers in the current session by keyword matching.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -198,23 +198,49 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     # ── Research tools ──────────────────────────────────────────
     {
         "name": "extract_claims",
-        "description": "Extract structured claims (findings, methods, limitations, gaps) from a paper.",
+        "description": "Extract and store claims from a paper. Call with just paper_id to get paper content, then call again with paper_id and claims list to store.",
         "parameters": {
             "type": "object",
             "properties": {
                 "paper_id": {"type": "integer", "description": "Paper ID to extract claims from"},
+                "claims": {
+                    "type": "array",
+                    "description": "List of extracted claims to store. Each: {claim_text, claim_type, confidence, supporting_quotes, section}",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "claim_text": {"type": "string"},
+                            "claim_type": {"type": "string", "description": "finding/method/limitation/gap"},
+                            "confidence": {"type": "number"},
+                            "supporting_quotes": {"type": "array", "items": {"type": "string"}},
+                            "section": {"type": "string"},
+                        },
+                    },
+                },
             },
             "required": ["paper_id"],
         },
     },
     {
         "name": "score_hypothesis",
-        "description": "Score a hypothesis on novelty, feasibility, evidence, methodology fit, impact, and reproducibility.",
+        "description": "Score a hypothesis. Call with just hypothesis to get scoring instructions, then call again with scores dict to store.",
         "parameters": {
             "type": "object",
             "properties": {
                 "hypothesis": {"type": "string", "description": "The hypothesis to score"},
                 "context": {"type": "string", "description": "Supporting evidence and claims context"},
+                "scores": {
+                    "type": "object",
+                    "description": "Scores to store: {novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility} each 0.0-1.0",
+                    "properties": {
+                        "novelty": {"type": "number"},
+                        "feasibility": {"type": "number"},
+                        "evidence_strength": {"type": "number"},
+                        "methodology_fit": {"type": "number"},
+                        "impact": {"type": "number"},
+                        "reproducibility": {"type": "number"},
+                    },
+                },
             },
             "required": ["hypothesis"],
         },
@@ -239,15 +265,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     # ── Writing tools ───────────────────────────────────────────
     {
         "name": "write_section",
-        "description": "Write one section of the research paper with proper citations.",
+        "description": "Save a written section of the research paper. Pass the fully written text as content.",
         "parameters": {
             "type": "object",
             "properties": {
                 "section": {"type": "string", "description": "Section name: abstract, introduction, methods, results, discussion, conclusion"},
-                "content_guidance": {"type": "string", "description": "What to include in this section"},
-                "citations": {"type": "string", "description": "JSON array of paper_ids to cite"},
+                "content": {"type": "string", "description": "The fully written section text with citations"},
+                "citations": {"type": "string", "description": "JSON array of paper_ids cited in this section"},
             },
-            "required": ["section", "content_guidance"],
+            "required": ["section", "content"],
         },
     },
     {

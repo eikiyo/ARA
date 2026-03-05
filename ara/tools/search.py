@@ -2,14 +2,16 @@
 # Purpose: 9 academic API search implementations
 # Functions: search_semantic_scholar, search_arxiv, search_crossref, etc.
 # Calls: httpx for HTTP requests, xml.etree for XML parsing
-# Imports: httpx, json, os, time, xml.etree.ElementTree
+# Imports: httpx, json, os, re, time, threading, xml.etree.ElementTree
 
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import time
+import threading
 import xml.etree.ElementTree as ET
 from typing import Any
 from urllib.parse import quote_plus
@@ -20,6 +22,7 @@ _log = logging.getLogger(__name__)
 _TIMEOUT = 30
 _MAX_RETRIES = 3
 _s2_last_call = 0.0
+_s2_lock = threading.Lock()
 
 
 def _request_with_retry(
@@ -48,6 +51,29 @@ def _request_with_retry(
     return None
 
 
+def _normalize_doi(raw: str | None) -> str | None:
+    """Strip common DOI prefixes, return None for empty/invalid."""
+    if not raw or not isinstance(raw, str):
+        return None
+    doi = raw.strip()
+    for prefix in ("https://doi.org/", "http://doi.org/", "http://dx.doi.org/", "https://dx.doi.org/"):
+        if doi.lower().startswith(prefix):
+            doi = doi[len(prefix):]
+            break
+    return doi if doi else None
+
+
+def _valid_year(raw: Any) -> int | None:
+    """Parse and validate a year value."""
+    if raw is None:
+        return None
+    try:
+        y = int(raw)
+        return y if 1800 <= y <= 2100 else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _paper_dict(
     title: str, abstract: str | None, authors: list[str],
     year: int | None, doi: str | None, source: str,
@@ -57,8 +83,8 @@ def _paper_dict(
         "title": title.strip() if title else "",
         "abstract": (abstract or "").strip()[:2000],
         "authors": authors[:20],
-        "year": year,
-        "doi": doi.strip().removeprefix("https://doi.org/") if doi else None,
+        "year": _valid_year(year),
+        "doi": _normalize_doi(doi),
         "source": source,
         "url": url,
         "citation_count": citation_count,
@@ -69,10 +95,11 @@ def _paper_dict(
 
 def search_semantic_scholar(args: dict[str, Any], ctx: dict) -> str:
     global _s2_last_call
-    elapsed = time.time() - _s2_last_call
-    if elapsed < 1.0:
-        time.sleep(1.0 - elapsed)
-    _s2_last_call = time.time()
+    with _s2_lock:
+        elapsed = time.time() - _s2_last_call
+        if elapsed < 1.0:
+            time.sleep(1.0 - elapsed)
+        _s2_last_call = time.time()
 
     query = args.get("query", "")
     limit = min(args.get("limit", 20), 100)
@@ -145,9 +172,8 @@ def search_arxiv(args: dict[str, Any], ctx: dict) -> str:
             year = int(published[:4]) if published and len(published) >= 4 else None
             link = entry.find("atom:id", ns)
             url = link.text.strip() if link is not None and link.text else None
-            # arXiv IDs → DOI mapping not always available
             doi_el = entry.find('.//atom:link[@title="doi"]', ns)
-            doi = doi_el.get("href", "").removeprefix("http://dx.doi.org/") if doi_el is not None else None
+            doi = doi_el.get("href") if doi_el is not None else None
 
             papers.append(_paper_dict(
                 title=title, abstract=abstract, authors=authors,
@@ -180,15 +206,21 @@ def search_crossref(args: dict[str, Any], ctx: dict) -> str:
 
     papers = []
     for item in (data.get("message", {}).get("items", [])):
-        title = (item.get("title") or [""])[0]
+        # Title can be list or string
+        raw_title = item.get("title", "")
+        if isinstance(raw_title, list):
+            title = raw_title[0] if raw_title else ""
+        else:
+            title = str(raw_title)
+
         abstract = item.get("abstract", "")
-        # Strip HTML from abstract
         if "<" in abstract:
-            import re
             abstract = re.sub(r"<[^>]+>", "", abstract)
+
         authors = [
             f"{a.get('given', '')} {a.get('family', '')}".strip()
             for a in (item.get("author") or [])[:20]
+            if isinstance(a, dict)
         ]
         date_parts = (item.get("published-print") or item.get("published-online") or {}).get("date-parts", [[]])
         year = date_parts[0][0] if date_parts and date_parts[0] else None
@@ -225,14 +257,14 @@ def search_openalex(args: dict[str, Any], ctx: dict) -> str:
     papers = []
     for item in data.get("results", []):
         title = item.get("title", "")
-        # OpenAlex abstracts come as inverted index — reconstruct
         abstract = ""
         inv_idx = item.get("abstract_inverted_index")
         if inv_idx and isinstance(inv_idx, dict):
             words: list[tuple[int, str]] = []
             for word, positions in inv_idx.items():
-                for pos in positions:
-                    words.append((pos, word))
+                if isinstance(positions, list):
+                    for pos in positions:
+                        words.append((pos, word))
             words.sort()
             abstract = " ".join(w for _, w in words)
 
@@ -243,7 +275,7 @@ def search_openalex(args: dict[str, Any], ctx: dict) -> str:
                 authors.append(name)
 
         year = item.get("publication_year")
-        doi = (item.get("doi") or "").removeprefix("https://doi.org/") or None
+        doi = item.get("doi")
 
         papers.append(_paper_dict(
             title=title, abstract=abstract, authors=authors,
@@ -281,7 +313,6 @@ def search_pubmed(args: dict[str, Any], ctx: dict) -> str:
     if not ids:
         return json.dumps({"papers": [], "total": 0})
 
-    # Fetch summaries
     summary_params: dict[str, Any] = {
         "db": "pubmed", "id": ",".join(ids),
         "retmode": "json",
@@ -303,10 +334,16 @@ def search_pubmed(args: dict[str, Any], ctx: dict) -> str:
         if not isinstance(item, dict):
             continue
         title = item.get("title", "")
-        authors = [a.get("name", "") for a in (item.get("authors") or [])[:20]]
+        authors = [
+            a.get("name", "") for a in (item.get("authors") or [])[:20]
+            if isinstance(a, dict)
+        ]
         pubdate = item.get("pubdate", "")
         year = int(pubdate[:4]) if pubdate and len(pubdate) >= 4 and pubdate[:4].isdigit() else None
-        doi_list = [eid.get("value") for eid in (item.get("articleids") or []) if eid.get("idtype") == "doi"]
+        doi_list = [
+            eid.get("value") for eid in (item.get("articleids") or [])
+            if isinstance(eid, dict) and eid.get("idtype") == "doi"
+        ]
         doi = doi_list[0] if doi_list else None
 
         papers.append(_paper_dict(
@@ -342,12 +379,18 @@ def search_core(args: dict[str, Any], ctx: dict) -> str:
         abstract = item.get("abstract", "")
         authors = [a.get("name", "") for a in (item.get("authors") or [])[:20] if isinstance(a, dict)]
         year = item.get("yearPublished")
-        doi = (item.get("doi") or "").removeprefix("https://doi.org/") or None
+        doi = item.get("doi")
+
+        # Fix operator precedence for URL extraction
+        url = item.get("downloadUrl")
+        if not url:
+            fulltext_urls = item.get("sourceFulltextUrls")
+            if isinstance(fulltext_urls, list) and fulltext_urls:
+                url = fulltext_urls[0]
 
         papers.append(_paper_dict(
             title=title, abstract=abstract, authors=authors,
-            year=year, doi=doi, source="core",
-            url=item.get("downloadUrl") or item.get("sourceFulltextUrls", [None])[0] if item.get("sourceFulltextUrls") else None,
+            year=year, doi=doi, source="core", url=url,
         ))
 
     total = data.get("totalHits", len(papers))
@@ -376,8 +419,7 @@ def search_dblp(args: dict[str, Any], ctx: dict) -> str:
         if isinstance(authors_raw, dict):
             authors_raw = [authors_raw]
         authors = [a.get("text", a) if isinstance(a, dict) else str(a) for a in authors_raw]
-        year_str = info.get("year", "")
-        year = int(year_str) if year_str and year_str.isdigit() else None
+        year = info.get("year")
         doi = info.get("doi")
 
         papers.append(_paper_dict(
@@ -409,11 +451,11 @@ def search_europe_pmc(args: dict[str, Any], ctx: dict) -> str:
         abstract = item.get("abstractText", "")
         authors = []
         for a in (item.get("authorList", {}).get("author", []) or [])[:20]:
-            name = f"{a.get('firstName', '')} {a.get('lastName', '')}".strip()
-            if name:
-                authors.append(name)
-        year_str = item.get("pubYear", "")
-        year = int(year_str) if year_str and year_str.isdigit() else None
+            if isinstance(a, dict):
+                name = f"{a.get('firstName', '')} {a.get('lastName', '')}".strip()
+                if name:
+                    authors.append(name)
+        year = item.get("pubYear")
         doi = item.get("doi")
         pmid = item.get("pmid")
 
@@ -448,24 +490,26 @@ def search_base(args: dict[str, Any], ctx: dict) -> str:
             title = title[0] if title else ""
         abstract = doc.get("dcsubject", "") or doc.get("dcdescription", "")
         if isinstance(abstract, list):
-            abstract = " ".join(abstract)
+            abstract = " ".join(str(a) for a in abstract)
         creators = doc.get("dccreator", [])
         if isinstance(creators, str):
             creators = [creators]
-        year_str = (doc.get("dcyear") or "")
+        year_str = doc.get("dcyear", "")
         if isinstance(year_str, list):
             year_str = year_str[0] if year_str else ""
-        year = int(year_str) if year_str and str(year_str).isdigit() else None
-        doi = doc.get("dcrelation", [None])
-        if isinstance(doi, list):
-            doi = next((d for d in doi if d and "doi.org" in str(d)), None)
-        if isinstance(doi, str):
-            doi = doi.removeprefix("https://doi.org/").removeprefix("http://dx.doi.org/")
+
+        # Extract DOI from relations
+        doi = None
+        dcrelation = doc.get("dcrelation")
+        if isinstance(dcrelation, list):
+            doi = next((d for d in dcrelation if isinstance(d, str) and "doi.org" in d), None)
+        elif isinstance(dcrelation, str) and "doi.org" in dcrelation:
+            doi = dcrelation
 
         papers.append(_paper_dict(
-            title=title, abstract=abstract if isinstance(abstract, str) else "",
-            authors=creators[:20], year=year,
-            doi=doi if isinstance(doi, str) else None,
+            title=str(title), abstract=abstract if isinstance(abstract, str) else "",
+            authors=[str(c) for c in creators[:20]], year=year_str,
+            doi=doi,
             source="base",
             url=doc.get("dclink") or doc.get("dcidentifier"),
         ))

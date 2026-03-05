@@ -21,10 +21,9 @@ def request_approval(args: dict[str, Any], ctx: dict) -> str:
 
     approval_gates = ctx.get("approval_gates", True)
     if not approval_gates:
-        _log.info("Auto-approving gate: %s", phase)
+        _log.warning("Auto-approving gate (gates disabled): %s", phase)
         return json.dumps({"decision": "approved", "phase": phase, "auto": True})
 
-    # Import gates module for interactive approval
     try:
         from ..gates import run_approval_gate
         decision = run_approval_gate(phase=phase, summary=summary, data_json=data_json, ctx=ctx)
@@ -50,17 +49,15 @@ def track_cost(args: dict[str, Any], ctx: dict) -> str:
     input_tokens = args.get("input_tokens", 0)
     output_tokens = args.get("output_tokens", 0)
 
-    # Rough cost estimation (per million tokens)
+    # Gemini cost rates (per million tokens: input, output)
     cost_per_m: dict[str, tuple[float, float]] = {
         "gemini-2.0-flash": (0.10, 0.40),
         "gemini-2.5-flash": (0.15, 0.60),
         "gemini-2.5-pro": (1.25, 10.0),
-        "gpt-4o": (2.50, 10.0),
-        "gpt-4o-mini": (0.15, 0.60),
-        "claude-sonnet-4-6": (3.0, 15.0),
-        "claude-opus-4-6": (15.0, 75.0),
+        "gemini-1.5-flash": (0.075, 0.30),
+        "gemini-1.5-pro": (1.25, 5.0),
     }
-    input_rate, output_rate = cost_per_m.get(model, (1.0, 3.0))
+    input_rate, output_rate = cost_per_m.get(model, (0.10, 0.40))
     cost = (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000
 
     db = ctx.get("db")
@@ -94,8 +91,10 @@ def embed_text(args: dict[str, Any], ctx: dict) -> str:
             model="text-embedding-004",
             contents=text,
         )
-        embedding = result.embeddings[0].values if result.embeddings else []
-        return json.dumps({"embedding": embedding[:768], "dimensions": len(embedding)})
+        if result.embeddings and len(result.embeddings) > 0:
+            embedding = result.embeddings[0].values
+            return json.dumps({"embedding": embedding, "dimensions": len(embedding)})
+        return json.dumps({"error": "No embedding returned", "embedding": []})
     except Exception as exc:
         _log.warning("Embedding failed: %s", exc)
         return json.dumps({"error": f"Embedding failed: {exc}"})
