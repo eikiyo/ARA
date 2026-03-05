@@ -453,8 +453,11 @@ class OpenAICompatibleModel:
                     args = json.loads(args_str)
                 except json.JSONDecodeError:
                     args = {}
+                tc_name = func.get("name", "") or ""
+                if not tc_name:
+                    continue  # skip tool calls with empty names
                 tool_calls.append(ToolCall(
-                    id=tc.get("id", ""), name=func.get("name", ""),
+                    id=tc.get("id", ""), name=tc_name,
                     arguments=args if isinstance(args, dict) else {},
                 ))
         text_content = _extract_content(message.get("content", "")) or None
@@ -474,6 +477,13 @@ class OpenAICompatibleModel:
 
     def append_tool_results(self, conversation: Conversation, results: list[ToolResult]) -> None:
         for r in results:
+            # Synthetic tool results (system nudges, empty handlers) don't correspond
+            # to real tool_calls — send them as user messages so Gemini doesn't reject.
+            if not r.name or r.name == "system" or r.tool_call_id in ("error", "empty", "system_nudge"):
+                conversation._provider_messages.append({
+                    "role": "user", "content": f"[system] {r.content}",
+                })
+                continue
             conversation._provider_messages.append({
                 "role": "tool", "tool_call_id": r.tool_call_id,
                 "name": r.name, "content": r.content,
