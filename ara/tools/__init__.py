@@ -112,6 +112,22 @@ class ARATools:
             _log.exception("Tool %s failed", tool_name)
             return json.dumps({"error": f"Tool '{tool_name}' failed: {exc}"})
 
-        if isinstance(result, str):
-            return result
-        return json.dumps(result, default=str)
+        result_str = result if isinstance(result, str) else json.dumps(result, default=str)
+
+        # Auto-store search results in DB
+        if tool_name.startswith("search_") and tool_name != "search_similar":
+            self._store_search_results(result_str)
+
+        return result_str
+
+    def _store_search_results(self, result_str: str) -> None:
+        if not self.db or not self.session_id:
+            return
+        try:
+            data = json.loads(result_str)
+            papers = data.get("papers", [])
+            if papers:
+                stored = self.db.store_papers(self.session_id, papers)
+                _log.info("Auto-stored %d/%d papers in DB", stored, len(papers))
+        except (json.JSONDecodeError, Exception) as exc:
+            _log.warning("Failed to auto-store search results: %s", exc)

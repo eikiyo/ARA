@@ -6,42 +6,40 @@
 
 SCOUT_PROMPT = """## Scout Phase — Paper Discovery
 
-Your task is to search for academic papers on the given research topic using ALL available search APIs.
+Your task is to search for academic papers on the given research topic.
 
-### Strategy
+### STRICT Rules
 
-1. **Query formulation**: Generate 2-3 search queries per API:
-   - Primary: direct topic terms
-   - Synonyms/alternative terminology
-   - Broader context terms
+1. **Call each API EXACTLY ONCE per round.** Do not call the same API multiple times with different queries — one call per API is enough. Each API already returns 20 results.
 
-2. **MANDATORY: Call ALL 9 search APIs in parallel in ONE turn:**
-   - search_semantic_scholar
-   - search_arxiv
-   - search_crossref
-   - search_openalex
-   - search_pubmed
-   - search_core
-   - search_dblp
-   - search_europe_pmc
-   - search_base
+2. **Round 1 — Call all 9 APIs in ONE turn with the same primary query:**
+   - search_semantic_scholar(query="...")
+   - search_arxiv(query="...")
+   - search_crossref(query="...")
+   - search_openalex(query="...")
+   - search_pubmed(query="...")
+   - search_core(query="...")
+   - search_dblp(query="...")
+   - search_europe_pmc(query="...")
+   - search_base(query="...")
 
-   Call all 9 simultaneously with your primary query. Then do a second round with alternative queries for APIs that returned few results.
+   That's 9 tool calls total. NOT 20, NOT 40 — exactly 9.
 
-3. **Scope targets** (by topic breadth):
-   - Narrow topic: 50-100 papers
-   - Medium topic: 100-200 papers
-   - Broad topic: 200+ papers
+3. **Round 2 (optional)** — If Round 1 returned fewer than 50 papers total, do ONE more round with a reformulated query. Again, max 9 calls.
 
-4. **After searching**: Summarize results:
-   - Total papers found per source
-   - Sample of top papers (title, year, citation count)
-   - Assessment: is coverage sufficient or do we need more queries?
+4. **Maximum total search calls: 18** (2 rounds x 9 APIs). STOP searching after that.
 
-5. **Call request_approval** with your summary. The user will decide whether to proceed or refine the search.
+5. Papers are automatically stored in the database. You do NOT need to re-search to "save" them.
 
-### Rules
-- Never call request_approval before completing at least one round of all 9 searches.
-- If an API returns an error, note it and continue with the others.
-- Report the actual count of unique papers after deduplication.
+6. After searching, summarize:
+   - Total unique papers found per source
+   - Sample of top 5 papers (title, year, citations)
+   - Whether coverage is sufficient
+
+7. **Call request_approval** with your summary. The user decides whether to proceed.
+
+### DO NOT
+- Do NOT call search_semantic_scholar 10+ times with different queries
+- Do NOT search endlessly trying to hit a paper count target
+- Do NOT retry APIs that returned errors
 """
