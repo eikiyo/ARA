@@ -41,9 +41,8 @@ Produce a ranked list of top 30 papers, formatted as:
 [Rank]. [Relevance Score] | [Authors, Year] | [Title] | [DOI/Source]
     Reason: [brief justification]
 
-Call request_approval with the ranked list and cluster summary. \
-User will approve the selection or request adjustments (e.g., "skip this cluster", \
-"include more methods papers").
+**Do NOT call request_approval yourself.** The manager handles approval gates. \
+Return your ranked list and cluster summary as a text response when done.
 """
 
 ANALYST_DEEP_READ_PROMPT = """\
@@ -114,6 +113,6 @@ Report:
 - Major gaps identified: [list]
 - Papers with access issues: [count]
 
-Call request_approval with all extracted claims organized by theme. \
-Include the list of contradictions and identified gaps. User will approve for verification phase.
+**Do NOT call request_approval yourself.** The manager handles approval gates. \
+Return all extracted claims organized by theme, contradictions, and gaps as a text response.
 """

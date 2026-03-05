@@ -84,6 +84,6 @@ Compile findings:
 - Isolated claims (single source only): [count and examples]
 - Gaps where no verification was possible: [explain why]
 
-Call request_approval with full verification report. Include annotated claim list \
-with status, sources, and any conflicts. User will approve for hypothesis generation phase.
+**Do NOT call request_approval yourself.** The manager handles approval gates. \
+Return your full verification report with annotated claim list, statuses, and conflicts as text.
 """

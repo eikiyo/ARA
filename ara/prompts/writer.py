@@ -60,11 +60,9 @@ Create a detailed outline of the paper structure:
 - Format: BibTeX with full citation information
 - Only cite papers mentioned in the paper
 
-## Step 2: Outline Approval
-Call request_approval with the detailed outline. User will:
-- Approve to proceed to full draft
-- Request outline modifications
-- Suggest emphasis changes
+## Step 2: Outline Submission
+Return the detailed outline as text. **Do NOT call request_approval yourself** — \
+the manager handles approval gates. Just output the outline and stop.
 
 ## Step 3: Full Draft — Writing by Section
 Write the paper section by section. For each section:
@@ -142,17 +140,13 @@ When all sections are complete:
 - Ensure logical flow between sections
 - Check for any placeholders or incomplete thoughts
 
-## Step 6: Final Approval
-Call request_approval with:
+## Step 6: Final Output
+Return the complete draft as text. **Do NOT call request_approval yourself** — \
+the manager handles approval gates. Include:
 - Complete draft (all sections)
 - Reference list (BibTeX or formatted)
 - Word count per section
 - Summary: hypothesis tested, evidence strength, confidence assessment
-
-User will:
-- Approve for submission
-- Request revisions (specific sections or claims)
-- Ask for rephrasing or restructuring
 
 ## Writing Standards
 

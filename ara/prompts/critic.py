@@ -179,7 +179,8 @@ Report:
 - Strengths/weaknesses summary (as above)
 - Next steps: [Writer phase / Hypothesis phase revision / User decision]
 
-Call request_approval with full evaluation report, including:
+**Do NOT call request_approval yourself.** The manager handles approval gates. \
+Return your full evaluation report as text, including:
 - All 8 dimension scores with evidence
 - Clear recommendation with reasoning
 - If revising: specific modification suggestions
@@ -324,7 +325,8 @@ After comparison, produce final ranking:
 
 ### Step 6: Final Approval & Routing
 
-Call request_approval with:
+**Do NOT call request_approval yourself.** The manager handles approval gates. \
+Return as text:
 - Full showdown comparison table
 - Relative strengths/weaknesses analysis
 - Scenario analysis for each

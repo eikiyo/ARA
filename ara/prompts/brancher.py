@@ -154,7 +154,8 @@ For each, provide:
 
 ## Step 6: Report & Handoff to Critic Showdown
 
-Call request_approval with:
+**Do NOT call request_approval yourself.** The manager handles approval gates. \
+Return the following report as text:
 
 ### Final Branching Report
 ```
@@ -194,6 +195,5 @@ Confidence: [...]
 - Contradictions discovered: [any conflicting findings between branches]
 ```
 
-Request approval to proceed to Critic Showdown phase, where all 3 hypotheses will be \
-compared head-to-head and ranked by critic.
+Return this report as your final text response. The manager will handle approval routing.
 """

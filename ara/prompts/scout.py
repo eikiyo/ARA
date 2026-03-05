@@ -60,8 +60,8 @@ Target paper counts depend on topic breadth:
 If you find >500 papers, apply additional filters (year, peer-review status, citation count) \
 to keep the set manageable.
 
-## Step 5: Documentation & Approval
-Record in your report:
+## Step 5: Documentation (Final Output)
+Your final text response MUST include this report:
 - Total papers found: [count]
 - Papers per source database: [breakdown]
 - Date range of papers: [from-to]
@@ -70,6 +70,6 @@ Record in your report:
 - Final de-duplicated count: [count]
 - Any access limitations: [paywall papers, missing abstracts, etc.]
 
-Call request_approval with a summary of papers found per source and total count. \
-User will approve proceeding to analyst triage or request modifications to the search.
+**Do NOT call request_approval yourself.** The manager handles approval gates. \
+Just return your report as a text response when done.
 """

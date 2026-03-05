@@ -81,6 +81,6 @@ Report:
 Format the top 5 as a ranked list, including full text of each hypothesis, \
 evidence grounding, and scoring breakdown.
 
-Call request_approval with the ranked list. User will select ONE hypothesis \
-to pursue in the brancher phase, or ask for regeneration with modified criteria.
+**Do NOT call request_approval yourself.** The manager handles approval gates. \
+Return the ranked list with full hypothesis text, evidence grounding, and scores as text.
 """

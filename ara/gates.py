@@ -93,9 +93,21 @@ def prompt_user_decision() -> str:
         print("Options: (a)pprove, (r)eject, (e)dit")
 
     try:
-        from prompt_toolkit import prompt as pt_prompt
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.key_binding import KeyBindings
+
+        kb = KeyBindings()
+
+        @kb.add("escape")
+        def _esc(event: Any) -> None:
+            """Treat ESC as approve."""
+            event.current_buffer.text = "a"
+            event.current_buffer.validate_and_handle()
+
+        session: Any = PromptSession(key_bindings=kb)
         print()  # ensure clean line before prompt
-        response = pt_prompt("Decision> ").strip().lower()
+        response = session.prompt(HTML("<b>Decision&gt;</b> ")).strip().lower()
     except (ImportError, EOFError, KeyboardInterrupt):
         try:
             response = input("Decision> ").strip().lower()
@@ -107,8 +119,8 @@ def prompt_user_decision() -> str:
 
     if response in ("r", "reject", "no", "n"):
         try:
-            from prompt_toolkit import prompt as pt_prompt
-            reason = pt_prompt("Reason for rejection> ").strip()
+            from prompt_toolkit import PromptSession as _PS
+            reason = _PS().prompt("Reason for rejection> ").strip()
         except (ImportError, EOFError, KeyboardInterrupt):
             try:
                 reason = input("Reason for rejection> ").strip()
@@ -118,8 +130,8 @@ def prompt_user_decision() -> str:
 
     if response in ("e", "edit"):
         try:
-            from prompt_toolkit import prompt as pt_prompt
-            changes = pt_prompt("Describe changes> ").strip()
+            from prompt_toolkit import PromptSession as _PS
+            changes = _PS().prompt("Describe changes> ").strip()
         except (ImportError, EOFError, KeyboardInterrupt):
             try:
                 changes = input("Describe changes> ").strip()
