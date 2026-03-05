@@ -255,8 +255,6 @@ def _accumulate_openai_stream(events: list[tuple[str, dict[str, Any]]]) -> dict[
     }
     if tool_calls_by_index:
         message["tool_calls"] = [tool_calls_by_index[i] for i in sorted(tool_calls_by_index)]
-    else:
-        message["tool_calls"] = None
     result: dict[str, Any] = {"choices": [{"message": message, "finish_reason": finish_reason}]}
     if usage:
         result["usage"] = usage
