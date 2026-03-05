@@ -79,18 +79,23 @@ def prompt_user_decision() -> str:
     - "rejected: {reason}"
     - "edited: {changes}"
 
-    Uses prompt_toolkit for input with completion hints.
+    Shows lettered options in a compact format.
     """
     try:
         from rich.console import Console
+        from rich.text import Text
         console = Console()
-        console.print("[bold]Options:[/bold]")
-        console.print("  [green]a[/green] / [green]approve[/green]  — Accept and continue")
-        console.print("  [red]r[/red] / [red]reject[/red]   — Reject with feedback")
-        console.print("  [yellow]e[/yellow] / [yellow]edit[/yellow]     — Edit/modify results")
+        options = Text()
+        options.append("  a", style="bold green")
+        options.append(" Approve    ", style="dim")
+        options.append("b", style="bold red")
+        options.append(" Reject    ", style="dim")
+        options.append("c", style="bold yellow")
+        options.append(" Edit", style="dim")
+        console.print(options)
         console.print()
     except ImportError:
-        print("Options: (a)pprove, (r)eject, (e)dit")
+        print("  a) Approve  b) Reject  c) Edit")
 
     try:
         from prompt_toolkit import PromptSession
@@ -117,7 +122,7 @@ def prompt_user_decision() -> str:
     if response in ("a", "approve", "yes", "y", ""):
         return "approved"
 
-    if response in ("r", "reject", "no", "n"):
+    if response in ("b", "r", "reject", "no", "n"):
         try:
             from prompt_toolkit import PromptSession as _PS
             reason = _PS().prompt("Reason for rejection> ").strip()
@@ -128,7 +133,7 @@ def prompt_user_decision() -> str:
                 reason = "No reason given"
         return f"rejected: {reason}" if reason else "rejected: No reason given"
 
-    if response in ("e", "edit"):
+    if response in ("c", "e", "edit"):
         try:
             from prompt_toolkit import PromptSession as _PS
             changes = _PS().prompt("Describe changes> ").strip()

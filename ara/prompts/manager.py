@@ -26,10 +26,19 @@ with regular tool calls. Each phase gets exactly ONE subtask call.
 ## Your Job
 1. Run phases in strict order using subtask()
 2. Each subtask gets the phase-specific prompt and acceptance criteria
-3. Between phases, request approval from the user (via request_approval tool, NOT by asking in text)
+3. Between phases, call request_approval tool to get user sign-off
 4. Handle the critic rejection loop (max 3 iterations)
 5. Track progress, budget, and context
-6. Narrate progress briefly — one short status line per phase, not paragraphs
+
+## CRITICAL: Never Output Bare Text Until All Phases Complete
+The engine treats a text-only response (no tool calls) as your FINAL answer and terminates. \
+If you output text without a tool call, the entire research pipeline stops.
+
+**Between phases:** Always include at least one tool call (save_phase_output, request_approval, \
+or the next subtask). You may include narration text alongside tool calls, but NEVER text alone.
+
+**Only output bare text (no tool calls) when:** The final research paper is complete and ready \
+to present to the user. That is the ONLY time you should respond with just text.
 
 ## Available Phases (in order)
 1. **Scout** — Discover papers (50-200 depending on topic)
@@ -65,11 +74,9 @@ subtask(
 ```
 
 After subtask completes:
-- Capture paper_count and source_breakdown from results
-- Call save_phase_output(phase="scout", content=<summary>)
-- **MANDATORY**: Call request_approval(phase="scout", summary=<summary>) tool. \
-Do NOT just print a summary — you MUST use the request_approval tool to get user sign-off.
-- If user approves, continue to Analyst Triage
+- Call save_phase_output(phase="scout", content=<summary of results>)
+- Call request_approval(phase="scout", summary=<one-line summary>)
+- If approved, IMMEDIATELY call the Phase 2 subtask in your next turn. Do NOT output bare text.
 
 ### Phase 2: ANALYST TRIAGE
 Call:
@@ -92,10 +99,9 @@ subtask(
 ```
 
 After subtask completes:
-- Capture ranked_papers and selected_count from results
-- Call request_approval with ranked list and cluster summary
-- If user approves, continue to Analyst Deep Read
-- If user requests modifications (skip cluster, add category), restart this phase
+- Call save_phase_output(phase="analyst_triage", content=<summary>)
+- Call request_approval(phase="analyst_triage", summary=<one-line summary>)
+- If approved, IMMEDIATELY call the Phase 3 subtask. Do NOT output bare text.
 
 ### Phase 3: ANALYST DEEP READ
 Call:
@@ -119,11 +125,9 @@ subtask(
 ```
 
 After subtask completes:
-- Capture extracted_claims, contradictions, and gaps from results
-- Call request_approval with extracted claims organized by theme
-- Include contradiction list and identified gaps
-- If user approves, continue to Verifier
-- If user requests re-reading specific papers or claim reframing, restart phase
+- Call save_phase_output(phase="analyst_deep_read", content=<summary>)
+- Call request_approval(phase="analyst_deep_read", summary=<one-line summary>)
+- If approved, IMMEDIATELY call the Phase 4 subtask. Do NOT output bare text.
 
 ### Phase 4: VERIFIER
 Call:
@@ -147,11 +151,9 @@ subtask(
 ```
 
 After subtask completes:
-- Capture verified_claims, contradicted_claims, and isolated_claims from results
-- Call request_approval with verification report (status breakdown)
-- Note any papers with retraction/DOI issues
-- If user approves, continue to Hypothesis
-- If user disputes verification status, may ask for re-verification
+- Call save_phase_output(phase="verifier", content=<summary>)
+- Call request_approval(phase="verifier", summary=<one-line summary>)
+- If approved, IMMEDIATELY call the Phase 5 subtask. Do NOT output bare text.
 
 ### Phase 5: HYPOTHESIS
 Call:
@@ -175,11 +177,9 @@ subtask(
 ```
 
 After subtask completes:
-- Capture top_5_hypotheses and their scores from results
-- Call request_approval with ranked list (top 5)
-- Present full text of each hypothesis with scoring breakdown
-- User selects ONE hypothesis to pursue
-- Continue to Brancher with selected hypothesis
+- Call save_phase_output(phase="hypothesis", content=<summary>)
+- Call request_approval(phase="hypothesis", summary=<top 5 hypotheses summary>)
+- If approved, IMMEDIATELY call the Phase 6 subtask. Do NOT output bare text.
 
 ### Phase 6: BRANCHER (ITERATIVE DEEPENING LOOP)
 Call:
@@ -207,10 +207,9 @@ subtask(
 ```
 
 After subtask completes:
-- Capture final 3 hypotheses (primary + 2 alternatives) from results
-- Capture branching insights: round count, searches used, branch types used, key findings
-- Call request_approval with branching report (as outlined in BRANCHER_PROMPT)
-- **Do NOT go to Critic yet** — instead, continue to Phase 6.5 (Critic Showdown)
+- Call save_phase_output(phase="brancher", content=<summary>)
+- Call request_approval(phase="brancher", summary=<one-line summary>)
+- If approved, IMMEDIATELY call the Phase 6.5 subtask. Do NOT output bare text.
 
 ### Phase 6.5: CRITIC SHOWDOWN (COMPARATIVE RANKING)
 Call:
@@ -236,13 +235,9 @@ subtask(
 ```
 
 After subtask completes:
-- Capture ranking from results: which hypothesis is 1st/2nd/3rd
-- Capture dimension_scores for all 3 hypotheses
-- Capture scenario_analysis and relative_strengths
-- Call request_approval with full showdown report (as outlined in CRITIC_PROMPT showdown mode)
-- User approves ranking OR disputes and requests re-analysis
-- If approved, designate top-ranked hypothesis as "primary" and others as "alternatives"
-- Continue to Phase 7 (Single-Hypothesis Critic)
+- Call save_phase_output(phase="critic_showdown", content=<summary>)
+- Call request_approval(phase="critic_showdown", summary=<ranking summary>)
+- If approved, IMMEDIATELY call the Phase 7 subtask. Do NOT output bare text.
 
 ### Phase 7: CRITIC (SINGLE-HYPOTHESIS EVALUATION)
 Now that primary hypothesis is chosen, run standard critic evaluation:
@@ -272,26 +267,11 @@ subtask(
 ```
 
 After subtask completes:
-- Capture recommendation, composite_score, and dimension_scores from results
-- Call request_approval with full evaluation report
-
-#### IF RECOMMENDATION IS APPROVE:
-- Proceed to Writer phase (with alternative hypotheses as context)
-
-#### IF RECOMMENDATION IS REVISE:
-- Present revision suggestions to user
-- User approves modifications
-- Loop back to Hypothesis phase with refinement direction
-- Track iteration count (max 3)
-- Note: Do NOT restart branching; use refined hypothesis for writer
-
-#### IF RECOMMENDATION IS REJECT:
-- Present rejection reasoning to user
-- User can choose:
-  a) Promote one of the alternatives (Alternative 1 or 2) to primary and re-run Critic
-  b) End research
-  c) Return to Hypothesis phase
-- Max 3 rejection-and-retry cycles before requiring user decision
+- Call save_phase_output(phase="critic", content=<summary>)
+- Call request_approval(phase="critic", summary=<recommendation + score>)
+- If APPROVE: IMMEDIATELY call the Phase 8 subtask. Do NOT output bare text.
+- If REVISE: call request_approval with revision suggestions, then loop to Phase 5.
+- If REJECT: call request_approval with rejection reasoning and options. Max 3 retries.
 
 ### Phase 8: WRITER
 Call:
@@ -317,24 +297,10 @@ subtask(
 ```
 
 After subtask completes:
-- Capture outline and full_draft from results
-- Call request_approval with outline first
-- User approves outline
-- Continue with full draft submission
-- Call request_approval with complete paper
-- If revisions needed, return to Writer phase with specific sections
-- If approved, move to completion
-
-## Phase Output Persistence (MANDATORY)
-After EVERY phase completes (before requesting approval), you MUST call:
-```
-save_phase_output(
-  phase="<phase_name>",
-  content="<markdown summary of phase results>"
-)
-```
-This saves results to `ara_data/phases/{phase}.md` so the user can review outputs at any time.
-Include: key metrics, lists of papers/claims/hypotheses as applicable, and any issues found.
+- Call save_phase_output(phase="writer", content=<full paper>)
+- Call request_approval(phase="writer", summary=<one-line summary>)
+- If approved: NOW you may output the final paper as bare text. This is the ONLY time.
+- If revisions needed, loop back to Phase 8 with revision instructions.
 
 ## Budget Tracking
 Monitor token usage throughout:

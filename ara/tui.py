@@ -470,10 +470,17 @@ class RichREPL:
         body = msg[m.end():] if m else msg
         if _RE_CALLING.search(body):
             self._flush_step()
+            # Show a brief "working" indicator so user knows agent is active
+            depth = int(m.group(1)) if m and m.group(1) else 0
+            step = int(m.group(2)) if m and m.group(2) else 0
+            from rich.text import Text
+            self.console.print(Text(f"  ⠿ working... (d{depth}/s{step})", style="dim"), end="\r")
             return
         if _RE_SUBTASK.search(body) or _RE_EXECUTE.search(body):
             self._flush_step()
             label = re.sub(r">> (entering subtask|executing leaf):\s*", "", body).strip()
+            if len(label) > 120:
+                label = label[:117] + "..."
             self.console.rule(f"[dim]{label}[/dim]", style="dim")
             return
         if _RE_ERROR.search(body):
