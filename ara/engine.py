@@ -271,6 +271,7 @@ class RLMEngine:
             )
 
         empty_count = 0
+        invalid_tool_count = 0
         for step in range(1, self.config.max_steps_per_call + 1):
             if self._cancel.is_set():
                 self._emit(f"[d{depth}] cancelled by user", on_event)
@@ -286,12 +287,15 @@ class RLMEngine:
             except ModelError as exc:
                 err_text = str(exc).lower()
                 if "invalid tool call" in err_text or "invalid_request_error" in err_text:
-                    _log.warning("Invalid tool call at d%d/s%d, retrying: %s", depth, step, exc)
-                    self._emit(f"[d{depth}/s{step}] tool call error, retrying...", on_event)
-                    # Ask model to respond without tool calls
+                    invalid_tool_count += 1
+                    _log.warning("Invalid tool call at d%d/s%d (attempt %d/5), retrying: %s", depth, step, invalid_tool_count, exc)
+                    self._emit(f"[d{depth}/s{step}] tool call error ({invalid_tool_count}/5), retrying...", on_event)
+                    if invalid_tool_count >= 5:
+                        self._emit(f"[d{depth}/s{step}] too many invalid tool calls, giving up", on_event)
+                        return f"Model repeatedly produced invalid tool calls at depth {depth}. This usually means the model doesn't support the tool calling format. Try a different model."
                     retry_msg = ToolResult(
                         tool_call_id="error", name="system",
-                        content="Your previous tool call had invalid arguments. Please try again with simpler arguments, or provide a text response instead.",
+                        content="Your previous tool call had invalid arguments. Please try again with simpler arguments, or provide a text response instead. Do NOT use tools if you cannot format them correctly — just respond with text.",
                     )
                     model.append_tool_results(conversation, [retry_msg])
                     continue
@@ -396,6 +400,7 @@ class RLMEngine:
                 continue
 
             empty_count = 0  # reset on successful tool call
+            invalid_tool_count = 0
             tc_names = [tc.name for tc in turn.tool_calls]
             self._emit(
                 f"[d{depth}/s{step}] {len(turn.tool_calls)} tool call(s) ({elapsed:.1f}s): {', '.join(tc_names)}",
