@@ -276,7 +276,7 @@ class RLMEngine:
 
             # Loop detection across turns — include args hash so subtask(scout) ≠ subtask(triage)
             turn_sig = "|".join(
-                f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)[:100]}"
+                f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)[:300]}"
                 for tc in capped_calls
             )
             _recent_tool_sigs.append(turn_sig)

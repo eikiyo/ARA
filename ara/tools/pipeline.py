@@ -81,7 +81,7 @@ def embed_text(args: dict[str, Any], ctx: dict) -> str:
     if not text:
         return json.dumps({"error": "text is required"})
 
-    api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = _get_api_key()
     if not api_key:
         return json.dumps({"error": "GOOGLE_API_KEY not set for embeddings"})
 
@@ -99,6 +99,18 @@ def embed_text(args: dict[str, Any], ctx: dict) -> str:
     except Exception as exc:
         _log.warning("Embedding failed: %s", exc)
         return json.dumps({"error": f"Embedding failed: {exc}"})
+
+
+def _get_api_key() -> str | None:
+    """Get Google API key from env vars or credential store."""
+    key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if key:
+        return key
+    try:
+        from ..credentials import load_api_key
+        return load_api_key()
+    except Exception:
+        return None
 
 
 def _build_embed_text(paper: dict) -> str:
@@ -121,7 +133,7 @@ def batch_embed_papers(args: dict[str, Any], ctx: dict) -> str:
     if not db or not session_id:
         return json.dumps({"error": "Database or session not available"})
 
-    api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = _get_api_key()
     if not api_key:
         return json.dumps({"error": "GOOGLE_API_KEY not set for embeddings"})
 

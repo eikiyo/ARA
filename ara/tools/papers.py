@@ -234,6 +234,12 @@ def _embed_query(text: str) -> list[float] | None:
     """Embed a query string using Gemini text-embedding-004."""
     api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
+        try:
+            from ..credentials import load_api_key
+            api_key = load_api_key()
+        except Exception:
+            pass
+    if not api_key:
         return None
     try:
         from google import genai

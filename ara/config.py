@@ -73,7 +73,7 @@ class ARAConfig:
             writer_model=os.getenv("ARA_WRITER_MODEL", "gemini-2.5-pro"),
             google_api_key=os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY"),
             max_depth=_safe_int("ARA_MAX_DEPTH", 4),
-            max_steps_per_call=_safe_int("ARA_MAX_STEPS", 80),
+            max_steps_per_call=_safe_int("ARA_MAX_STEPS", 150),
             max_tool_calls_per_turn=_safe_int("ARA_MAX_TOOL_CALLS_PER_TURN", 1),
             max_solve_seconds=_safe_int("ARA_MAX_SOLVE_SECONDS", 1800),
             budget_limit_usd=_safe_float("ARA_BUDGET_LIMIT", 5.0),
