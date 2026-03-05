@@ -249,18 +249,23 @@ class RLMEngine:
                     "Wait for each result before calling the next tool.",
                 )
 
-            # Loop detection across turns
-            turn_sig = "|".join(sorted(tc.name for tc in capped_calls))
+            # Loop detection across turns — include args hash so subtask(scout) ≠ subtask(triage)
+            turn_sig = "|".join(
+                f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)[:100]}"
+                for tc in capped_calls
+            )
             _recent_tool_sigs.append(turn_sig)
+            _DELEGATION_TOOLS = {"subtask", "execute"}
             for tc in capped_calls:
-                _tool_call_counts[tc.name] = _tool_call_counts.get(tc.name, 0) + 1
+                if tc.name not in _DELEGATION_TOOLS:
+                    _tool_call_counts[tc.name] = _tool_call_counts.get(tc.name, 0) + 1
 
-            # Check: same pattern 2 turns in a row (tightened from 3)
+            # Check: same EXACT pattern (name+args) 2 turns in a row
             if len(_recent_tool_sigs) >= 2 and _recent_tool_sigs[-1] == _recent_tool_sigs[-2]:
-                _log.warning("Loop: pattern %r repeated 2 turns", turn_sig)
+                _log.warning("Loop: pattern repeated 2 turns: %s", turn_sig[:120])
                 loop_detected = True
 
-            # Check: any single tool > MAX total
+            # Check: any non-delegation tool > MAX total
             if not loop_detected:
                 for name, count in _tool_call_counts.items():
                     if count >= _MAX_SINGLE_TOOL:
