@@ -9,6 +9,7 @@
 __version__ = "0.1.0"
 
 from .config import ARAConfig
+from .db import ARADB
 from .engine import RLMEngine
 from .model import (
     AnthropicModel,
@@ -22,6 +23,7 @@ from .runtime import SessionRuntime, SessionStore
 
 __all__ = [
     "ARAConfig",
+    "ARADB",
     "AnthropicModel",
     "Conversation",
     "ModelTurn",

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import ARAConfig
+from .db import ARADB
 from .engine import ContentDeltaCallback, ExternalContext, RLMEngine, StepCallback, TurnSummary
 from .replay_log import ReplayLogger
 
@@ -110,6 +111,7 @@ class SessionRuntime:
     store: SessionStore
     session_id: str
     context: ExternalContext
+    db: ARADB | None = None
     max_persisted_observations: int = 400
     turn_history: list[TurnSummary] | None = None
     max_turn_summaries: int = 50
@@ -127,6 +129,14 @@ class SessionRuntime:
         context = ExternalContext(observations=obs[-max_obs:])
         engine.session_dir = store.root
         engine.session_id = sid
+
+        # Initialize SQLite database in .ara/session.db
+        db_path = store.root / "session.db"
+        db = ARADB(db_path=db_path)
+
+        # Wire DB into engine tools
+        engine.tools.db = db
+
         raw_history = state.get("turn_history", [])
         turn_history: list[TurnSummary] = []
         if isinstance(raw_history, list):
@@ -139,7 +149,7 @@ class SessionRuntime:
         max_turns = max(1, config.max_turn_summaries)
         runtime = cls(
             engine=engine, store=store, session_id=sid,
-            context=context, max_persisted_observations=max_obs,
+            context=context, db=db, max_persisted_observations=max_obs,
             turn_history=turn_history[-max_turns:],
             max_turn_summaries=max_turns,
         )

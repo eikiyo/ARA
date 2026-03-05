@@ -64,6 +64,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["objective"],
         },
     },
+    # === SEARCH TOOLS (9) ===
     {
         "name": "search_semantic_scholar",
         "description": "Search Semantic Scholar for academic papers.",
@@ -78,7 +79,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
     {
         "name": "search_arxiv",
-        "description": "Search arXiv for preprints.",
+        "description": "Search arXiv for preprints in CS, physics, math, stats.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -88,6 +89,225 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["query"],
         },
     },
+    {
+        "name": "search_crossref",
+        "description": "Search CrossRef for papers with DOI validation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query."},
+                "limit": {"type": "integer", "description": "Max results (default 10)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_openalex",
+        "description": "Search OpenAlex for papers (largest open academic index).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query."},
+                "limit": {"type": "integer", "description": "Max results (default 10)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_pubmed",
+        "description": "Search PubMed for biomedical and life science papers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query."},
+                "limit": {"type": "integer", "description": "Max results (default 10)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_core",
+        "description": "Search CORE for open access papers (requires CORE_API_KEY).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query."},
+                "limit": {"type": "integer", "description": "Max results (default 10)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_dblp",
+        "description": "Search DBLP for computer science papers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query."},
+                "limit": {"type": "integer", "description": "Max results (default 10)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_europe_pmc",
+        "description": "Search Europe PMC for biomedical papers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query."},
+                "limit": {"type": "integer", "description": "Max results (default 10)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_base",
+        "description": "Search BASE (Bielefeld Academic Search Engine).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query."},
+                "limit": {"type": "integer", "description": "Max results (default 10)."},
+            },
+            "required": ["query"],
+        },
+    },
+    # === PAPER TOOLS ===
+    {
+        "name": "fetch_fulltext",
+        "description": "Fetch open access version of paper via Unpaywall API.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "doi": {"type": "string", "description": "DOI of the paper."},
+            },
+            "required": ["doi"],
+        },
+    },
+    {
+        "name": "read_paper",
+        "description": "Read paper from database and return formatted summary.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "integer", "description": "Paper ID in database."},
+            },
+            "required": ["paper_id"],
+        },
+    },
+    {
+        "name": "search_similar",
+        "description": "Search for papers similar to query text in current session.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query_text": {"type": "string", "description": "Text to find similar papers for."},
+                "limit": {"type": "integer", "description": "Max results (default 5)."},
+            },
+            "required": ["query_text"],
+        },
+    },
+    # === VERIFICATION TOOLS ===
+    {
+        "name": "check_retraction",
+        "description": "Check if a paper is retracted via CrossRef API.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "doi": {"type": "string", "description": "DOI of the paper."},
+            },
+            "required": ["doi"],
+        },
+    },
+    {
+        "name": "get_citation_count",
+        "description": "Get citation count from Semantic Scholar.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "doi": {"type": "string", "description": "DOI of the paper."},
+            },
+            "required": ["doi"],
+        },
+    },
+    {
+        "name": "validate_doi",
+        "description": "Validate DOI and check if it resolves.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "doi": {"type": "string", "description": "DOI to validate."},
+            },
+            "required": ["doi"],
+        },
+    },
+    # === RESEARCH TOOLS ===
+    {
+        "name": "extract_claims",
+        "description": "Extract atomic claims from a paper. Returns instruction for the agent.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "integer", "description": "Paper ID to extract claims from."},
+            },
+            "required": ["paper_id"],
+        },
+    },
+    {
+        "name": "score_hypothesis",
+        "description": "Generate scoring template for evaluating a hypothesis across dimensions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "hypothesis_text": {"type": "string", "description": "The hypothesis to score."},
+                "dimensions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Scoring dimensions.",
+                },
+            },
+            "required": ["hypothesis_text"],
+        },
+    },
+    {
+        "name": "branch_search",
+        "description": "Perform cross-domain search based on hypothesis and branch type.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "hypothesis_text": {"type": "string", "description": "The hypothesis to branch from."},
+                "branch_type": {
+                    "type": "string",
+                    "description": "Type: lateral, methodological, analogical, or convergent.",
+                },
+                "query": {"type": "string", "description": "Search query for the branch."},
+            },
+            "required": ["hypothesis_text", "branch_type", "query"],
+        },
+    },
+    # === WRITING TOOLS ===
+    {
+        "name": "write_section",
+        "description": "Save a paper section to .ara/output/sections/{section_name}.md",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "section_name": {"type": "string", "description": "Section name (e.g., introduction)."},
+                "content": {"type": "string", "description": "Markdown content of the section."},
+            },
+            "required": ["section_name", "content"],
+        },
+    },
+    {
+        "name": "get_citations",
+        "description": "Generate BibTeX bibliography from all papers in session.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    # === PIPELINE TOOLS ===
     {
         "name": "request_approval",
         "description": (
@@ -102,6 +322,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "data": {"type": "object", "description": "Structured data for the approval gate."},
             },
             "required": ["phase", "summary"],
+        },
+    },
+    {
+        "name": "get_rules",
+        "description": "Get all active user rules for the current session.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
         },
     },
     {
