@@ -17,6 +17,41 @@ from ..logging import get_logger
 _log = get_logger("search")
 
 
+def _request_with_retry(url: str, params: dict, headers: dict | None = None,
+                        max_retries: int = 3, timeout: int = 30) -> httpx.Response:
+    """HTTP GET with retry on 429/5xx. Backoff: 2s, 5s, 10s."""
+    import time as _time
+    delays = [2, 5, 10]
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = httpx.get(url, params=params, headers=headers,
+                                 timeout=timeout, follow_redirects=True)
+            if response.status_code == 429 and attempt < max_retries:
+                wait = delays[min(attempt, len(delays) - 1)]
+                _log.info("Rate limited by %s, retrying in %ds (attempt %d)", url.split("/")[2], wait, attempt + 1)
+                _time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (429, 500, 502, 503) and attempt < max_retries:
+                wait = delays[min(attempt, len(delays) - 1)]
+                _log.info("HTTP %d from %s, retrying in %ds", e.response.status_code, url.split("/")[2], wait)
+                _time.sleep(wait)
+                last_exc = e
+                continue
+            raise
+        except httpx.HTTPError as e:
+            last_exc = e
+            if attempt < max_retries:
+                wait = delays[min(attempt, len(delays) - 1)]
+                _time.sleep(wait)
+                continue
+            raise
+    raise last_exc  # type: ignore[misc]
+
+
 def search_semantic_scholar(query: str, limit: int = 10) -> str:
     """Search Semantic Scholar for papers.
 
@@ -35,8 +70,7 @@ def search_semantic_scholar(query: str, limit: int = 10) -> str:
             "fields": "title,abstract,authors,year,citationCount,externalIds,url"
         }
 
-        response = httpx.get(url, params=params, timeout=30)
-        response.raise_for_status()
+        response = _request_with_retry(url, params=params)
         data = response.json()
 
         results = []
@@ -77,7 +111,7 @@ def search_arxiv(query: str, limit: int = 10) -> str:
         JSON string of standardized paper results
     """
     try:
-        url = "http://export.arxiv.org/api/query"
+        url = "https://export.arxiv.org/api/query"
         params = {
             "search_query": f"all:{query}",
             "max_results": limit,
@@ -85,8 +119,7 @@ def search_arxiv(query: str, limit: int = 10) -> str:
             "sortOrder": "descending"
         }
 
-        response = httpx.get(url, params=params, timeout=30)
-        response.raise_for_status()
+        response = _request_with_retry(url, params=params)
 
         root = ET.fromstring(response.content)
         # Handle namespaces
@@ -158,8 +191,7 @@ def search_crossref(query: str, limit: int = 10) -> str:
             "User-Agent": "ARA/0.1 (Academic Research Agent)"
         }
 
-        response = httpx.get(url, params=params, headers=headers, timeout=30)
-        response.raise_for_status()
+        response = _request_with_retry(url, params=params, headers=headers)
         data = response.json()
 
         results = []
@@ -216,8 +248,7 @@ def search_openalex(query: str, limit: int = 10) -> str:
             "User-Agent": "ARA/0.1 (Academic Research Agent; mailto:ara@research.local)"
         }
 
-        response = httpx.get(url, params=params, headers=headers, timeout=30)
-        response.raise_for_status()
+        response = _request_with_retry(url, params=params, headers=headers)
         data = response.json()
 
         results = []
@@ -260,7 +291,7 @@ def search_pubmed(query: str, limit: int = 10) -> str:
         JSON string of standardized paper results
     """
     try:
-        # Step 1: Search
+        # Step 1: Search for PMIDs
         esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
         esearch_params = {
             "db": "pubmed",
@@ -269,32 +300,30 @@ def search_pubmed(query: str, limit: int = 10) -> str:
             "retmode": "json"
         }
 
-        esearch_response = httpx.get(esearch_url, params=esearch_params, timeout=30)
-        esearch_response.raise_for_status()
+        esearch_response = _request_with_retry(esearch_url, params=esearch_params)
         esearch_data = esearch_response.json()
 
         pmids = esearch_data.get("esearchresult", {}).get("idlist", [])
         if not pmids:
             return json.dumps([])
 
-        # Step 2: Fetch details
-        efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-        efetch_params = {
+        # Step 2: Get summaries via esummary (returns proper JSON, unlike efetch)
+        esummary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+        esummary_params = {
             "db": "pubmed",
             "id": ",".join(pmids),
             "retmode": "json"
         }
 
-        efetch_response = httpx.get(efetch_url, params=efetch_params, timeout=30)
-        efetch_response.raise_for_status()
-        efetch_data = efetch_response.json()
+        esummary_response = _request_with_retry(esummary_url, params=esummary_params)
+        esummary_data = esummary_response.json()
 
         results = []
-        for article in efetch_data.get("result", {}).get("uids", []):
-            if article == "uids":
+        result_dict = esummary_data.get("result", {})
+        for pmid in pmids:
+            article_data = result_dict.get(str(pmid), {})
+            if not article_data or not isinstance(article_data, dict):
                 continue
-
-            article_data = efetch_data.get("result", {}).get(str(article), {})
 
             # Extract authors
             authors = []
@@ -302,15 +331,28 @@ def search_pubmed(query: str, limit: int = 10) -> str:
                 if "name" in author:
                     authors.append(author["name"])
 
-            # Get PMID for URL
-            pmid = article
+            # Extract year from pubdate (e.g., "2024 Jan 15")
+            year = None
+            pubdate = article_data.get("pubdate", "")
+            if pubdate and len(pubdate) >= 4:
+                try:
+                    year = int(pubdate[:4])
+                except ValueError:
+                    pass
+
+            # Extract DOI from articleids
+            doi = None
+            for aid in article_data.get("articleids", []):
+                if aid.get("idtype") == "doi":
+                    doi = aid.get("value")
+                    break
 
             result = {
                 "title": article_data.get("title", ""),
-                "abstract": article_data.get("abstract", ""),
+                "abstract": "",  # esummary doesn't include abstracts
                 "authors": authors,
-                "year": article_data.get("pubdate_year"),
-                "doi": article_data.get("doi"),
+                "year": year,
+                "doi": doi,
                 "source": "pubmed",
                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                 "citation_count": 0
@@ -366,8 +408,7 @@ def search_dblp(query: str, limit: int = 10) -> str:
             "format": "json"
         }
 
-        response = httpx.get(url, params=params, timeout=30)
-        response.raise_for_status()
+        response = _request_with_retry(url, params=params)
         data = response.json()
 
         results = []
@@ -383,14 +424,13 @@ def search_dblp(query: str, limit: int = 10) -> str:
                     author_list = [author_list]
                 authors = [a.get("text", "") for a in author_list if isinstance(a, dict)]
 
-            # Extract year from key or other field
+            # Extract year
             year = None
-            key = info.get("key", "")
-            if "/" in key:
-                year_str = key.split("/")[-1]
+            year_str = info.get("year", "")
+            if year_str:
                 try:
                     year = int(year_str)
-                except:
+                except (ValueError, TypeError):
                     pass
 
             result = {
@@ -432,8 +472,7 @@ def search_europe_pmc(query: str, limit: int = 10) -> str:
             "format": "json"
         }
 
-        response = httpx.get(url, params=params, timeout=30)
-        response.raise_for_status()
+        response = _request_with_retry(url, params=params)
         data = response.json()
 
         results = []
@@ -489,8 +528,7 @@ def search_base(query: str, limit: int = 10) -> str:
             "format": "json"
         }
 
-        response = httpx.get(url, params=params, timeout=30)
-        response.raise_for_status()
+        response = _request_with_retry(url, params=params)
         data = response.json()
 
         results = []
