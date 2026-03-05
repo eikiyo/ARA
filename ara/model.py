@@ -271,7 +271,24 @@ def _accumulate_openai_stream(events: list[tuple[str, dict[str, Any]]]) -> dict[
         tc_deltas = delta.get("tool_calls")
         if tc_deltas:
             for tc_delta in tc_deltas:
-                idx = tc_delta.get("index", 0)
+                idx = tc_delta.get("index")
+                # Gemini sends all tool calls in one chunk without index.
+                # Auto-assign: if no index, use next available slot when we
+                # see a new id or name (indicating a new tool call).
+                if idx is None:
+                    tc_id = tc_delta.get("id", "")
+                    tc_name = (tc_delta.get("function") or {}).get("name", "")
+                    if tc_id or tc_name:
+                        # New tool call — find next unused index
+                        idx = len(tool_calls_by_index)
+                        # But check if this id already exists
+                        for existing_idx, existing_tc in tool_calls_by_index.items():
+                            if existing_tc["id"] == tc_id and tc_id:
+                                idx = existing_idx
+                                break
+                    else:
+                        # Continuation of last tool call
+                        idx = max(tool_calls_by_index.keys()) if tool_calls_by_index else 0
                 if idx not in tool_calls_by_index:
                     tool_calls_by_index[idx] = {
                         "id": tc_delta.get("id", ""),
