@@ -18,6 +18,7 @@ from .brancher import BRANCHER_PROMPT
 from .critic import CRITIC_PROMPT, PAPER_CRITIC_PROMPT
 from .writer import WRITER_PROMPT
 from .synthesis import SYNTHESIS_PROMPT
+from .protocol import PROTOCOL_PROMPT
 
 PHASE_PROMPTS: dict[str, str] = {
     "manager": MANAGER_PROMPT,
@@ -31,6 +32,7 @@ PHASE_PROMPTS: dict[str, str] = {
     "synthesis": SYNTHESIS_PROMPT,
     "paper_critic": PAPER_CRITIC_PROMPT,
     "writer": WRITER_PROMPT,
+    "protocol": PROTOCOL_PROMPT,
 }
 
 _RECURSIVE_SECTION = """

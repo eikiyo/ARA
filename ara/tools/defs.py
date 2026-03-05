@@ -354,6 +354,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
 
+    {
+        "name": "snowball_references",
+        "description": "Pull references of top-cited papers from Semantic Scholar to enrich the corpus. This performs 'snowball sampling' — finding papers cited BY your existing papers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "How many top papers to snowball from (default 20)"},
+                "refs_per_paper": {"type": "integer", "description": "Max references per paper (default 10)"},
+            },
+        },
+    },
+
     # ── Pipeline tools ──────────────────────────────────────────
     {
         "name": "request_approval",

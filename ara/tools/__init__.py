@@ -19,7 +19,7 @@ from . import search, papers, verification, research, writing, pipeline, quality
 # Phase → allowed tool names (from arch.md §4.2)
 # "search_*" is a wildcard matching all search_ tools
 PHASE_TOOLS: dict[str, list[str]] = {
-    "scout": ["search_*", "embed_text", "batch_embed_papers", "request_approval", "track_cost"],
+    "scout": ["search_*", "request_approval", "track_cost"],
     "analyst_triage": ["list_papers", "read_paper", "search_similar", "embed_text", "request_approval", "track_cost"],
     "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "search_similar", "request_approval", "track_cost"],
     "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "read_paper", "request_approval", "track_cost"],
@@ -27,6 +27,7 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "brancher": ["search_*", "search_similar", "embed_text", "request_approval", "track_cost"],
     "critic": ["read_paper", "search_similar", "request_approval", "track_cost"],
     "synthesis": ["list_papers", "read_paper", "search_similar", "request_approval", "track_cost"],
+    "protocol": ["list_papers", "read_paper", "search_similar", "write_section", "request_approval", "track_cost"],
     "writer": ["list_papers", "read_paper", "search_similar", "write_section", "get_citations", "generate_prisma_diagram", "request_approval", "track_cost"],
     "paper_critic": ["read_paper", "search_similar", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "request_approval", "track_cost"],
 }
@@ -52,6 +53,7 @@ TOOL_DISPATCH: dict[str, Any] = {
     "search_europe_pmc": search.search_europe_pmc,
     "search_base": search.search_base,
     "search_all": search.search_all,
+    "snowball_references": search.snowball_references,
     # Paper tools
     "fetch_fulltext": papers.fetch_fulltext,
     "read_paper": papers.read_paper,

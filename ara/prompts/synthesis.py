@@ -52,19 +52,34 @@ From the pipeline metadata:
 - Full-text articles excluded: [papers excluded after deep read]
 - Studies included in final synthesis: [papers with claims]
 
-### Step 5: Build Citation Map with Effect Sizes
+### Step 5: Build Citation Map with Effect Sizes AND Section Assignments
 
-Create a mapping of available citations organized by theme:
+Create a mapping of available citations organized by theme AND assigned to paper sections:
 ```
-Theme 1: [topic]
-  - (AuthorLastName, Year) — finding [effect size if available, e.g., d=0.45, OR=2.3]
-  - (AuthorLastName, Year) — finding [effect size if available]
+INTRODUCTION (target: 8+ citations):
+  - (AuthorLastName, Year) — establishes background context
+  - (AuthorLastName, Year) — defines the problem scope
 
-Theme 2: [topic]
-  - (AuthorLastName, Year) — finding [CI: 95% x-y if available]
+LITERATURE REVIEW (target: 20+ citations):
+  Theme 1: [topic]
+    - (AuthorLastName, Year) — finding [effect size if available]
+    - (AuthorLastName, Year) — finding [effect size if available]
+  Theme 2: [topic]
+    - (AuthorLastName, Year) — finding [CI: 95% x-y if available]
+
+RESULTS (target: 8+ citations):
+  - (AuthorLastName, Year) — key result for evidence table
+
+DISCUSSION (target: 10+ citations):
+  - (AuthorLastName, Year) — comparison with existing review
+  - (AuthorLastName, Year) — supports causal interpretation
+
+CONCLUSION (target: 3+ citations):
+  - (AuthorLastName, Year) — future research direction
 ```
 
-Use EXACT author last names from the database.
+Use EXACT author last names from the database. TARGET: 60+ unique citations total.
+The writer will follow this map — assign enough papers to meet section minimums.
 
 ### Step 6: Build Structural Causal Model Notes
 

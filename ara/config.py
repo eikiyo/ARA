@@ -20,7 +20,7 @@ class ARAConfig:
     session_root_dir: str = "ara_data"
 
     # Model
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-2.5-flash"
     writer_model: str = "gemini-2.5-pro"
     google_api_key: str | None = None
 
@@ -29,11 +29,11 @@ class ARAConfig:
     max_steps_per_call: int = 150
     max_tool_calls_per_turn: int = 1
     max_solve_seconds: int = 5400  # 90 minutes — 11-phase pipeline needs time
-    budget_limit_usd: float = 10.0
+    budget_limit_usd: float = 15.0
 
     # Paper quality gates
-    min_papers: int = 100
-    min_cited: int = 40
+    min_papers: int = 300
+    min_cited: int = 60
     min_paper_words: int = 6000
     max_search_rounds: int = 6
     paper_critic_max_revisions: int = 3
@@ -69,7 +69,7 @@ class ARAConfig:
         return cls(
             workspace=ws,
             session_root_dir=os.getenv("ARA_SESSION_DIR", "ara_data"),
-            model=os.getenv("ARA_MODEL", "gemini-2.0-flash"),
+            model=os.getenv("ARA_MODEL", "gemini-2.5-flash"),
             writer_model=os.getenv("ARA_WRITER_MODEL", "gemini-2.5-pro"),
             google_api_key=os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY"),
             max_depth=_safe_int("ARA_MAX_DEPTH", 4),
@@ -77,8 +77,8 @@ class ARAConfig:
             max_tool_calls_per_turn=_safe_int("ARA_MAX_TOOL_CALLS_PER_TURN", 1),
             max_solve_seconds=_safe_int("ARA_MAX_SOLVE_SECONDS", 5400),
             budget_limit_usd=_safe_float("ARA_BUDGET_LIMIT", 5.0),
-            min_papers=_safe_int("ARA_MIN_PAPERS", 100),
-            min_cited=_safe_int("ARA_MIN_CITED", 40),
+            min_papers=_safe_int("ARA_MIN_PAPERS", 300),
+            min_cited=_safe_int("ARA_MIN_CITED", 60),
             min_paper_words=_safe_int("ARA_MIN_PAPER_WORDS", 6000),
             max_search_rounds=_safe_int("ARA_MAX_SEARCH_ROUNDS", 6),
             paper_critic_max_revisions=_safe_int("ARA_PAPER_CRITIC_MAX_REVISIONS", 3),

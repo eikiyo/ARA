@@ -43,56 +43,94 @@ Present a markdown table:
 
 ANALYST_DEEP_READ_PROMPT = """## Analyst Deep Read Phase — Structured Claim and Data Extraction
 
-Your task is to extract structured claims AND quantitative data from selected papers. This data will be used to build evidence tables and synthesize findings. Target: **100+ claims** from **80+ papers**.
+Your task is to extract structured claims AND quantitative data from selected papers. This data builds evidence tables and synthesizes findings. Target: **150+ claims** from **50+ papers**.
 
-### Process
+### Process — FOLLOW THIS EXACT PATTERN FOR EVERY PAPER
 
-1. **For each selected paper**, use read_paper to get full content.
-2. **Try fetch_fulltext** if full text is not cached (requires DOI).
-3. **Extract claims** using extract_claims tool for each paper.
+For each paper:
+1. Call `read_paper(paper_id=N)` to get full content
+2. Read the title, abstract, and any full text carefully
+3. Call `extract_claims(paper_id=N, claims=[...])` with 3-5 claim objects
 
-### Claim Structure — MANDATORY Fields
+### EXACT Tool Call Format — COPY THIS STRUCTURE
 
-For each claim, provide ALL of these fields:
-- **claim_text**: The core assertion (one sentence, precise)
-- **claim_type**: finding | method | limitation | gap | theory | recommendation
-- **confidence**: 0.0-1.0 (how confident are you in this extraction?)
-- **supporting_quotes**: Exact quotes from the paper (at least one)
-- **section**: Which section of the paper it came from
+```json
+extract_claims({
+  "paper_id": 42,
+  "claims": [
+    {
+      "claim_text": "Children with >2 hours daily screen time showed 23% lower language scores",
+      "claim_type": "finding",
+      "confidence": 0.9,
+      "supporting_quotes": ["Screen exposure exceeding 2h/day was associated with significantly lower expressive language scores (β = −0.23, p < 0.01)"],
+      "section": "results",
+      "sample_size": "N=1,847",
+      "effect_size": "β = −0.23",
+      "p_value": "p < 0.01",
+      "confidence_interval": "95% CI: −0.31 to −0.15",
+      "study_design": "longitudinal cohort",
+      "population": "children aged 2-5 years",
+      "country": "Canada",
+      "year_range": "2015-2019"
+    },
+    {
+      "claim_text": "Interactive screen content (e.g., educational apps) showed no negative effect on vocabulary",
+      "claim_type": "finding",
+      "confidence": 0.8,
+      "supporting_quotes": ["Interactive digital media use was not significantly associated with vocabulary scores (OR = 1.02, 95% CI: 0.87-1.19)"],
+      "section": "results",
+      "sample_size": "N=1,847",
+      "effect_size": "OR = 1.02",
+      "study_design": "longitudinal cohort",
+      "population": "children aged 2-5 years",
+      "country": "Canada"
+    },
+    {
+      "claim_text": "Cross-sectional designs dominate the field, limiting causal inference",
+      "claim_type": "limitation",
+      "confidence": 0.95,
+      "supporting_quotes": ["The preponderance of cross-sectional studies precludes definitive causal conclusions"],
+      "section": "discussion"
+    },
+    {
+      "claim_text": "No studies examined the moderating role of parental co-viewing in children under 3",
+      "claim_type": "gap",
+      "confidence": 0.85,
+      "supporting_quotes": ["Future research should examine whether parental co-viewing mediates screen time effects in the youngest age groups"],
+      "section": "discussion"
+    }
+  ]
+})
+```
 
-### Quantitative Data — Extract When Available
-- **sample_size**: e.g., "N=1,234" or "342 participants"
-- **effect_size**: e.g., "OR=2.3", "Cohen's d=0.45", "HR=1.8"
-- **p_value**: e.g., "p<0.001", "p=0.034"
-- **confidence_interval**: e.g., "95% CI: 1.2-3.4"
-- **study_design**: e.g., "cross-sectional", "longitudinal cohort", "RCT", "systematic review", "meta-analysis"
-- **population**: e.g., "first-generation immigrants aged 30-65"
-- **country**: e.g., "Sweden", "Denmark", "multi-country EU"
-- **year_range**: e.g., "2010-2018" (data collection period)
+### CRITICAL: claim_text MUST be a non-empty string
+- NEVER send claims with empty claim_text
+- NEVER send an empty claims array
+- NEVER send claims as `"__dict__"` or other non-string values
+- Every claim MUST have claim_text, claim_type, confidence, and supporting_quotes
+
+### Claim Types (use exactly these)
+- **finding**: A result, outcome, or empirical observation
+- **method**: A methodology, measurement tool, or analytical approach
+- **limitation**: A stated weakness or constraint
+- **gap**: An identified research gap or unexplored question
+- **theory**: A theoretical framework or model referenced
+- **recommendation**: A policy or practice recommendation
 
 ### Extraction Priorities
-1. **Key findings and results** — especially quantitative results with effect sizes
-2. **Novel methods or approaches** — with enough detail to compare across papers
-3. **Stated limitations** — critical for the discussion section
-4. **Research gaps** — explicitly stated or implied, these drive hypotheses
-5. **Contradictions between papers** — flag these prominently with both paper IDs
-6. **Sample characteristics** — needed for evidence tables
+1. **Key findings with effect sizes** — the most valuable data for the paper
+2. **Study design and sample characteristics** — needed for evidence tables
+3. **Stated limitations** — critical for discussion section
+4. **Research gaps** — drive hypotheses and future directions
+5. **Contradictions between papers** — flag with both paper IDs
+6. **Methods used** — needed for methods section comparison
 
 ### Quality Standards
-- Each claim MUST have at least one supporting quote
-- Claims MUST be atomic (one assertion per claim)
-- Contradictions between papers MUST be explicitly noted with references to both papers
-- If working from abstract only (no full text), note "abstract_only" in section field
-- Extract at least 3-5 claims per paper (aim for comprehensive extraction)
-- Quantitative data fields can be empty if not available, but ALWAYS attempt extraction
-- Target: 100+ total claims across all papers
+- Extract at least 3-5 claims per paper (aim for 5)
+- If working from abstract only, set section to "abstract_only"
+- Quantitative fields can be empty if not available
+- Target: 150+ total claims across all papers
+- Aim to process at least 50 papers
 
-### Cross-Paper Synthesis Notes
-After extracting claims from all papers, note:
-- Which findings are confirmed by multiple papers (convergent evidence)
-- Which findings are contradicted (divergent evidence)
-- Which gaps are identified by multiple authors
-- Patterns in methodology choices across the field
-
-Present extracted claims organized by type and call request_approval.
+Call request_approval when done with a count of claims extracted.
 """

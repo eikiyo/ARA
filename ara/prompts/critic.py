@@ -73,7 +73,7 @@ Your task is to critically evaluate the complete paper draft against tier-A jour
 
 ### Minimum Thresholds (MUST PASS ALL)
 
-- [ ] 40+ unique citations from verified database papers
+- [ ] 60+ unique citations from verified database papers
 - [ ] 6000+ total words across all sections
 - [ ] 2+ data tables present (study characteristics + evidence synthesis minimum)
 - [ ] 0 hallucinated citations (every Author/Year must map to a DB paper)

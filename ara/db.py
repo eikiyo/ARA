@@ -195,12 +195,22 @@ CREATE TABLE IF NOT EXISTS quality_audit (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS phase_checkpoints (
+    checkpoint_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(session_id),
+    phase TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'completed',
+    result_summary TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_papers_session ON papers(session_id);
 CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi);
 CREATE INDEX IF NOT EXISTS idx_claims_session ON claims(session_id);
 CREATE INDEX IF NOT EXISTS idx_hypotheses_session ON hypotheses(session_id);
 CREATE INDEX IF NOT EXISTS idx_prisma_session ON prisma_stats(session_id);
 CREATE INDEX IF NOT EXISTS idx_audit_session ON quality_audit(session_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON phase_checkpoints(session_id);
 """
 
 
@@ -222,12 +232,21 @@ class ARADB:
         self._migrate()
 
     def _migrate(self) -> None:
-        """Add columns that may not exist in older databases."""
+        """Add columns/tables that may not exist in older databases."""
         cur = self._conn.execute("PRAGMA table_info(papers)")
         existing = {row[1] for row in cur.fetchall()}
         if "embedding" not in existing:
             self._conn.execute("ALTER TABLE papers ADD COLUMN embedding TEXT")
             self._conn.commit()
+        # Ensure phase_checkpoints table exists (for older DBs)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS phase_checkpoints ("
+            "checkpoint_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "session_id INTEGER NOT NULL REFERENCES sessions(session_id), "
+            "phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', "
+            "result_summary TEXT, created_at TEXT NOT NULL)"
+        )
+        self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()
@@ -580,6 +599,25 @@ class ARADB:
             "SELECT * FROM quality_audit WHERE session_id = ? ORDER BY audit_id", (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── Phase checkpoints ──────────────────────────────────────
+
+    def save_phase_checkpoint(self, session_id: int, phase: str, result_summary: str | None = None) -> None:
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO phase_checkpoints (session_id, phase, status, result_summary, created_at) "
+                "VALUES (?, ?, 'completed', ?, ?)",
+                (session_id, phase, result_summary, now),
+            )
+            self._conn.commit()
+
+    def get_completed_phases(self, session_id: int) -> set[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT phase FROM phase_checkpoints WHERE session_id = ? AND status = 'completed'",
+            (session_id,),
+        ).fetchall()
+        return {row["phase"] for row in rows}
 
     def get_all_papers_with_claims(self, session_id: int) -> list[dict[str, Any]]:
         """Get all papers that have at least one claim, with their claims attached."""

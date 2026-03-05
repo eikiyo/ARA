@@ -551,7 +551,7 @@ _ALL_SEARCH_FNS = [
 ]
 
 
-_MIN_PAPERS = 150  # Skip searching if DB already has this many (target: 200+)
+_MIN_PAPERS = 300  # Skip searching if DB already has this many (target: 300+)
 _SEARCH_ALL_LOCK = threading.Lock()
 
 
@@ -651,3 +651,85 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
 
 # Temp storage for search_all full results (consumed by auto-store in dispatch)
 _search_all_full_results: list[dict[str, Any]] = []
+
+
+# ── Reference snowballing ──────────────────────────────────────
+
+def snowball_references(args: dict[str, Any], ctx: dict) -> str:
+    """Pull references of top-cited papers from Semantic Scholar to enrich the corpus."""
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+    if not db or not session_id:
+        return json.dumps({"error": "Database or session not available"})
+
+    limit = args.get("limit", 20)  # How many top papers to snowball from
+    refs_per_paper = args.get("refs_per_paper", 10)
+
+    # Get top papers by citation count
+    rows = db._conn.execute(
+        "SELECT paper_id, title, doi FROM papers "
+        "WHERE session_id = ? AND doi IS NOT NULL "
+        "ORDER BY citation_count DESC LIMIT ?",
+        (session_id, limit),
+    ).fetchall()
+
+    if not rows:
+        return json.dumps({"snowballed": 0, "note": "No papers with DOIs found"})
+
+    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+    headers = {"x-api-key": api_key} if api_key else {}
+    total_new = 0
+    papers_checked = 0
+
+    for row in rows:
+        doi = row["doi"]
+        if not doi:
+            continue
+
+        # Rate limit — Semantic Scholar needs 1s between calls
+        global _s2_last_call
+        with _s2_lock:
+            elapsed = time.time() - _s2_last_call
+            if elapsed < 1.0:
+                time.sleep(1.0 - elapsed)
+            _s2_last_call = time.time()
+
+        data = _request_with_retry(
+            f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}/references",
+            headers=headers,
+            params={"fields": "title,abstract,authors,year,externalIds,citationCount,url", "limit": refs_per_paper},
+        )
+
+        if not isinstance(data, dict):
+            continue
+
+        papers_checked += 1
+        ref_papers = []
+        ref_data = data.get("data") or []
+        for ref in ref_data:
+            cited = ref.get("citedPaper", {})
+            if not cited or not cited.get("title"):
+                continue
+            ref_doi = (cited.get("externalIds") or {}).get("DOI")
+            authors = [a.get("name", "") for a in (cited.get("authors") or [])[:20]]
+            ref_papers.append(_paper_dict(
+                title=cited.get("title", ""),
+                abstract=cited.get("abstract"),
+                authors=authors,
+                year=cited.get("year"),
+                doi=ref_doi,
+                source="snowball",
+                url=cited.get("url"),
+                citation_count=cited.get("citationCount", 0),
+            ))
+
+        if ref_papers:
+            stored = db.store_papers(session_id, ref_papers)
+            total_new += stored
+            _log.info("SNOWBALL: %d new papers from references of '%s'", stored, row["title"][:60])
+
+    return json.dumps({
+        "snowballed": total_new,
+        "papers_checked": papers_checked,
+        "total_in_db": db.paper_count(session_id),
+    })

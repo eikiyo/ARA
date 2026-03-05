@@ -122,13 +122,13 @@ Must include:
 11. You MUST write all 7 sections. Do NOT stop after 2-3 sections.
 
 ### Citation Density Requirements (MINIMUM per section)
-- **Introduction**: 6+ citations (establish the field)
-- **Literature Review**: 15+ citations (this is the core — cite heavily)
-- **Methods**: 2+ citations (methodology frameworks)
-- **Results**: 5+ citations (compare findings)
-- **Discussion**: 6+ citations (contextualize findings)
-- **Conclusion**: 2+ citations (future directions)
-- **TOTAL across paper**: 40+ unique citations
+- **Introduction**: 8+ citations (establish the field)
+- **Literature Review**: 20+ citations (this is the core — cite heavily)
+- **Methods**: 3+ citations (methodology frameworks)
+- **Results**: 8+ citations (compare findings)
+- **Discussion**: 10+ citations (contextualize findings)
+- **Conclusion**: 3+ citations (future directions)
+- **TOTAL across paper**: 60+ unique citations
 
 ### Citation Integrity Rules
 - FIRST call list_papers to see all available papers with their exact author names and years

@@ -86,13 +86,15 @@ class SessionRuntime:
         if not self.db_session_id and not self._context.topic:
             self.start_research(topic=objective)
 
-        result = self.engine.solve(
-            objective=objective,
+        # Use programmatic pipeline instead of LLM manager
+        result = self.engine.run_pipeline(
+            topic=self._context.topic,
+            paper_type=self._context.paper_type,
             context=self._context,
             on_event=on_event,
         )
 
-        # Generate output files after solve completes
+        # Generate output files after pipeline completes
         self._generate_output()
 
         return result

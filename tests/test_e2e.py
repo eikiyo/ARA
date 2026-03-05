@@ -124,7 +124,8 @@ class TestSessionLifecycle:
         runtime = SessionRuntime.bootstrap(engine=engine, config=cfg)
         result = runtime.solve("Research quantum computing")
         assert runtime.db_session_id is not None
-        assert "No API keys" in result or "Google API key" in result
+        # Pipeline returns "Pipeline complete" (programmatic pipeline)
+        assert "Pipeline complete" in result or "No API keys" in result or "Google API key" in result
 
     def test_resume_no_session_raises(self):
         ws = _temp_workspace()

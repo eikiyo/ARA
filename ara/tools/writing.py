@@ -31,12 +31,12 @@ _MIN_WORDS: dict[str, int] = {
 
 # Minimum citation counts per section for AAA-grade output
 _MIN_CITATIONS: dict[str, int] = {
-    "introduction": 6,
-    "literature_review": 15,
-    "methods": 2,
-    "results": 5,
-    "discussion": 6,
-    "conclusion": 2,
+    "introduction": 8,
+    "literature_review": 20,
+    "methods": 3,
+    "results": 8,
+    "discussion": 10,
+    "conclusion": 3,
 }
 
 # Pattern to match citation formats:
