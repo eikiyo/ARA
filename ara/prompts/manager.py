@@ -94,11 +94,26 @@ subtask(
 )
 ```
 
+### Paper Type Rules
+
+Different paper types modify the phase sequence:
+- **research_article** (default): All 8 phases.
+- **literature_review**: Skip Phase 5 (Hypothesis) and Phase 6 (Brancher). Go directly from Verifier to Critic, then Writer.
+- **meta_analysis**: All 8 phases. Emphasis on quantitative extraction in Deep Read.
+- **systematic_review**: All 8 phases. Emphasis on methodology quality in Triage.
+
+If the user's topic implies a specific paper type, auto-detect it:
+- Topics with "review of", "survey of", "overview of" → literature_review
+- Topics with "meta-analysis", "pooled analysis" → meta_analysis
+- Topics with "systematic review", "PRISMA" → systematic_review
+- Otherwise → research_article
+
 ### Rules
-1. Execute phases IN ORDER. Never skip a phase.
+1. Execute phases IN ORDER. Skip phases only when paper type rules allow it.
 2. After each subtask completes, briefly summarize results before moving to the next phase.
 3. Pass relevant context between phases (paper counts, claim counts, hypothesis text).
 4. If a phase fails or returns insufficient results, retry ONCE with adjusted parameters.
 5. Track budget throughout — if budget exceeded, finish current phase and stop.
 6. The critic rejection loop runs max 3 times. After 3 rejections, proceed to Writer with best available hypothesis.
+7. When the critic rejects, pass its issues and suggestions back to Phase 5 for revision.
 """

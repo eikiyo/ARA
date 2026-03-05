@@ -15,6 +15,7 @@ import httpx
 
 _log = logging.getLogger(__name__)
 _MAX_DOWNLOAD_BYTES = 5_000_000  # 5MB limit for fulltext downloads
+_MAX_FULLTEXT_CHARS = 5000  # Truncate stored full text to 5KB
 
 
 def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
@@ -70,7 +71,7 @@ def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
                     text = re.sub(r"<[^>]+>", " ", text)
                     text = re.sub(r"\s+", " ", text).strip()
                     if len(text) > 200:
-                        full_text = text[:50000]
+                        full_text = text[:_MAX_FULLTEXT_CHARS]
     except Exception as exc:
         _log.warning("Failed to download fulltext from %s: %s", str(pdf_url)[:80], exc)
 
@@ -79,7 +80,7 @@ def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     if db:
         db.update_paper_fulltext(doi=doi, url=pdf_url)
         if full_text:
-            db.store_fulltext_content(doi=doi, text=full_text[:50000])
+            db.store_fulltext_content(doi=doi, text=full_text[:_MAX_FULLTEXT_CHARS])
 
     result: dict[str, Any] = {
         "status": "found",
@@ -108,6 +109,10 @@ def read_paper(args: dict[str, Any], ctx: dict) -> str:
     paper = db.get_paper(paper_id)
     if not paper:
         return json.dumps({"error": f"Paper {paper_id} not found"})
+
+    # Truncate full_text to prevent context bloat
+    if paper.get("full_text") and len(paper["full_text"]) > _MAX_FULLTEXT_CHARS:
+        paper["full_text"] = paper["full_text"][:_MAX_FULLTEXT_CHARS] + "... [truncated]"
 
     return json.dumps(paper, default=str)
 

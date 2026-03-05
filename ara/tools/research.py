@@ -46,11 +46,15 @@ def extract_claims(args: dict[str, Any], ctx: dict) -> str:
     if not paper:
         return json.dumps({"error": f"Paper {paper_id} not found"})
 
+    full_text = paper.get("full_text", "") or ""
+    if len(full_text) > 5000:
+        full_text = full_text[:5000] + "... [truncated]"
+
     return json.dumps({
         "paper_id": paper_id,
         "title": paper.get("title", ""),
         "abstract": paper.get("abstract", ""),
-        "full_text": paper.get("full_text", ""),
+        "full_text": full_text,
         "instruction": "Extract claims then call extract_claims again with paper_id and claims list to store them.",
     }, default=str)
 

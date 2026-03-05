@@ -60,3 +60,38 @@ def test_dispatch_unknown_tool():
 def test_search_tools_count():
     search_tools = [td for td in TOOL_DEFINITIONS if td["name"].startswith("search_")]
     assert len(search_tools) == 11  # 9 APIs + search_similar + search_all
+
+
+def test_phase_tool_filtering():
+    """Phase-specific tool filtering restricts tools per phase."""
+    tools = ARATools()
+
+    # Scout phase only gets search tools + pipeline tools
+    scout_defs = tools.get_definitions(include_subtask=False, depth=1, phase="scout")
+    scout_names = {d["name"] for d in scout_defs}
+    assert "search_all" in scout_names
+    assert "search_semantic_scholar" in scout_names
+    assert "embed_text" in scout_names
+    assert "read_paper" not in scout_names
+    assert "extract_claims" not in scout_names
+    assert "write_section" not in scout_names
+
+    # Writer phase gets writing tools, not search tools
+    writer_defs = tools.get_definitions(include_subtask=False, depth=1, phase="writer")
+    writer_names = {d["name"] for d in writer_defs}
+    assert "write_section" in writer_names
+    assert "get_citations" in writer_names
+    assert "read_paper" in writer_names
+    assert "search_all" not in writer_names
+    assert "extract_claims" not in writer_names
+
+    # Verifier phase gets verification tools
+    verifier_defs = tools.get_definitions(include_subtask=False, depth=1, phase="verifier")
+    verifier_names = {d["name"] for d in verifier_defs}
+    assert "check_retraction" in verifier_names
+    assert "validate_doi" in verifier_names
+    assert "search_all" not in verifier_names
+
+    # Unknown phase gets all tools (no filtering)
+    all_defs = tools.get_definitions(include_subtask=False, depth=1, phase="unknown_phase")
+    assert len(all_defs) == len(TOOL_DEFINITIONS)

@@ -16,6 +16,28 @@ _log = logging.getLogger(__name__)
 from .defs import TOOL_DEFINITIONS
 from . import search, papers, verification, research, writing, pipeline
 
+# Phase → allowed tool names (from arch.md §4.2)
+# "search_*" is a wildcard matching all search_ tools
+PHASE_TOOLS: dict[str, list[str]] = {
+    "scout": ["search_*", "embed_text", "request_approval", "track_cost"],
+    "analyst_triage": ["read_paper", "search_similar", "embed_text", "request_approval", "track_cost"],
+    "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "search_similar", "request_approval", "track_cost"],
+    "verifier": ["check_retraction", "get_citation_count", "validate_doi", "read_paper", "request_approval", "track_cost"],
+    "hypothesis": ["read_paper", "search_similar", "score_hypothesis", "request_approval", "track_cost"],
+    "brancher": ["search_*", "search_similar", "embed_text", "request_approval", "track_cost"],
+    "critic": ["read_paper", "search_similar", "request_approval", "track_cost"],
+    "writer": ["read_paper", "search_similar", "write_section", "get_citations", "request_approval", "track_cost"],
+}
+
+
+def _tool_matches_phase(tool_name: str, phase_tools: list[str]) -> bool:
+    for pattern in phase_tools:
+        if pattern.endswith("*") and tool_name.startswith(pattern[:-1]):
+            return True
+        if tool_name == pattern:
+            return True
+    return False
+
 TOOL_DISPATCH: dict[str, Any] = {
     # Search tools (9 academic APIs)
     "search_semantic_scholar": search.search_semantic_scholar,
@@ -64,12 +86,15 @@ class ARATools:
         self.session_id = session_id
         self.approval_gates = approval_gates
 
-    def get_definitions(self, include_subtask: bool = True, depth: int = 0) -> list[dict[str, Any]]:
+    def get_definitions(self, include_subtask: bool = True, depth: int = 0, phase: str = "") -> list[dict[str, Any]]:
         # At depth 0 (manager), only expose delegation + pipeline tools
-        # This prevents the model from calling search tools directly instead of delegating
         _MANAGER_TOOLS = {"get_rules", "request_approval", "track_cost"}
         if depth == 0 and include_subtask:
             defs = [td for td in TOOL_DEFINITIONS if td["name"] in _MANAGER_TOOLS]
+        elif phase and phase in PHASE_TOOLS:
+            # Phase-specific filtering — child agents only see their allowed tools
+            allowed = PHASE_TOOLS[phase]
+            defs = [td for td in TOOL_DEFINITIONS if _tool_matches_phase(td["name"], allowed)]
         else:
             defs = list(TOOL_DEFINITIONS)
 

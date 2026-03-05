@@ -24,14 +24,32 @@ _MAX_RETRIES = 3
 _s2_last_call = 0.0
 _s2_lock = threading.Lock()
 
+# Shared HTTP client for connection pooling across all search APIs
+_http_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+
+
+def _get_client() -> httpx.Client:
+    global _http_client
+    if _http_client is None:
+        with _client_lock:
+            if _http_client is None:
+                _http_client = httpx.Client(
+                    timeout=_TIMEOUT,
+                    follow_redirects=True,
+                    limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                )
+    return _http_client
+
 
 def _request_with_retry(
     url: str, headers: dict | None = None,
     params: dict | None = None, timeout: int = _TIMEOUT,
 ) -> dict | str | None:
+    client = _get_client()
     for attempt in range(_MAX_RETRIES):
         try:
-            resp = httpx.get(url, headers=headers, params=params, timeout=timeout, follow_redirects=True)
+            resp = client.get(url, headers=headers, params=params, timeout=timeout)
             if resp.status_code == 429:
                 wait = min(3 * (2 ** attempt), 30)
                 _log.warning("Rate limited on %s, waiting %ds", url[:80], wait)

@@ -95,6 +95,7 @@ class RLMEngine:
         depth: int,
         on_event: StepCallback | None = None,
         system_prompt_override: str | None = None,
+        phase: str = "",
     ) -> str:
         if depth > self.config.max_depth:
             return json.dumps({"error": f"Max depth {self.config.max_depth} reached"})
@@ -114,6 +115,7 @@ class RLMEngine:
         tool_defs = self.tools.get_definitions(
             include_subtask=depth < self.config.max_depth,
             depth=depth,
+            phase=phase,
         )
         conversation = self.model.create_conversation(
             system_prompt=system_prompt,
@@ -401,6 +403,7 @@ class RLMEngine:
                 depth=depth + 1,
                 on_event=on_event,
                 system_prompt_override=phase_prompt,
+                phase=phase,
             )
         except Exception as exc:
             _log.exception("Subtask failed: %s", objective[:100])

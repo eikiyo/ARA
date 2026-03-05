@@ -14,6 +14,7 @@ from typing import Any, Callable
 from .config import ARAConfig
 from .db import ARADB
 from .engine import RLMEngine, ExternalContext, StepCallback, StepEvent, TurnSummary
+from .output import generate_output
 
 
 class SessionError(Exception):
@@ -85,11 +86,38 @@ class SessionRuntime:
         if not self.db_session_id and not self._context.topic:
             self.start_research(topic=objective)
 
-        return self.engine.solve(
+        result = self.engine.solve(
             objective=objective,
             context=self._context,
             on_event=on_event,
         )
+
+        # Generate output files after solve completes
+        self._generate_output()
+
+        return result
+
+    def _generate_output(self) -> None:
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        if not sections_dir.exists():
+            return
+        output_dir = ws / "output"
+        bib_path = ws / self.config.session_root_dir / "output" / "references.bib"
+        try:
+            files = generate_output(
+                output_dir=output_dir,
+                sections_dir=sections_dir,
+                bib_path=bib_path if bib_path.exists() else None,
+                topic=self._context.topic,
+                paper_type=self._context.paper_type,
+            )
+            if files:
+                import logging
+                logging.getLogger(__name__).info("Output files: %s", list(files.keys()))
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("Output generation failed: %s", exc)
 
     def cancel(self) -> None:
         self.engine.cancel_flag.set()

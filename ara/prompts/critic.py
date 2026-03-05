@@ -27,14 +27,29 @@ Based on your evaluation:
 - **Approve**: Overall strong hypothesis with minor weaknesses at most.
 - **Reject**: Significant weaknesses that need addressing. Provide specific feedback for revision.
 
-### Output
+### Output Format
 
-Present:
-1. Dimensional scores table
-2. Strengths (bullet points)
-3. Weaknesses (bullet points)
-4. Decision: APPROVE or REJECT
-5. If rejected: specific feedback for hypothesis revision
+Return your evaluation as structured JSON in this exact format:
+```json
+{
+  "decision": "APPROVE" or "REJECT",
+  "scores": {
+    "novelty": 0.0-1.0,
+    "feasibility": 0.0-1.0,
+    "evidence_strength": 0.0-1.0,
+    "methodology_fit": 0.0-1.0,
+    "impact": 0.0-1.0,
+    "reproducibility": 0.0-1.0,
+    "cross_domain_support": 0.0-1.0,
+    "logical_coherence": 0.0-1.0
+  },
+  "strengths": ["strength 1", "strength 2"],
+  "weaknesses": ["weakness 1", "weakness 2"],
+  "issues": ["specific issue requiring revision"],
+  "suggestions": ["concrete suggestion for improvement"]
+}
+```
 
-Call request_approval with your evaluation.
+If REJECT: issues and suggestions MUST be specific enough for the hypothesis generator to revise.
+Maximum 3 rejection cycles — after 3 rejections, approve the best available hypothesis.
 """
