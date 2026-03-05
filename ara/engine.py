@@ -327,7 +327,11 @@ class RLMEngine:
                     bucket["input"] += turn.input_tokens
                     bucket["output"] += turn.output_tokens
 
-            model.append_assistant_turn(conversation, turn)
+            # Skip appending truly empty turns — Gemini rejects messages with no
+            # content ("must include at least one parts field").
+            has_content = bool(turn.text) or bool(turn.tool_calls)
+            if has_content:
+                model.append_assistant_turn(conversation, turn)
 
             # Context condensation
             if turn.input_tokens:
