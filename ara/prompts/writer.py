@@ -61,21 +61,27 @@ Must include:
 
 #### 6. Results/Analysis (minimum 1200 words)
 Must include:
-- **Study Selection Results**: PRISMA flow numbers
+- **Study Selection Results**: PRISMA flow numbers (exact counts for each stage)
 - **Study Characteristics Table**: Markdown table with: Author/Year, Country, Design, Sample Size, Population, Key Variables, Main Findings
+- **Risk of Bias Assessment**: Summary of risk of bias across included studies (use JBI framework data from synthesis)
 - **Thematic Results**: Organized by research question or theme, NOT by paper
-- **Evidence Synthesis Table**: Markdown table summarizing strength of evidence per theme
-- Quantitative data where available (effect sizes, confidence intervals, p-values)
-- Explicit noting of evidence quality (strong/moderate/weak evidence)
+- **GRADE Evidence Certainty Table**: For each outcome, rate evidence certainty (High/Moderate/Low/Very Low) with justification
+- Effect sizes with confidence intervals where available (e.g., "Cohen's d = 0.45, 95% CI: 0.22-0.68")
+- Report heterogeneity across studies for each outcome (consistent/mixed/contradictory)
 
 #### 7. Discussion (minimum 1000 words)
 Must include ALL of these subsections:
-- **Summary of Key Findings**: Brief recap tied to research questions
-- **Comparison with Existing Reviews**: Compare findings with at least 3 other published reviews in the same area
-- **Theoretical Implications**: How findings relate to existing theoretical frameworks
-- **Limitations**: Dedicated subsection addressing: search limitations, language bias, publication bias, heterogeneity of included studies, generalizability constraints
-- **Policy and Practice Implications**: Specific, actionable recommendations for policymakers and practitioners
-- **Future Research Directions**: At least 3 specific, testable research questions for future work
+- **Summary of Key Findings**: Brief recap tied to research questions, with GRADE-rated certainty
+- **Causal Inference Analysis**: Dedicated subsection addressing:
+  - Direction of causation (forward vs reverse causation evidence)
+  - Key confounders (SES, parenting quality, pre-existing conditions)
+  - Evidence from natural experiments or quasi-experimental designs
+  - Effect modification by subgroup (age, SES, content type)
+- **Comparison with Existing Reviews**: Compare findings with at least 3 other published reviews — what this review adds vs. prior work
+- **Theoretical Integration**: Not just name-dropping theories — use theoretical frameworks to generate testable predictions evaluated against the evidence
+- **Limitations**: Dedicated subsection addressing: search limitations, language bias, publication bias, lack of dual-reviewer screening, heterogeneity, generalizability constraints, cross-sectional dominance
+- **Policy and Practice Implications**: Specific, actionable, evidence-graded recommendations
+- **Future Research Directions**: At least 3 specific, testable hypotheses with suggested methodologies
 
 #### 8. Conclusion (minimum 400 words)
 Must include:
