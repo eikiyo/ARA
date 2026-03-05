@@ -378,15 +378,13 @@ class RLMEngine:
                 on_event,
             )
 
-            # Execute tool calls
+            # Execute tool calls — parallelize independent tools
             results: list[ToolResult] = []
             final_answer: str | None = None
-            _PARALLEL_TOOLS = {"subtask", "execute"}
-            sequential = [(i, tc) for i, tc in enumerate(turn.tool_calls) if tc.name not in _PARALLEL_TOOLS]
-            parallel = [(i, tc) for i, tc in enumerate(turn.tool_calls) if tc.name in _PARALLEL_TOOLS]
-            if not self.model_factory and any(tc.name == "execute" for _, tc in parallel):
-                sequential = list(enumerate(turn.tool_calls))
-                parallel = []
+            # Sequential: subtask/execute (need model factory for execute)
+            _SEQUENTIAL_TOOLS = {"subtask", "execute"} if self.model_factory else {"subtask"}
+            sequential = [(i, tc) for i, tc in enumerate(turn.tool_calls) if tc.name in _SEQUENTIAL_TOOLS]
+            parallel = [(i, tc) for i, tc in enumerate(turn.tool_calls) if tc.name not in _SEQUENTIAL_TOOLS]
             indexed_results: dict[int, tuple[ToolResult, bool]] = {}
 
             for idx, tc in sequential:
