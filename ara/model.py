@@ -380,6 +380,14 @@ class OpenAICompatibleModel:
         if effort and not is_local:
             payload["reasoning_effort"] = effort
         url = self.base_url.rstrip("/") + "/chat/completions"
+        # Dump payload for debugging Gemini 400 errors
+        if "generativelanguage" in self.base_url:
+            import pathlib as _pl
+            _dump_dir = _pl.Path.home() / ".ara" / "debug"
+            _dump_dir.mkdir(parents=True, exist_ok=True)
+            _seq = len(list(_dump_dir.glob("payload_*.json")))
+            (_dump_dir / f"payload_{_seq:03d}.json").write_text(
+                json.dumps(payload, indent=2, default=str), encoding="utf-8")
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
