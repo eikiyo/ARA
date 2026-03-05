@@ -426,7 +426,7 @@ class OpenAICompatibleModel:
             if "stream_options" in text:
                 payload.pop("stream_options", None)
                 retried = True
-            if effort and ("reasoning_effort" in text or "does not support thinking" in text or "does not support" in text):
+            if effort and ("reasoning_effort" in text or "thinking" in text or "does not support" in text):
                 payload.pop("reasoning_effort", None)
                 retried = True
             if retried:

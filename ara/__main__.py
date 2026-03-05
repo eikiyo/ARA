@@ -167,6 +167,10 @@ def main() -> None:
             if key:
                 cfg.provider = inferred
 
+    # Google: disable reasoning (Gemini Flash doesn't support thinking mode)
+    if cfg.provider == "google" and not args.reasoning_effort:
+        cfg.reasoning_effort = None
+
     # Ollama defaults: pick available model, disable reasoning
     if cfg.provider == "ollama":
         if not args.model:

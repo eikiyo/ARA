@@ -63,7 +63,7 @@ def build_model_factory(cfg: ARAConfig) -> ModelFactory | None:
         if provider == "google" and cfg.google_api_key:
             return OpenAICompatibleModel(
                 model=model_name, api_key=cfg.google_api_key,
-                base_url=cfg.google_base_url, reasoning_effort=effort,
+                base_url=cfg.google_base_url, reasoning_effort=None,
             )
         if provider == "anthropic" and cfg.anthropic_api_key:
             return AnthropicModel(
@@ -96,7 +96,7 @@ def build_model_factory(cfg: ARAConfig) -> ModelFactory | None:
                          model_name, provider, fallback)
             return OpenAICompatibleModel(
                 model=fallback, api_key=cfg.google_api_key,
-                base_url=cfg.google_base_url, reasoning_effort=effort,
+                base_url=cfg.google_base_url, reasoning_effort=None,
             )
         if fallback_provider == "ollama":
             _log.warning("No API key for '%s' (provider=%s) — falling back to '%s' via Ollama",
@@ -124,7 +124,7 @@ def build_engine(cfg: ARAConfig) -> RLMEngine:
     if cfg.provider == "google" and cfg.google_api_key:
         model = OpenAICompatibleModel(
             model=model_name, api_key=cfg.google_api_key,
-            base_url=cfg.google_base_url, reasoning_effort=cfg.reasoning_effort,
+            base_url=cfg.google_base_url, reasoning_effort=None,
         )
     elif cfg.provider == "anthropic" and cfg.anthropic_api_key:
         model = AnthropicModel(
