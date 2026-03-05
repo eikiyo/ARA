@@ -234,6 +234,9 @@ class ARADB:
             )
         """)
 
+        # Migrate existing tables: add missing columns from v2
+        self._migrate_tables(cursor)
+
         # Create indices
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_papers_session ON papers(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi)")
@@ -253,6 +256,21 @@ class ARADB:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cost_session ON cost_log(session_id)")
 
         self.conn.commit()
+
+    def _migrate_tables(self, cursor: Any) -> None:
+        """Add missing columns to existing tables (safe for fresh DBs too)."""
+        migrations = [
+            ("branch_map", "round", "INTEGER DEFAULT 1"),
+            ("branch_map", "score", "REAL"),
+            ("branch_map", "status", "TEXT DEFAULT 'pending'"),
+            ("hypotheses", "source_branch_id", "INTEGER"),
+            ("hypotheses", "generation", "INTEGER DEFAULT 0"),
+        ]
+        for table, column, col_type in migrations:
+            try:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+            except Exception:
+                pass  # Column already exists
 
     def _now(self) -> str:
         """Return current timestamp in ISO 8601 format."""
