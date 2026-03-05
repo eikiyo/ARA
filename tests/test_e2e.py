@@ -252,7 +252,7 @@ class TestEngineFlows:
             nonlocal call_count
             call_count += 1
             if call_count >= 2:
-                engine.cancel_flag = True
+                engine.cancel_flag.set()
             return original_dispatch(name, args)
 
         tools.dispatch = _counting_dispatch
@@ -726,7 +726,7 @@ class TestSlashCommands:
         ctx = self._make_ctx()
         output = []
         dispatch_slash_command("/model gpt-4o", ctx, emit=lambda x: output.append(x))
-        assert any("Only Gemini" in o for o in output)
+        assert any("Unknown model" in o for o in output)
 
     def test_model_switch_gemini(self):
         ctx = self._make_ctx()

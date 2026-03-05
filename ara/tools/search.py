@@ -534,12 +534,12 @@ _ALL_SEARCH_FNS = [
 
 
 _MIN_PAPERS = 30  # Skip searching if DB already has this many
-_search_all_done = False  # Set after first successful search
+_SEARCH_ALL_LOCK = threading.Lock()
 
 
 def reset_search_all_state() -> None:
-    global _search_all_done
-    _search_all_done = False
+    # DB paper count guard is sufficient; no session-wide flag needed
+    pass
 
 
 def search_all(args: dict[str, Any], ctx: dict) -> str:
@@ -547,16 +547,14 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
 
     Returns a summary to the model (counts + top 10 papers) to save tokens.
     Full results are auto-stored in the DB by the tool dispatch layer.
-    Only runs ONCE per session — subsequent calls return cached count.
+    Uses DB paper count guard — if enough papers exist, skip.
     """
-    global _search_all_done
-
     # Check DB — if we already have enough papers, skip
     db = ctx.get("db")
     session_id = ctx.get("session_id")
     if db and session_id:
         existing = db.paper_count(session_id)
-        if existing >= _MIN_PAPERS or _search_all_done:
+        if existing >= _MIN_PAPERS:
             return json.dumps({
                 "status": "done",
                 "total_in_db": existing,
@@ -590,9 +588,21 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
 
     all_papers = []
     per_source: dict[str, int] = {}
-    for name, papers in results.items():
-        per_source[name] = len(papers)
-        all_papers.extend(papers)
+    for name, papers_list in results.items():
+        per_source[name] = len(papers_list)
+        all_papers.extend(papers_list)
+
+    # Dedup papers by DOI across sources
+    seen_dois: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for p in all_papers:
+        doi = p.get("doi")
+        if doi and doi in seen_dois:
+            continue
+        if doi:
+            seen_dois.add(doi)
+        deduped.append(p)
+    all_papers = deduped
 
     # Sort by citation count (most cited first)
     all_papers.sort(key=lambda p: p.get("citation_count", 0), reverse=True)
@@ -609,12 +619,10 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
         for p in all_papers[:10]
     ]
 
-    # Store full papers via _papers_for_storage (picked up by auto-store)
-    _search_all_full_results.clear()
-    _search_all_full_results.extend(all_papers)
-
-    # Mark search as done — all subsequent calls will return cached count
-    _search_all_done = True
+    # Store full papers via buffer (picked up by auto-store in dispatch)
+    with _SEARCH_ALL_LOCK:
+        _search_all_full_results.clear()
+        _search_all_full_results.extend(all_papers)
 
     return json.dumps({
         "status": "done",

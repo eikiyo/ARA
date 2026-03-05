@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,6 +52,14 @@ class SettingsStore:
         return PersistentSettings.from_json(parsed)
 
     def save(self, settings: PersistentSettings) -> None:
-        self.settings_path.write_text(
-            json.dumps(settings.to_json(), indent=2), "utf-8",
+        data = json.dumps(settings.to_json(), indent=2)
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=self.settings_path.parent, prefix=".settings_", suffix=".tmp",
         )
+        try:
+            with open(temp_fd, "w", encoding="utf-8") as f:
+                f.write(data)
+            Path(temp_path).replace(self.settings_path)
+        except Exception:
+            Path(temp_path).unlink(missing_ok=True)
+            raise

@@ -9,11 +9,31 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 _log = logging.getLogger(__name__)
+
+# Column whitelists per table — prevents SQL injection via kwargs
+_ALLOWED_COLUMNS: dict[str, set[str]] = {
+    "sessions": {
+        "topic", "paper_type", "citation_style", "budget_cap", "budget_spent",
+        "deep_read_limit", "enabled_sources", "status", "current_phase",
+    },
+    "claims": {
+        "claim_text", "claim_type", "confidence", "supporting_quotes", "section",
+        "verification_status", "retraction_checked", "citation_count_at_check",
+        "doi_valid", "verifier_notes", "contradicts",
+    },
+    "hypotheses": {
+        "hypothesis_text", "rank", "iteration", "novelty", "feasibility",
+        "evidence_strength", "methodology_fit", "impact", "reproducibility",
+        "custom_dimensions", "overall_score", "critic_decision", "critic_feedback",
+        "selected", "source_branch_id", "generation",
+    },
+}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -161,6 +181,7 @@ class ARADB:
     def __init__(self, db_path: Path):
         self._path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -175,6 +196,10 @@ class ARADB:
 
     def create_session(self, topic: str, **kwargs: Any) -> int:
         now = _now()
+        allowed = _ALLOWED_COLUMNS["sessions"]
+        for k in kwargs:
+            if k not in allowed:
+                raise ValueError(f"Invalid column for sessions: {k}")
         cols = ["topic", "created_at", "updated_at"]
         vals: list[Any] = [topic, now, now]
         for k, v in kwargs.items():
@@ -182,10 +207,11 @@ class ARADB:
             vals.append(v)
         placeholders = ", ".join("?" for _ in vals)
         col_str = ", ".join(cols)
-        cur = self._conn.execute(
-            f"INSERT INTO sessions ({col_str}) VALUES ({placeholders})", vals,
-        )
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.execute(
+                f"INSERT INTO sessions ({col_str}) VALUES ({placeholders})", vals,
+            )
+            self._conn.commit()
         return cur.lastrowid  # type: ignore
 
     def get_session(self, session_id: int) -> dict[str, Any] | None:
@@ -195,48 +221,54 @@ class ARADB:
         return dict(row) if row else None
 
     def update_session(self, session_id: int, **kwargs: Any) -> None:
+        allowed = _ALLOWED_COLUMNS["sessions"]
+        for k in kwargs:
+            if k not in allowed:
+                raise ValueError(f"Invalid column for sessions: {k}")
         kwargs["updated_at"] = _now()
         sets = ", ".join(f"{k} = ?" for k in kwargs)
         vals = list(kwargs.values()) + [session_id]
-        self._conn.execute(f"UPDATE sessions SET {sets} WHERE session_id = ?", vals)
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(f"UPDATE sessions SET {sets} WHERE session_id = ?", vals)
+            self._conn.commit()
 
     # ── Papers ──────────────────────────────────────────────────
 
     def store_papers(self, session_id: int, papers: list[dict[str, Any]]) -> int:
         now = _now()
         stored = 0
-        for p in papers:
-            doi = p.get("doi") or None  # Normalize empty string to None
-            title = p.get("title", "").strip()
-            if not title:
-                continue
-            # Dedup by DOI first, then title
-            if doi:
-                existing = self._conn.execute(
-                    "SELECT paper_id FROM papers WHERE session_id = ? AND doi = ?",
-                    (session_id, doi),
-                ).fetchone()
-                if existing:
+        with self._lock:
+            for p in papers:
+                doi = p.get("doi") or None  # Normalize empty string to None
+                title = p.get("title", "").strip()
+                if not title:
                     continue
-            else:
-                existing = self._conn.execute(
-                    "SELECT paper_id FROM papers WHERE session_id = ? AND title = ?",
-                    (session_id, title),
-                ).fetchone()
-                if existing:
-                    continue
+                # Dedup by DOI first, then title
+                if doi:
+                    existing = self._conn.execute(
+                        "SELECT paper_id FROM papers WHERE session_id = ? AND doi = ?",
+                        (session_id, doi),
+                    ).fetchone()
+                    if existing:
+                        continue
+                else:
+                    existing = self._conn.execute(
+                        "SELECT paper_id FROM papers WHERE session_id = ? AND title = ?",
+                        (session_id, title),
+                    ).fetchone()
+                    if existing:
+                        continue
 
-            authors_json = json.dumps(p.get("authors", []))
-            self._conn.execute(
-                "INSERT INTO papers (session_id, title, abstract, authors, year, doi, source, url, citation_count, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (session_id, title, p.get("abstract"), authors_json,
-                 p.get("year"), doi, p.get("source", "unknown"),
-                 p.get("url"), p.get("citation_count", 0), now),
-            )
-            stored += 1
-        self._conn.commit()
+                authors_json = json.dumps(p.get("authors", []))
+                self._conn.execute(
+                    "INSERT INTO papers (session_id, title, abstract, authors, year, doi, source, url, citation_count, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (session_id, title, p.get("abstract"), authors_json,
+                     p.get("year"), doi, p.get("source", "unknown"),
+                     p.get("url"), p.get("citation_count", 0), now),
+                )
+                stored += 1
+            self._conn.commit()
         return stored
 
     def get_paper(self, paper_id: int) -> dict[str, Any] | None:
@@ -250,9 +282,10 @@ class ARADB:
         return d
 
     def paper_count(self, session_id: int) -> int:
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM papers WHERE session_id = ?", (session_id,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM papers WHERE session_id = ?", (session_id,),
+            ).fetchone()
         return row[0] if row else 0
 
     def get_papers(self, session_id: int, limit: int = 500) -> list[dict[str, Any]]:
@@ -281,16 +314,18 @@ class ARADB:
         return results
 
     def update_paper_fulltext(self, doi: str, url: str) -> None:
-        self._conn.execute(
-            "UPDATE papers SET full_text_path = ? WHERE doi = ?", (url, doi),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE papers SET full_text_path = ? WHERE doi = ?", (url, doi),
+            )
+            self._conn.commit()
 
     def store_fulltext_content(self, doi: str, text: str) -> None:
-        self._conn.execute(
-            "UPDATE papers SET full_text = ? WHERE doi = ?", (text, doi),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE papers SET full_text = ? WHERE doi = ?", (text, doi),
+            )
+            self._conn.commit()
 
     def get_cited_papers(self, session_id: int) -> list[dict[str, Any]]:
         # Return only papers that have claims extracted (i.e., actually analyzed/cited)
@@ -319,14 +354,19 @@ class ARADB:
 
     def store_claim(self, session_id: int, paper_id: int, **kwargs: Any) -> int:
         now = _now()
+        allowed = _ALLOWED_COLUMNS["claims"]
+        for k in kwargs:
+            if k not in allowed:
+                raise ValueError(f"Invalid column for claims: {k}")
         kwargs.update({"session_id": session_id, "paper_id": paper_id, "created_at": now})
         cols = list(kwargs.keys())
         vals = list(kwargs.values())
         placeholders = ", ".join("?" for _ in vals)
-        cur = self._conn.execute(
-            f"INSERT INTO claims ({', '.join(cols)}) VALUES ({placeholders})", vals,
-        )
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.execute(
+                f"INSERT INTO claims ({', '.join(cols)}) VALUES ({placeholders})", vals,
+            )
+            self._conn.commit()
         return cur.lastrowid  # type: ignore
 
     def get_claims(self, session_id: int) -> list[dict[str, Any]]:
@@ -339,14 +379,19 @@ class ARADB:
 
     def store_hypothesis(self, session_id: int, **kwargs: Any) -> int:
         now = _now()
+        allowed = _ALLOWED_COLUMNS["hypotheses"]
+        for k in kwargs:
+            if k not in allowed:
+                raise ValueError(f"Invalid column for hypotheses: {k}")
         kwargs.update({"session_id": session_id, "created_at": now})
         cols = list(kwargs.keys())
         vals = list(kwargs.values())
         placeholders = ", ".join("?" for _ in vals)
-        cur = self._conn.execute(
-            f"INSERT INTO hypotheses ({', '.join(cols)}) VALUES ({placeholders})", vals,
-        )
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.execute(
+                f"INSERT INTO hypotheses ({', '.join(cols)}) VALUES ({placeholders})", vals,
+            )
+            self._conn.commit()
         return cur.lastrowid  # type: ignore
 
     def get_hypotheses(self, session_id: int) -> list[dict[str, Any]]:
@@ -360,11 +405,12 @@ class ARADB:
 
     def add_rule(self, session_id: int, rule_text: str, rule_type: str = "exclude") -> int:
         now = _now()
-        cur = self._conn.execute(
-            "INSERT INTO rules (session_id, rule_text, rule_type, created_at) VALUES (?, ?, ?, ?)",
-            (session_id, rule_text, rule_type, now),
-        )
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO rules (session_id, rule_text, rule_type, created_at) VALUES (?, ?, ?, ?)",
+                (session_id, rule_text, rule_type, now),
+            )
+            self._conn.commit()
         return cur.lastrowid  # type: ignore
 
     def get_rules(self, session_id: int) -> list[dict[str, Any]]:
@@ -379,16 +425,17 @@ class ARADB:
                   input_tokens: int, output_tokens: int, cost_usd: float,
                   phase: str | None = None) -> None:
         now = _now()
-        self._conn.execute(
-            "INSERT INTO cost_log (session_id, phase, model, input_tokens, output_tokens, cost_usd, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (session_id, phase, model, input_tokens, output_tokens, cost_usd, now),
-        )
-        self._conn.execute(
-            "UPDATE sessions SET budget_spent = budget_spent + ? WHERE session_id = ?",
-            (cost_usd, session_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO cost_log (session_id, phase, model, input_tokens, output_tokens, cost_usd, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_id, phase, model, input_tokens, output_tokens, cost_usd, now),
+            )
+            self._conn.execute(
+                "UPDATE sessions SET budget_spent = budget_spent + ? WHERE session_id = ?",
+                (cost_usd, session_id),
+            )
+            self._conn.commit()
 
     def get_total_cost(self, session_id: int) -> float:
         row = self._conn.execute(
@@ -401,22 +448,24 @@ class ARADB:
     def log_event(self, session_id: int, event_type: str,
                    phase: str | None = None, payload: str | None = None) -> None:
         now = _now()
-        self._conn.execute(
-            "INSERT INTO events (session_id, event_type, phase, payload, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (session_id, event_type, phase, payload, now),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO events (session_id, event_type, phase, payload, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (session_id, event_type, phase, payload, now),
+            )
+            self._conn.commit()
 
     # ── Approval gates ──────────────────────────────────────────
 
     def log_gate(self, session_id: int, phase: str, gate_data: str | None = None,
                   action: str | None = None, user_comments: str | None = None) -> int:
         now = _now()
-        cur = self._conn.execute(
-            "INSERT INTO approval_gates (session_id, phase, gate_data, action, user_comments, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (session_id, phase, gate_data, action, user_comments, now),
-        )
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO approval_gates (session_id, phase, gate_data, action, user_comments, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, phase, gate_data, action, user_comments, now),
+            )
+            self._conn.commit()
         return cur.lastrowid  # type: ignore

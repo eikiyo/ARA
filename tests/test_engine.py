@@ -122,7 +122,7 @@ def test_engine_cancel():
     tools = ARATools()
     cfg = ARAConfig()
     engine = RLMEngine(model=model, tools=tools, config=cfg)
-    engine.cancel_flag = True
+    engine.cancel_flag.set()
 
     result = engine.solve("test")
     assert "Cancelled" in result

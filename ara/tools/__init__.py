@@ -105,6 +105,14 @@ class ARATools:
         if handler is None:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
+        # Validate required parameters before dispatch
+        tool_def = next((t for t in TOOL_DEFINITIONS if t["name"] == tool_name), None)
+        if tool_def:
+            required = tool_def.get("parameters", {}).get("required", [])
+            for req in required:
+                if req not in arguments:
+                    return json.dumps({"error": f"Tool '{tool_name}' missing required parameter: {req}"})
+
         # Inject context for tools that need it
         ctx = {
             "workspace": self.workspace,
@@ -123,11 +131,14 @@ class ARATools:
 
         # Auto-store search results in DB
         if tool_name == "search_all":
-            # search_all stores full papers in a buffer (summary goes to model)
-            from .search import _search_all_full_results
-            if _search_all_full_results:
-                self._store_papers_list(_search_all_full_results)
-                _search_all_full_results.clear()
+            from .search import _search_all_full_results, _SEARCH_ALL_LOCK
+            papers_to_store: list[dict[str, Any]] = []
+            with _SEARCH_ALL_LOCK:
+                if _search_all_full_results:
+                    papers_to_store = list(_search_all_full_results)
+                    _search_all_full_results.clear()
+            if papers_to_store:
+                self._store_papers_list(papers_to_store)
         elif tool_name.startswith("search_") and tool_name != "search_similar":
             self._store_search_results(result_str)
 

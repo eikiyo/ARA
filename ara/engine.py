@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -59,7 +60,7 @@ class RLMEngine:
         self.model = model
         self.tools = tools
         self.config = config
-        self.cancel_flag = False
+        self.cancel_flag = threading.Event()
         self._total_tokens = TokenUsage()
 
     @property
@@ -138,7 +139,7 @@ class RLMEngine:
         _MAX_SINGLE_TOOL = 10
 
         while steps < self.config.max_steps_per_call:
-            if self.cancel_flag:
+            if self.cancel_flag.is_set():
                 return last_text or "[Cancelled]"
 
             elapsed = time.time() - start_time
@@ -183,15 +184,17 @@ class RLMEngine:
                     self.model.append_assistant_turn(conversation, turn)
                 break
 
-            # Bug 2 fix: detect intent BEFORE dedup — if Gemini tried 15+ of one tool, stop
-            _attempt_counts: dict[str, int] = {}
+            # Pre-dedup spam detection: count DUPLICATE calls (same name+args)
+            _sig_counts: dict[str, int] = {}
             for tc in turn.tool_calls:
-                _attempt_counts[tc.name] = _attempt_counts.get(tc.name, 0) + 1
+                sig = f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)}"
+                _sig_counts[sig] = _sig_counts.get(sig, 0) + 1
 
             loop_detected = False
-            for name, attempts in _attempt_counts.items():
-                if attempts > 15:
-                    _log.warning("Gemini attempted %r %d times in one turn — forcing stop", name, attempts)
+            for sig, count in _sig_counts.items():
+                if count > 3:  # Same exact call repeated 3+ times = spam
+                    tool_name = sig.split(":")[0]
+                    _log.warning("Gemini sent identical call %r %d times in one turn — forcing stop", tool_name, count)
                     loop_detected = True
                     break
 
@@ -199,7 +202,7 @@ class RLMEngine:
                 self.model.append_assistant_turn(conversation, ModelTurn(text=turn.text, usage=turn.usage))
                 self.model.append_user_message(
                     conversation,
-                    "STOP. You generated 15+ duplicate tool calls. "
+                    "STOP. You generated duplicate tool calls. "
                     "Summarize your findings and respond with text only.",
                 )
                 try:
@@ -274,7 +277,7 @@ class RLMEngine:
             estimated_tokens = self.model.estimate_tokens(conversation)
             window = self.model.context_window()
             if estimated_tokens > window * 0.75:
-                self._condense(conversation, context)
+                self._condense(conversation, context, _result_cache)
 
         return last_text or "[No response generated]"
 
@@ -290,7 +293,7 @@ class RLMEngine:
         cache = result_cache if result_cache is not None else {}
 
         for tc in tool_calls:
-            if self.cancel_flag:
+            if self.cancel_flag.is_set():
                 results.append(ToolResult(
                     tool_call_id=tc.id, name=tc.name or "cancelled",
                     content='{"status": "cancelled"}',
@@ -327,6 +330,7 @@ class RLMEngine:
             # Handle execute (lightweight subtask)
             if tc.name == "execute":
                 result_text = self._handle_execute(tc, context, depth, on_event)
+                cache[cache_key] = result_text
                 results.append(ToolResult(
                     tool_call_id=tc.id, name="execute", content=result_text,
                 ))
@@ -346,7 +350,7 @@ class RLMEngine:
             obs = f"[{tc.name}] {result_text[:300]}"
             context.observations.append(obs)
             if len(context.observations) > 100:
-                context.observations = context.observations[-50:]
+                context.observations = context.observations[-80:]
 
             if on_event:
                 on_event(StepEvent(
@@ -372,6 +376,11 @@ class RLMEngine:
 
         if on_event:
             on_event(StepEvent("subtask_start", data=objective[:200], depth=depth))
+
+        # Reset search state for search-heavy phases
+        if phase and any(x in phase.lower() for x in ("scout", "brancher", "search")):
+            from .tools.search import reset_search_all_state
+            reset_search_all_state()
 
         # Resolve phase-specific system prompt
         phase_prompt = None
@@ -450,8 +459,10 @@ class RLMEngine:
                 )
         return None
 
-    def _condense(self, conversation: Conversation, context: ExternalContext) -> None:
+    def _condense(self, conversation: Conversation, context: ExternalContext, result_cache: dict[str, str] | None = None) -> None:
         _log.info("Condensing conversation (estimated tokens exceeds 75%% of context window)")
+        if result_cache is not None:
+            result_cache.clear()
         summary_parts = []
 
         # Preserve turn history summary

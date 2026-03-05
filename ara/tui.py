@@ -54,9 +54,10 @@ def dispatch_slash_command(
 
     if name == "/model" and len(cmd) > 1:
         new_model = cmd[1]
-        if not new_model.startswith("gemini"):
+        from .model import _GEMINI_CONTEXT_WINDOWS
+        if new_model not in _GEMINI_CONTEXT_WINDOWS:
             if emit:
-                emit(f"Only Gemini models supported. Got: {new_model}")
+                emit(f"Unknown model: {new_model}. Available: {', '.join(sorted(_GEMINI_CONTEXT_WINDOWS))}")
             return "handled"
         if not ctx.cfg.google_api_key:
             if emit:
@@ -158,10 +159,12 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
                 line = f"  [yellow]tool:[/yellow] {event.tool_name}"
                 if activity_lines and activity_lines[-1].startswith(f"  [yellow]tool:[/yellow] {event.tool_name}"):
                     prev = activity_lines[-1]
-                    # Extract count if already there
-                    if " x" in prev:
-                        count = int(prev.split(" x")[-1]) + 1
-                    else:
+                    try:
+                        if " x" in prev:
+                            count = int(prev.rsplit(" x", 1)[-1]) + 1
+                        else:
+                            count = 2
+                    except (ValueError, IndexError):
                         count = 2
                     activity_lines[-1] = f"{line} x{count}"
                 else:
@@ -172,9 +175,12 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
                 line = f"  [green]result:[/green] {snippet}"
                 if activity_lines and activity_lines[-1].startswith("  [green]result:[/green]"):
                     prev = activity_lines[-1]
-                    if " x" in prev:
-                        count = int(prev.rsplit(" x", 1)[-1]) + 1
-                    else:
+                    try:
+                        if " x" in prev:
+                            count = int(prev.rsplit(" x", 1)[-1]) + 1
+                        else:
+                            count = 2
+                    except (ValueError, IndexError):
                         count = 2
                     activity_lines[-1] = f"  [green]result:[/green] {snippet} x{count}"
                 else:
@@ -240,7 +246,7 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
             console.print("[yellow]Cancelling...[/yellow]")
             thread.join(timeout=5)
 
-        thread.join()
+        thread.join(timeout=30)
 
         # Drain remaining activity
         with lock:

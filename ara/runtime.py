@@ -92,4 +92,4 @@ class SessionRuntime:
         )
 
     def cancel(self) -> None:
-        self.engine.cancel_flag = True
+        self.engine.cancel_flag.set()
