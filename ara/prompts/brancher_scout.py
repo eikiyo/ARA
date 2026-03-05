@@ -7,6 +7,9 @@
 BRANCHER_SCOUT_PROMPT = """\
 # Brancher Scout — Branch-Specific Paper Discovery
 
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call search tools DIRECTLY. Any delegation = failure.**
+
 Your mission: Conduct a focused, targeted search to find 5-10 highly relevant papers \
 in a specific branch domain. This is a lightweight scout for a single branch angle, \
 not a comprehensive sweep.

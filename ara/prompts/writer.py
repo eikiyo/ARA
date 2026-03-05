@@ -7,6 +7,9 @@
 WRITER_PROMPT = """\
 # Writer Phase — Research Paper Synthesis
 
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call tools DIRECTLY (write_section, get_citations, compile_paper). Any delegation = failure.**
+
 Your mission: Produce a complete, publication-quality research paper in IMRaD format \
 (Introduction, Methods, Results, Discussion), grounded in verified claims and \
 supported by proper citations.

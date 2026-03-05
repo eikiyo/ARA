@@ -134,6 +134,7 @@ Call:
 ```
 subtask(
   prompt="<VERIFIER_PROMPT>",
+  max_depth=1,
   input={
     "claims": <claims from Deep Read>,
     "papers": <selected papers>,
@@ -160,6 +161,7 @@ Call:
 ```
 subtask(
   prompt="<HYPOTHESIS_PROMPT>",
+  max_depth=1,
   input={
     "verified_claims": <verified claims from Verifier>,
     "gaps": <gaps from Deep Read>,
@@ -186,6 +188,7 @@ Call:
 ```
 subtask(
   prompt="<BRANCHER_PROMPT>",
+  max_depth=1,
   input={
     "selected_hypothesis": <hypothesis chosen by user>,
     "verified_claims": <claims from Verifier>,
@@ -216,6 +219,7 @@ Call:
 ```
 subtask(
   prompt="<CRITIC_PROMPT>",
+  max_depth=1,
   input={
     "mode": "showdown",
     "hypotheses": [<primary>, <alternative_1>, <alternative_2>],
@@ -246,6 +250,7 @@ Call:
 ```
 subtask(
   prompt="<CRITIC_PROMPT>",
+  max_depth=1,
   input={
     "mode": "standard",
     "hypothesis": <primary from showdown>,
@@ -278,6 +283,7 @@ Call:
 ```
 subtask(
   prompt="<WRITER_PROMPT>",
+  max_depth=1,
   input={
     "hypothesis": <approved hypothesis>,
     "verified_claims": <claims from Verifier>,

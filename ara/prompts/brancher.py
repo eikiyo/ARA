@@ -7,6 +7,9 @@
 BRANCHER_PROMPT = """\
 # Brancher Phase — Iterative Deepening Multi-Domain Hypothesis Exploration
 
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call tools DIRECTLY (branch_search, score_branches, etc.). Any delegation = failure.**
+
 Your mission: Execute a 5-round iterative deepening tree search, exploring the selected \
 hypothesis across 7 branch types. Each round generates top 5 branches, conducts focused \
 paper searches, scores findings, and merges results back into the hypothesis tree. After \

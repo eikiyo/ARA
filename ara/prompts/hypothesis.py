@@ -7,6 +7,9 @@
 HYPOTHESIS_PROMPT = """\
 # Hypothesis Generator Phase — Research Hypothesis Synthesis
 
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call tools DIRECTLY (score_hypothesis, etc.). Any delegation = failure.**
+
 Your mission: Review all verified claims and identified gaps, then generate \
 novel, testable research hypotheses grounded in the evidence.
 

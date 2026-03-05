@@ -7,6 +7,9 @@
 CRITIC_PROMPT = """\
 # Critic Phase — Hypothesis Evaluation & Recommendation
 
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call tools DIRECTLY. Any delegation = failure.**
+
 Your mission: Critically evaluate the hypothesis against all accumulated evidence \
 (verified claims, branch findings, contradictions). Make a clear recommendation: \
 approve, request revision, or reject.

@@ -7,6 +7,9 @@
 SCOUT_PROMPT = """\
 # Scout Phase — Paper Discovery
 
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call search tools DIRECTLY. Any delegation = failure.**
+
 Your mission: Conduct a comprehensive search across multiple academic databases to identify \
 all relevant papers on the research topic. Cast a wide net, but document sources meticulously.
 

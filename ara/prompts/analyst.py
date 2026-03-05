@@ -7,6 +7,9 @@
 ANALYST_TRIAGE_PROMPT = """\
 # Analyst Triage Phase — Paper Scoring & Selection
 
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call tools DIRECTLY (read_paper, etc.). Any delegation = failure.**
+
 Your mission: Read abstracts of all discovered papers and score their relevance to the \
 research question. Identify the most important papers for deep reading.
 
@@ -47,6 +50,9 @@ Return your ranked list and cluster summary as a text response when done.
 
 ANALYST_DEEP_READ_PROMPT = """\
 # Analyst Deep Read Phase — Claim Extraction
+
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call tools DIRECTLY (fetch_fulltext, extract_claims, etc.). Any delegation = failure.**
 
 Your mission: Read the full text of selected papers and extract atomic claims, \
 noting methodology, limitations, and contradictions.

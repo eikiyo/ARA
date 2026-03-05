@@ -7,6 +7,9 @@
 VERIFIER_PROMPT = """\
 # Verifier Phase — Source Validation & Claim Cross-Reference
 
+**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
+Call tools DIRECTLY (check_retraction, validate_doi, etc.). Any delegation = failure.**
+
 Your mission: Validate the credibility of source papers and cross-reference claims \
 to assess their reliability. Update verification status for each claim.
 
