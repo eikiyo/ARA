@@ -93,6 +93,21 @@ _RE_EXECUTE = re.compile(r">> executing leaf")
 _RE_ERROR = re.compile(r"model error:", re.IGNORECASE)
 _RE_TOOL_START = re.compile(r"(\w+)\((.*)?\)$")
 
+_PHASE_NAMES: dict[str, tuple[int, str]] = {
+    "scout": (1, "Scout — Paper Discovery"),
+    "triage": (2, "Analyst Triage — Ranking"),
+    "analyst_triage": (2, "Analyst Triage — Ranking"),
+    "deep_read": (3, "Analyst Deep Read — Claim Extraction"),
+    "analyst_deep_read": (3, "Analyst Deep Read — Claim Extraction"),
+    "verifier": (4, "Verifier — Claim Validation"),
+    "hypothesis": (5, "Hypothesis Generation"),
+    "brancher": (6, "Brancher — Cross-Domain Search"),
+    "critic_showdown": (6.5, "Critic Showdown — Comparison"),
+    "critic": (7, "Critic — Evaluation"),
+    "writer": (8, "Writer — Paper Draft"),
+}
+_TOTAL_PHASES = 8
+
 _THINKING_TAIL_LINES = 6
 _THINKING_MAX_LINE_WIDTH = 80
 
@@ -489,6 +504,17 @@ class RichREPL:
             label = re.sub(r">> (entering subtask|executing leaf):\s*", "", body).strip()
             if len(label) > 120:
                 label = label[:117] + "..."
+            # Detect phase from subtask label
+            phase_tag = ""
+            lower_label = label.lower()
+            for key, (num, display) in _PHASE_NAMES.items():
+                if key in lower_label:
+                    filled = int(num)
+                    bar = "█" * filled + "░" * (_TOTAL_PHASES - filled)
+                    phase_tag = f"  [bold cyan]Phase {num}/{_TOTAL_PHASES}[/bold cyan] [{bar}] {display}"
+                    break
+            if phase_tag:
+                self.console.print(phase_tag)
             self.console.rule(f"[dim]{label}[/dim]", style="dim")
             return
         if _RE_ERROR.search(body):

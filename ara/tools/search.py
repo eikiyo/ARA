@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time as _time
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -16,11 +18,34 @@ from ..logging import get_logger
 
 _log = get_logger("search")
 
+# --- Semantic Scholar API key & rate limiter ---
+# TODO: Remove hardcoded key when credentials are loaded from user config/env.
+# Rate limit: 1 request/second cumulative across ALL S2 endpoints.
+_S2_API_KEY = "ps3k5hrLaT9v0BLcXbNCh4aqRfX7eXqW2n6kIyyg"
+
+_s2_lock = threading.Lock()
+_s2_last_call: float = 0.0
+
+
+def _s2_throttle() -> None:
+    """Enforce 1 request/second for Semantic Scholar API (cumulative across all endpoints)."""
+    global _s2_last_call
+    with _s2_lock:
+        now = _time.monotonic()
+        elapsed = now - _s2_last_call
+        if elapsed < 1.05:  # 1.05s to add small safety margin
+            _time.sleep(1.05 - elapsed)
+        _s2_last_call = _time.monotonic()
+
+
+def get_s2_headers() -> dict[str, str]:
+    """Return Semantic Scholar headers with API key."""
+    return {"x-api-key": _S2_API_KEY}
+
 
 def _request_with_retry(url: str, params: dict, headers: dict | None = None,
                         max_retries: int = 3, timeout: int = 30) -> httpx.Response:
     """HTTP GET with retry on 429/5xx. Backoff: 3s, 8s, 15s."""
-    import time as _time
     delays = [3, 8, 15]
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
@@ -63,19 +88,14 @@ def search_semantic_scholar(query: str, limit: int = 10) -> str:
         JSON string of standardized paper results
     """
     try:
-        import os as _os
         url = "https://api.semanticscholar.org/graph/v1/paper/search"
         params = {
             "query": query,
-            "limit": min(limit, 25),  # Cap to reduce rate-limit risk
+            "limit": min(limit, 20),  # Cap to conserve 1 req/sec budget
             "fields": "title,abstract,authors,year,citationCount,externalIds,url"
         }
-        headers = {}
-        s2_key = _os.environ.get("S2_API_KEY") or _os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
-        if s2_key:
-            headers["x-api-key"] = s2_key
-
-        response = _request_with_retry(url, params=params, headers=headers or None)
+        _s2_throttle()
+        response = _request_with_retry(url, params=params, headers=get_s2_headers())
         data = response.json()
 
         results = []

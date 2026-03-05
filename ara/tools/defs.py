@@ -405,6 +405,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["text"],
         },
     },
+    {
+        "name": "compile_paper",
+        "description": (
+            "Compile all written sections into a single paper.md and generate an "
+            "index.html preview with embedded CSS. Call this after the Writer phase "
+            "has written all sections."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 

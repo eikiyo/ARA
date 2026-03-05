@@ -140,10 +140,14 @@ When all sections are complete:
 - Ensure logical flow between sections
 - Check for any placeholders or incomplete thoughts
 
-## Step 6: Final Output
-Return the complete draft as text. **Do NOT call request_approval yourself** — \
+## Step 6: Compile Final Paper
+After writing all sections with `write_section`, call `compile_paper` to assemble \
+everything into a single paper.md and generate an index.html preview. Then call \
+`get_citations` to produce the references.bib file.
+
+Return a summary of the compiled output. **Do NOT call request_approval yourself** — \
 the manager handles approval gates. Include:
-- Complete draft (all sections)
+- Confirmation that paper.md and index.html were generated
 - Reference list (BibTeX or formatted)
 - Word count per section
 - Summary: hypothesis tested, evidence strength, confidence assessment

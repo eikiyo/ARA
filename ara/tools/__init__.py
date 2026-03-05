@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..logging import get_logger
 from .defs import TOOL_DEFINITIONS, get_tool_definitions, to_openai_tools, to_anthropic_tools
+
+_log = get_logger("tools")
 from .search import (
     search_semantic_scholar as _search_semantic_scholar_impl,
     search_arxiv as _search_arxiv_impl,
@@ -41,6 +44,7 @@ from .research import (
 from .writing import (
     write_section as _write_section_impl,
     get_citations as _get_citations_impl,
+    compile_paper as _compile_paper_impl,
 )
 from .pipeline import (
     request_approval as _request_approval_impl,
@@ -72,6 +76,71 @@ class ARATools:
         return handler(self, args)
 
 
+def _store_search_results(tools: ARATools, results_json: str, source_name: str) -> str:
+    """Parse search JSON and insert papers into DB. Returns the original JSON with paper_ids added."""
+    if not tools.db or not tools.session_id:
+        return results_json  # No DB, just pass through
+    try:
+        papers = json.loads(results_json)
+        if not isinstance(papers, list):
+            return results_json
+        stored = 0
+        for p in papers:
+            if "error" in p:
+                continue
+            doi = p.get("doi")
+            title = p.get("title", "").strip()
+            if not title:
+                continue
+            # Dedup by DOI within session
+            if doi:
+                existing = tools.db.conn.execute(
+                    "SELECT paper_id, source FROM papers WHERE session_id = ? AND doi = ?",
+                    (tools.session_id, doi),
+                ).fetchone()
+                if existing:
+                    # Merge source
+                    old_sources = json.loads(existing["source"])
+                    if source_name not in old_sources:
+                        old_sources.append(source_name)
+                        tools.db.conn.execute(
+                            "UPDATE papers SET source = ? WHERE paper_id = ?",
+                            (json.dumps(old_sources), existing["paper_id"]),
+                        )
+                        tools.db.conn.commit()
+                    p["paper_id"] = existing["paper_id"]
+                    p["deduplicated"] = True
+                    continue
+            # Dedup by title (fuzzy — exact match for now)
+            existing_title = tools.db.conn.execute(
+                "SELECT paper_id FROM papers WHERE session_id = ? AND title = ?",
+                (tools.session_id, title),
+            ).fetchone()
+            if existing_title:
+                p["paper_id"] = existing_title["paper_id"]
+                p["deduplicated"] = True
+                continue
+            paper_id = tools.db.insert_paper(
+                session_id=tools.session_id,
+                title=title,
+                doi=doi,
+                authors=p.get("authors"),
+                abstract=p.get("abstract", ""),
+                source=[source_name],
+                publication_year=p.get("year"),
+                citation_count=p.get("citation_count", 0),
+                url=p.get("url", ""),
+            )
+            p["paper_id"] = paper_id
+            stored += 1
+        if stored > 0:
+            _log.info("Stored %d new papers from %s (session %s)", stored, source_name, tools.session_id)
+        return json.dumps(papers)
+    except Exception as exc:
+        _log.warning("Failed to store search results from %s: %s", source_name, exc)
+        return results_json  # Return original on failure
+
+
 def _think(tools: ARATools, args: dict[str, Any]) -> str:
     return f"Thought noted: {args.get('note', '')}"
 
@@ -97,57 +166,48 @@ def _execute(tools: ARATools, args: dict[str, Any]) -> str:
 
 
 def _search_semantic_scholar(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_semantic_scholar_impl(query, limit)
+    result = _search_semantic_scholar_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "semantic_scholar")
 
 
 def _search_arxiv(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_arxiv_impl(query, limit)
+    result = _search_arxiv_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "arxiv")
 
 
 def _search_crossref(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_crossref_impl(query, limit)
+    result = _search_crossref_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "crossref")
 
 
 def _search_openalex(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_openalex_impl(query, limit)
+    result = _search_openalex_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "openalex")
 
 
 def _search_pubmed(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_pubmed_impl(query, limit)
+    result = _search_pubmed_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "pubmed")
 
 
 def _search_core(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_core_impl(query, limit)
+    result = _search_core_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "core")
 
 
 def _search_dblp(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_dblp_impl(query, limit)
+    result = _search_dblp_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "dblp")
 
 
 def _search_europe_pmc(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_europe_pmc_impl(query, limit)
+    result = _search_europe_pmc_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "europe_pmc")
 
 
 def _search_base(tools: ARATools, args: dict[str, Any]) -> str:
-    query = args.get("query", "")
-    limit = args.get("limit", 10)
-    return _search_base_impl(query, limit)
+    result = _search_base_impl(args.get("query", ""), args.get("limit", 10))
+    return _store_search_results(tools, result, "base")
 
 
 def _fetch_fulltext(tools: ARATools, args: dict[str, Any]) -> str:
@@ -220,6 +280,12 @@ def _get_citations(tools: ARATools, args: dict[str, Any]) -> str:
     if not tools.db or not tools.session_id:
         return json.dumps({"error": "Database connection and session_id required"})
     return _get_citations_impl(tools.session_id, tools.db)
+
+
+def _compile_paper(tools: ARATools, args: dict[str, Any]) -> str:
+    if not tools.db or not tools.session_id:
+        return json.dumps({"error": "Database connection and session_id required"})
+    return _compile_paper_impl(tools.session_id, tools.db, tools.workspace)
 
 
 def _save_phase_output(tools: ARATools, args: dict[str, Any]) -> str:
@@ -300,4 +366,5 @@ TOOL_DISPATCH: dict[str, Any] = {
     "get_rules": _get_rules,
     "track_cost": _track_cost,
     "embed_text": _embed_text,
+    "compile_paper": _compile_paper,
 }

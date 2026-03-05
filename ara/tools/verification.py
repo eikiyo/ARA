@@ -11,6 +11,7 @@ import json
 import httpx
 
 from ..logging import get_logger
+from .search import _s2_throttle, get_s2_headers
 
 _log = get_logger("verification")
 
@@ -96,8 +97,8 @@ def get_citation_count(doi: str) -> str:
         params = {
             "fields": "citationCount,externalIds"
         }
-
-        response = httpx.get(url, params=params, timeout=30)
+        _s2_throttle()
+        response = httpx.get(url, params=params, headers=get_s2_headers(), timeout=30)
         response.raise_for_status()
         data = response.json()
 
