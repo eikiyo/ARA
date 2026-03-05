@@ -524,6 +524,8 @@ class RLMEngine:
         if name == "subtask":
             if not self.config.recursive:
                 return False, "Subtask not available in flat mode."
+            if depth > 0:
+                return False, "You are a LEAF worker at depth > 0. Do NOT call subtask. Call your tools directly (search_*, read_paper, etc). subtask is only for the manager at depth 0."
             if depth >= self.config.max_depth:
                 return False, "Max recursion depth reached."
             obj = str(args.get("objective", "")).strip()
@@ -582,6 +584,8 @@ class RLMEngine:
             return False, observation
 
         if name == "execute":
+            if depth > 0:
+                return False, "You are a LEAF worker at depth > 0. Do NOT call execute. Call your tools directly. execute is only for the manager at depth 0."
             obj = str(args.get("objective", "")).strip()
             if not obj:
                 return False, "execute requires objective"
