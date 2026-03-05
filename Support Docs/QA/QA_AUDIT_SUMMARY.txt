@@ -1,0 +1,254 @@
+================================================================================
+ARA QA AUDIT — EXECUTIVE SUMMARY
+================================================================================
+
+Date: March 5, 2026
+Auditor: Senior QA Expert
+Status: PHASE 1 READY FOR LAUNCH — BUT WITH SIGNIFICANT QA GAPS
+
+================================================================================
+HEADLINE FINDINGS
+================================================================================
+
+✓ STRENGTHS:
+  • Database layer solid (CRUD, dedup, schema valid)
+  • Engine loop works (tool dispatch, token counting, cancellation)
+  • 104 unit tests covering basics
+  • Tool dispatch mechanism functional
+  • Model abstraction clean
+
+❌ CRITICAL GAPS:
+  • NO full end-to-end pipeline test (7 agents never executed together)
+  • ALL 9 search APIs untested for real API calls or failure scenarios
+  • Verification tools (retraction, citation, DOI) completely untested
+  • Output file generation (paper.md, .html, .bib) untested
+  • Approval gate TUI flow untested with real user input
+  • Database concurrent access unprotected
+  • Budget cap enforcement missing
+  • Tool names in prompts NOT validated against TOOL_DEFINITIONS
+
+⚠️  RISKS:
+  • Threading changes (Event, Locks) added but not regression-tested
+  • search_all concurrent vs sequential execution unclear
+  • Subtask cancellation doesn't propagate to child agents
+  • Long-running tools (fetch_fulltext) can't be interrupted
+  • Empty search results could cause analyst to fail silently
+
+================================================================================
+TEST COVERAGE BY LAYER
+================================================================================
+
+Layer                  Coverage  Risk Level  Notes
+─────────────────────────────────────────────────────────────────────────────
+Database (db.py)       GOOD      MEDIUM      CRUD works; vector search untested
+Engine (engine.py)     FAIR      HIGH        Basic loops work; error paths missing
+Model (model.py)       FAIR      HIGH        Gemini integration; rate limit untested
+Search APIs (9x)       POOR      CRITICAL    No real API tests; all failure modes untested
+Tool Pipeline          FAIR      MEDIUM      Individual tools mostly work; chain untested
+Prompts (7 agents)     POOR      CRITICAL    Built but never executed; tool names unvalidated
+TUI / Gates            POOR      CRITICAL    Rich rendering untested; user flow untested
+Output Files           NONE      CRITICAL    paper.md, .html, .bib generation untested
+
+================================================================================
+CRITICAL BLOCKERS FOR PHASE 1 COMPLETION
+================================================================================
+
+Must complete before release:
+
+1. Full E2E Test (3 days)
+   → "immigrants sweden" research from user input to paper.md
+   → Verifies all 7 agents work end-to-end
+   → Validates output files correct
+
+2. Search API Robustness (2 days)
+   → Test all 9 APIs fail/timeout scenarios
+   → Verify search_all handles partial failures
+   → Rate limit retry logic validated
+
+3. Database Safety (2 days)
+   → Concurrent thread access tests
+   → Lock/transaction safety verified
+   → No data corruption risk
+
+4. Approval Gate Flow (2 days)
+   → TUI gate rendering works
+   → User can approve/reject/edit
+   → Gate files (scout_results.md, etc.) valid markdown
+
+5. Output File Generation (2 days)
+   → paper.md, paper.html, index.html, references.bib created
+   → Format validation (valid markdown, HTML, BibTeX)
+   → Citations properly formatted
+
+Subtotal: ~13 days of focused QA work
+
+================================================================================
+HIGH-PRIORITY GAPS (Should fix in Phase 1 QA)
+================================================================================
+
+• Verification tools untested (check_retraction, get_citation_count, validate_doi)
+• Extraction tools untested (extract_claims, score_hypothesis)
+• Branch search untested (brancher agent)
+• Tool names in prompts unvalidated
+• Budget enforcement missing
+• Cancellation at depth 2+ doesn't work properly
+• Session resume validation incomplete
+• Concurrent subtask handling untested
+
+================================================================================
+MEDIUM-PRIORITY GAPS (Can defer to Phase 2)
+================================================================================
+
+• Vector search (sqlite-vec) integration untested
+• Paper full-text caching validation
+• Settings persistence (default_model, etc.)
+• Config precedence (CLI > env > project > global)
+• TUI Rich rendering snapshot tests
+• Citation style variations (APA7, Chicago, etc.)
+• Session replay (session.jsonl) untested
+• Performance benchmarks for search_all()
+
+================================================================================
+RECENT CHANGES — REGRESSION RISK
+================================================================================
+
+Change: Threading.Event added (engine.py:63)
+Risk:   Event not reset between calls; subtask doesn't inherit cancel flag
+Status: UNTESTED — needs regression test
+
+Change: search_all sequential/parallel execution (search.py:545+)
+Risk:   Deadlock with concurrent DB writes; timeout if sequential + slow APIs
+Status: UNTESTED — needs performance test
+
+Change: _SEARCH_ALL_LOCK added (search.py:537)
+Risk:   Orphaned papers if exception before clear
+Status: UNTESTED — needs exception handling test
+
+================================================================================
+ESTIMATED TIMELINE TO PHASE 1 QA COMPLETION
+================================================================================
+
+Week 1 (5 days):
+  Day 1-2: Full E2E pipeline test (C1)
+  Day 3-4: Search API robustness tests (C2)
+  Day 5:   Database concurrent access tests (C3)
+
+Week 2 (5 days):
+  Day 1-2: Approval gate flow tests (C11)
+  Day 3-4: Output file generation tests (C9)
+  Day 5:   Tool validation + budget enforcement tests (C5, C6)
+
+Week 3 (3-5 days):
+  Integration and regression testing
+  Fix bugs found by new tests
+  Final validation before launch
+
+Total: 13-15 days of dedicated QA work
+Recommended: 2 QA engineer parallel (one E2E/integration, one unit/edge cases)
+
+================================================================================
+GO / NO-GO CHECKLIST FOR LAUNCH
+================================================================================
+
+Must-Have (Blocking Release):
+  ☐ Full E2E pipeline test PASSES
+  ☐ Search API failure scenarios HANDLED
+  ☐ Database concurrent access SAFE
+  ☐ Output files (paper.md, .html, .bib) GENERATED correctly
+  ☐ Approval gates FUNCTIONAL with user interaction
+  ☐ All 7 agents complete at least one full cycle
+  ☐ Budget tracking WORKING (warning + pause)
+  ☐ No data loss or corruption detected
+  ☐ Cancellation works at all depths
+
+Should-Have (High Impact):
+  ☐ Tool names in prompts VALIDATED
+  ☐ Verification tools TESTED
+  ☐ Extract claims TESTED with real LLM
+  ☐ Session resume VALIDATED
+  ☐ Performance baseline ESTABLISHED
+
+Nice-to-Have (Lower Risk):
+  ☐ Vector search TESTED
+  ☐ Session replay TESTED
+  ☐ Config precedence VALIDATED
+  ☐ TUI rendering snapshot tests
+
+================================================================================
+DETAILED REPORTS AVAILABLE
+================================================================================
+
+1. QA_AUDIT_REPORT.md
+   → 120+ line detailed gap analysis
+   → Full code evidence for each gap
+   → Severity levels and test outlines
+   → Coverage matrix by file
+
+2. QA_TEST_TEMPLATES.md
+   → Ready-to-use test code for critical gaps
+   → Full pytest implementations
+   → Integration test patterns
+   → Concurrent access test examples
+
+================================================================================
+KEY METRICS
+================================================================================
+
+Test Count:                104 tests
+Lines of Source:         3,800+ lines
+Coverage Density:        2.7% (very low)
+Files with 0 tests:      3 (verification.py, research.py, writing.py core)
+Files with >50% coverage: 2 (db.py, engine.py)
+Integration Tests:       27 (mostly superficial)
+Full E2E Pipeline Tests: 0 (CRITICAL)
+Error Path Tests:        ~5 (very low)
+Concurrent Access Tests: 0 (CRITICAL)
+
+================================================================================
+RECOMMENDATION
+================================================================================
+
+ARA is architecturally sound but QA-incomplete for Phase 1 launch.
+
+RECOMMEND:
+  1. Complete critical gap tests (13-15 days) BEFORE user-facing launch
+  2. Run full test suite daily during remaining Phase 1 work
+  3. Add pre-commit hook to run all tests + coverage check
+  4. Establish "test before commit" discipline
+  5. Create regression test suite for threading changes
+
+DO NOT LAUNCH without:
+  ✓ Full E2E pipeline test PASSING
+  ✓ All 9 search APIs tested for failure modes
+  ✓ Database concurrent access verified SAFE
+  ✓ Output files validated
+  ✓ Approval gate flow working with user input
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+Immediate (This week):
+  1. Review QA_AUDIT_REPORT.md for detailed findings
+  2. Review QA_TEST_TEMPLATES.md for test code
+  3. Prioritize C1-C6 critical gaps
+  4. Assign QA resources (recommend 2 engineers)
+
+Short-term (Next 2 weeks):
+  1. Implement critical gap tests (13-15 days)
+  2. Fix bugs discovered by new tests
+  3. Establish test discipline (pre-commit hook)
+  4. Create daily regression test runs
+
+Medium-term (Before Phase 2):
+  1. Achieve >80% test coverage on all source files
+  2. Complete remaining agents (Brancher, Critic, Writer) tests
+  3. Performance benchmarking (search_all, embeddings)
+  4. Load testing (many concurrent sessions)
+
+================================================================================
+
+Report Generated: 2026-03-05
+Report Files: QA_AUDIT_REPORT.md, QA_TEST_TEMPLATES.md, QA_AUDIT_SUMMARY.txt
+
+================================================================================

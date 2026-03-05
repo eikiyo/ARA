@@ -567,7 +567,8 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
     results: dict[str, Any] = {}
     errors: list[str] = []
 
-    def _run(name: str, fn: Any) -> None:
+    # Sequential execution — one API at a time to avoid race conditions
+    for name, fn in _ALL_SEARCH_FNS:
         try:
             raw = fn({"query": query, "limit": limit}, ctx)
             data = json.loads(raw)
@@ -576,15 +577,7 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
                 errors.append(f"{name}: {data['error']}")
         except Exception as exc:
             errors.append(f"{name}: {exc}")
-
-    threads = []
-    for name, fn in _ALL_SEARCH_FNS:
-        t = threading.Thread(target=_run, args=(name, fn), daemon=True)
-        threads.append(t)
-        t.start()
-
-    for t in threads:
-        t.join(timeout=60)
+            _log.warning("Search %s failed: %s", name, exc)
 
     all_papers = []
     per_source: dict[str, int] = {}
