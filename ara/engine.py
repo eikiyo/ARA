@@ -265,6 +265,7 @@ class RLMEngine:
                 temperature=getattr(model, "temperature", None),
             )
 
+        empty_count = 0
         for step in range(1, self.config.max_steps_per_call + 1):
             if self._cancel.is_set():
                 self._emit(f"[d{depth}] cancelled by user", on_event)
@@ -354,13 +355,18 @@ class RLMEngine:
                 return turn.text
 
             if not turn.tool_calls:
+                empty_count += 1
+                if empty_count >= 3:
+                    self._emit(f"[d{depth}/s{step}] model stuck (no output after {empty_count} retries)", on_event)
+                    return f"Model could not produce a response for: {objective}"
                 empty_result = ToolResult(
                     tool_call_id="empty", name="system",
-                    content="No tool calls and no text. Please use a tool or provide a final answer.",
+                    content="No tool calls and no text. You MUST provide a text response now.",
                 )
                 model.append_tool_results(conversation, [empty_result])
                 continue
 
+            empty_count = 0  # reset on successful tool call
             tc_names = [tc.name for tc in turn.tool_calls]
             self._emit(
                 f"[d{depth}/s{step}] {len(turn.tool_calls)} tool call(s) ({elapsed:.1f}s): {', '.join(tc_names)}",
@@ -511,13 +517,27 @@ class RLMEngine:
                     if cache_key not in self._model_cache:
                         self._model_cache[cache_key] = self.model_factory(req_name, requested_effort)
                     subtask_model = self._model_cache[cache_key]
+            # Per-subtask depth limit: if caller specifies max_depth, enforce it
+            subtask_max_depth = args.get("max_depth")
+            if subtask_max_depth is not None:
+                subtask_max_depth = int(subtask_max_depth)
+                if depth + 1 >= subtask_max_depth:
+                    return False, f"Max depth {subtask_max_depth} reached for this subtask."
             self._emit(f"[d{depth}] >> entering subtask: {obj}", on_event)
             child_logger = replay_logger.child(depth, step) if replay_logger else None
-            result = self._solve_recursive(
-                objective=obj, depth=depth + 1, context=context,
-                on_event=on_event, on_step=on_step, deadline=deadline,
-                model_override=subtask_model, replay_logger=child_logger,
-            )
+            # Temporarily override max_depth if subtask specifies it
+            original_max_depth = self.config.max_depth
+            if subtask_max_depth is not None:
+                self.config.max_depth = subtask_max_depth
+            try:
+                result = self._solve_recursive(
+                    objective=obj, depth=depth + 1, context=context,
+                    on_event=on_event, on_step=on_step, deadline=deadline,
+                    model_override=subtask_model, replay_logger=child_logger,
+                )
+            finally:
+                if subtask_max_depth is not None:
+                    self.config.max_depth = original_max_depth
             observation = f"Subtask result for '{obj}':\n{result}"
             if criteria and self.config.acceptance_criteria:
                 verdict = self._judge_result(obj, criteria, result, current_model)

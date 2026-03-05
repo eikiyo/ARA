@@ -85,7 +85,7 @@ class PersistentSettings:
 @dataclass(slots=True)
 class SettingsStore:
     workspace: Path
-    session_root_dir: str = ".ara"
+    session_root_dir: str = "ara_data"
     settings_path: Path = field(init=False)
 
     def __post_init__(self) -> None:

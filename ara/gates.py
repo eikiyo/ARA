@@ -17,7 +17,7 @@ def write_gate_file(workspace: Path, phase: str, summary: str, data: dict[str, A
 
     Returns the path to the written file.
     """
-    gates_dir = workspace / ".ara" / "gates"
+    gates_dir = workspace / "ara_data" / "gates"
     gates_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -38,7 +38,8 @@ def write_gate_file(workspace: Path, phase: str, summary: str, data: dict[str, A
         f"```",
     ]
 
-    gate_path = gates_dir / f"{phase}.md"
+    phase_slug = phase or "checkpoint"
+    gate_path = gates_dir / f"{phase_slug}.md"
     gate_path.write_text("\n".join(lines), encoding="utf-8")
     return gate_path
 
@@ -51,10 +52,11 @@ def render_gate_panel(phase: str, summary: str) -> None:
         from rich.text import Text
 
         console = Console()
-        title = f"Approval Gate: {phase.replace('_', ' ').title()}"
-        content = Text(summary)
+        phase_display = (phase or "checkpoint").replace("_", " ").title()
+        title = f"Approval Gate: {phase_display}"
+        body = summary or "(no summary provided by model)"
         panel = Panel(
-            content,
+            Text(body),
             title=f"[bold cyan]{title}[/bold cyan]",
             border_style="cyan",
             padding=(1, 2),
@@ -92,6 +94,7 @@ def prompt_user_decision() -> str:
 
     try:
         from prompt_toolkit import prompt as pt_prompt
+        print()  # ensure clean line before prompt
         response = pt_prompt("Decision> ").strip().lower()
     except (ImportError, EOFError, KeyboardInterrupt):
         try:
@@ -147,9 +150,9 @@ def run_approval_gate(
     try:
         from rich.console import Console
         console = Console()
-        console.print(f"[dim]Full details: {gate_path}[/dim]")
+        console.print(f"[dim]  saved → {gate_path.name}[/dim]")
     except ImportError:
-        print(f"Full details: {gate_path}")
+        pass
 
     # 3. Prompt for decision
     decision = prompt_user_decision()

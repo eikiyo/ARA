@@ -187,4 +187,153 @@ Call request_approval with full evaluation report, including:
 
 Note: REVISE recommendations may loop back to hypothesis phase (max 3 iterations). \
 User approves any major changes before continuing.
+
+---
+
+## SHOWDOWN MODE — Comparative Hypothesis Evaluation
+
+**When activated**: Called from manager after branching completes with 3 candidate hypotheses
+
+### Overview
+Instead of scoring one hypothesis in isolation, compare multiple hypotheses against \
+each other on the same 8 dimensions. This reveals which is strongest, which are viable \
+alternatives, and where they differ in their support.
+
+### Input
+- **Primary hypothesis**: Top-ranked from branching
+- **Alternative 1**: 2nd-ranked from branching
+- **Alternative 2**: 3rd-ranked from branching
+- **Shared evidence**: All 3 hypotheses are grounded in same verified claims + branch findings
+
+### Step 1: Head-to-Head Comparison
+
+For each of the 8 dimensions, compare all 3 hypotheses AGAINST EACH OTHER:
+
+#### Dimension 1: Novelty
+- Which hypothesis is most original? (compare relative novelty)
+- Which are incremental vs. transformative?
+- Score each 0-1 for relative novelty (one may be 0.9, others 0.6, 0.5)
+
+#### Dimension 2: Evidence Strength
+- Which is MOST supported by verified claims?
+- Which has the LEAST contradictions?
+- Which has the BROADEST supporting evidence base?
+- Compare directly: "Hypothesis A has support from X papers, Hypothesis B from Y, \
+  Hypothesis C from Z"
+
+#### Dimension 3: Feasibility
+- Which is easiest to test? (smallest N, shortest duration, fewest resources)
+- Which is hardest?
+- Which has data bottlenecks others don't?
+
+#### Dimension 4: Coherence
+- Which explains the most findings with fewest assumptions?
+- Which has logical gaps or questionable mechanisms?
+- Which is most parsimonious?
+
+#### Dimension 5: Cross-Domain Support
+- Which had the strongest branch findings?
+- Which was supported by more branch types (analogical, methodological, etc.)?
+- Which had the most consistent cross-domain support?
+
+#### Dimension 6: Methodology Fit
+- Which aligns best with state-of-the-art methods?
+- Which would benefit from new/emerging methods?
+- Which has methodology constraints others lack?
+
+#### Dimension 7: Impact Potential
+- If true, which would have LARGEST impact on the field?
+- Which would be most practically useful?
+- Which is most likely to shift current thinking?
+
+#### Dimension 8: Reproducibility
+- Which is easiest for independent researchers to test?
+- Which requires proprietary data or methods?
+- Which has the clearest protocol?
+
+### Step 2: Scoring Format
+
+Create a comparison table:
+
+```
+Dimension          | Primary       | Alternative 1 | Alternative 2 | Winner
+-------------------|---------------|---------------|---------------|----------
+Novelty            | 0.8           | 0.6           | 0.4           | Primary
+Evidence Strength  | 0.85          | 0.75          | 0.7           | Primary
+Feasibility        | 0.7           | 0.9           | 0.6           | Alt 1
+Coherence          | 0.85          | 0.8           | 0.6           | Primary
+Cross-Domain      | 0.9           | 0.7           | 0.5           | Primary
+Methodology Fit    | 0.75          | 0.75          | 0.8           | Alt 2
+Impact Potential   | 0.9           | 0.7           | 0.6           | Primary
+Reproducibility    | 0.7           | 0.85          | 0.75          | Alt 1
+---
+COMPOSITE SCORE    | 0.81          | 0.74          | 0.62          | Primary
+```
+
+### Step 3: Relative Strengths & Weaknesses
+
+For each hypothesis, note:
+- **Where it dominates**: Which dimensions does it win? (e.g., "Primary excels in evidence \
+  strength and cross-domain support")
+- **Where it's weakest**: Which dimensions lag? (e.g., "Alternative 1 weakest in impact potential")
+- **Where it ties**: Any dimensions where scores are similar?
+
+### Step 4: Scenario Analysis
+
+For each hypothesis, describe a plausible future:
+
+```
+PRIMARY HYPOTHESIS — Most Likely Path
+If supported: Field shifts to understanding [mechanism]. Practice changes by [concrete change]. \
+Next 5 years: [expected research direction]
+Risks: [what would disprove it], [what data is missing]
+Best use case: [when/where is this hypothesis most applicable]
+
+ALTERNATIVE 1 — "The Methodological Challenger"
+If supported: [different mechanism, different implications]. Practice changes by [...]. \
+Next 5 years: [different research direction]
+Risks: [...]
+Best use case: [...]
+
+ALTERNATIVE 2 — "The Pragmatist"
+If supported: [... etc]
+```
+
+### Step 5: Ranking & Recommendation
+
+After comparison, produce final ranking:
+
+```
+=== SHOWDOWN RESULTS ===
+
+🥇 RANKED 1: [Primary/Alternative] — Composite Score 0.81
+   Reason: [Strongest in evidence strength and cross-domain support. Highest impact potential.]
+   Recommendation: APPROVE for writer phase
+   Caveat: [any limitations or assumptions]
+
+🥈 RANKED 2: [Alternative 1] — Composite Score 0.74
+   Reason: [Strong evidence and easiest to test. Solid alternative if primary refuted.]
+   Recommendation: VIABLE ALTERNATIVE; include as supporting hypothesis in paper
+   Use case: [when this might be preferred]
+
+🥉 RANKED 3: [Alternative 2] — Composite Score 0.62
+   Reason: [Weakest evidence base and lowest impact. Limited cross-domain support.]
+   Recommendation: MENTION but do not pursue; candidate for future work
+   Gaps: [what would need to happen for this to become primary]
+```
+
+### Step 6: Final Approval & Routing
+
+Call request_approval with:
+- Full showdown comparison table
+- Relative strengths/weaknesses analysis
+- Scenario analysis for each
+- Final ranking and recommendation
+- Routing: Primary hypothesis → Writer phase. Alternatives → included in writer as \
+  context/limitations section
+
+User will:
+- Approve ranking and proceed to writer
+- Dispute ranking and request re-analysis
+- Request different hypothesis be primary
 """

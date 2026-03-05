@@ -108,3 +108,74 @@ def embed_text(text: str) -> str:
         })
     except Exception as e:
         return json.dumps({"error": f"Embed text error: {str(e)}"})
+
+
+def score_branches(branches: list[dict[str, Any]], session_id: int, db: ARADB) -> str:
+    """Score and rank branch proposals (1-10 on relevance, novelty, feasibility)."""
+    try:
+        if not branches:
+            return json.dumps({
+                "error": "No branches provided",
+                "branches_scored": 0,
+            })
+
+        # Return instruction for agent to score branches
+        return json.dumps({
+            "task": "score_branches",
+            "session_id": session_id,
+            "branches_to_score": branches,
+            "instruction": (
+                "Score each branch proposal on a scale of 1-10 across three dimensions:\n"
+                "1. Relevance: How directly does this branch address the core hypothesis?\n"
+                "2. Novelty: How original or unexplored is this direction?\n"
+                "3. Feasibility: How likely are we to find good evidence in this branch?\n\n"
+                "Provide a composite score (average of the three) for each branch. "
+                "Return as JSON array of objects with branch text/type, individual scores, "
+                "composite score, and brief justification."
+            ),
+            "branches_count": len(branches),
+        })
+    except Exception as e:
+        return json.dumps({"error": f"Score branches error: {str(e)}"})
+
+
+def prune_hypotheses(session_id: int, keep_top_n: int, db: ARADB) -> str:
+    """Drop lowest-scored hypotheses beyond top N."""
+    try:
+        all_hypotheses = db.get_hypotheses(session_id)
+
+        if len(all_hypotheses) <= keep_top_n:
+            return json.dumps({
+                "session_id": session_id,
+                "action": "no_pruning_needed",
+                "total_hypotheses": len(all_hypotheses),
+                "keep_top_n": keep_top_n,
+                "message": f"Only {len(all_hypotheses)} hypotheses exist; no pruning needed.",
+            })
+
+        # Sort by overall_score descending
+        sorted_hyps = sorted(all_hypotheses, key=lambda h: h['overall_score'], reverse=True)
+        top_hyps = sorted_hyps[:keep_top_n]
+        bottom_hyps = sorted_hyps[keep_top_n:]
+
+        # Mark bottom hypotheses as pruned
+        for hyp in bottom_hyps:
+            db.update_hypothesis(hyp['hypothesis_id'], status='pruned')
+
+        return json.dumps({
+            "session_id": session_id,
+            "action": "pruned",
+            "total_hypotheses_before": len(all_hypotheses),
+            "total_hypotheses_after": keep_top_n,
+            "pruned_count": len(bottom_hyps),
+            "kept_hypotheses": [
+                {
+                    "hypothesis_id": h['hypothesis_id'],
+                    "text": h['hypothesis_text'],
+                    "score": h['overall_score'],
+                }
+                for h in top_hyps
+            ],
+        })
+    except Exception as e:
+        return json.dumps({"error": f"Prune hypotheses error: {str(e)}"})

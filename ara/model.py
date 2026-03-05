@@ -372,8 +372,7 @@ class OpenAICompatibleModel:
             "tool_choice": "auto",
             "stream": True,
         }
-        if not is_local:
-            payload["stream_options"] = {"include_usage": True}
+        payload["stream_options"] = {"include_usage": True}
         if conversation.stop_sequences:
             payload["stop"] = conversation.stop_sequences
         if not is_reasoning:
@@ -423,8 +422,14 @@ class OpenAICompatibleModel:
             parsed = _accumulate_openai_stream(events)
         except ModelError as exc:
             text = str(exc).lower()
+            retried = False
+            if "stream_options" in text:
+                payload.pop("stream_options", None)
+                retried = True
             if effort and ("reasoning_effort" in text or "does not support thinking" in text or "does not support" in text):
                 payload.pop("reasoning_effort", None)
+                retried = True
+            if retried:
                 events = _http_stream_sse(
                     url=url, method="POST", headers=headers, payload=payload,
                     first_byte_timeout=self.first_byte_timeout,

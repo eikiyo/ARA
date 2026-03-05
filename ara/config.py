@@ -34,7 +34,7 @@ class ARAConfig:
     anthropic_api_key: str | None = None
     openrouter_api_key: str | None = None
     # Engine settings
-    max_depth: int = 4
+    max_depth: int = 3
     max_steps_per_call: int = 100
     max_observation_chars: int = 6000
     max_plan_chars: int = 40_000
@@ -44,7 +44,7 @@ class ARAConfig:
     recursive: bool = True
     acceptance_criteria: bool = True
     # ARA-specific
-    session_root_dir: str = ".ara"
+    session_root_dir: str = "ara_data"
     budget_limit_usd: float = 0.0
     # Embedding
     gemini_api_key: str | None = None
@@ -64,13 +64,13 @@ class ARAConfig:
             openai_api_key=os.getenv("ARA_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
             anthropic_api_key=os.getenv("ARA_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY"),
             openrouter_api_key=os.getenv("ARA_OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY"),
-            max_depth=int(os.getenv("ARA_MAX_DEPTH", "4")),
+            max_depth=int(os.getenv("ARA_MAX_DEPTH", "3")),
             max_steps_per_call=int(os.getenv("ARA_MAX_STEPS", "100")),
             max_observation_chars=int(os.getenv("ARA_MAX_OBS_CHARS", "6000")),
             max_solve_seconds=int(os.getenv("ARA_MAX_SOLVE_SECONDS", "0")),
             recursive=os.getenv("ARA_RECURSIVE", "true").strip().lower() in ("1", "true", "yes"),
             acceptance_criteria=os.getenv("ARA_ACCEPTANCE_CRITERIA", "true").strip().lower() in ("1", "true", "yes"),
-            session_root_dir=os.getenv("ARA_SESSION_DIR", ".ara"),
+            session_root_dir=os.getenv("ARA_SESSION_DIR", "ara_data"),
             budget_limit_usd=float(os.getenv("ARA_BUDGET_LIMIT", "0")),
             gemini_api_key=os.getenv("ARA_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY"),
         )

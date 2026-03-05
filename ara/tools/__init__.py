@@ -47,6 +47,8 @@ from .pipeline import (
     get_rules as _get_rules_impl,
     track_cost as _track_cost_impl,
     embed_text as _embed_text_impl,
+    score_branches as _score_branches_impl,
+    prune_hypotheses as _prune_hypotheses_impl,
 )
 
 if TYPE_CHECKING:
@@ -198,7 +200,10 @@ def _branch_search(tools: ARATools, args: dict[str, Any]) -> str:
     hypothesis_text = args.get("hypothesis_text", "")
     branch_type = args.get("branch_type", "lateral")
     query = args.get("query", "")
-    return _branch_search_impl(hypothesis_text, branch_type, query)
+    round_num = args.get("round_num", 1)
+    parent_branch_id = args.get("parent_branch_id")
+    return _branch_search_impl(hypothesis_text, branch_type, query, round_num,
+                               parent_branch_id, tools.session_id, tools.db)
 
 
 def _write_section(tools: ARATools, args: dict[str, Any]) -> str:
@@ -239,6 +244,20 @@ def _embed_text(tools: ARATools, args: dict[str, Any]) -> str:
     return _embed_text_impl(text)
 
 
+def _score_branches(tools: ARATools, args: dict[str, Any]) -> str:
+    branches = args.get("branches", [])
+    if not tools.db or not tools.session_id:
+        return json.dumps({"error": "Database connection and session_id required"})
+    return _score_branches_impl(branches, tools.session_id, tools.db)
+
+
+def _prune_hypotheses(tools: ARATools, args: dict[str, Any]) -> str:
+    keep_top_n = args.get("keep_top_n", 3)
+    if not tools.db or not tools.session_id:
+        return json.dumps({"error": "Database connection and session_id required"})
+    return _prune_hypotheses_impl(tools.session_id, keep_top_n, tools.db)
+
+
 TOOL_DISPATCH: dict[str, Any] = {
     "think": _think,
     "subtask": _subtask,
@@ -261,6 +280,8 @@ TOOL_DISPATCH: dict[str, Any] = {
     "extract_claims": _extract_claims,
     "score_hypothesis": _score_hypothesis,
     "branch_search": _branch_search,
+    "score_branches": _score_branches,
+    "prune_hypotheses": _prune_hypotheses,
     "write_section": _write_section,
     "get_citations": _get_citations,
     "request_approval": _request_approval,

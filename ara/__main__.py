@@ -28,7 +28,7 @@ from .tui import ChatContext, _get_model_display_name, dispatch_slash_command, r
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ara",
-        description="ARA — Adaptive Research Agent for academic research.",
+        description="ARA — Autonomous Research Agent for academic research.",
     )
     parser.add_argument("--workspace", default=".", help="Workspace root directory.")
     parser.add_argument(
@@ -49,6 +49,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true", help="Resume existing session.")
     parser.add_argument("--no-tui", action="store_true", help="Plain text mode.")
     return parser
+
+
+def _pick_ollama_model(current: str) -> str:
+    """Query Ollama for available models and pick the best one for tool use."""
+    try:
+        import httpx
+        resp = httpx.get("http://localhost:11434/api/tags", timeout=3)
+        if resp.status_code == 200:
+            models = [m["name"] for m in resp.json().get("models", [])]
+            if not models:
+                return current
+            # Prefer models known to support tool calling, largest first
+            preferred = ["qwen3", "qwen2.5", "llama3.1", "llama3.2", "mistral", "command-r"]
+            for pref in preferred:
+                for m in models:
+                    if pref in m.lower():
+                        return m
+            return models[0]
+    except Exception:
+        pass
+    return current
 
 
 def _resolve_provider(requested: str, creds: CredentialBundle) -> str:
@@ -132,6 +153,13 @@ def main() -> None:
                    "openrouter": cfg.openrouter_api_key, "ollama": "ollama"}.get(inferred)
             if key:
                 cfg.provider = inferred
+
+    # Ollama defaults: pick available model, disable reasoning
+    if cfg.provider == "ollama":
+        if not args.model:
+            cfg.model = _pick_ollama_model(cfg.model)
+        if not args.reasoning_effort:
+            cfg.reasoning_effort = None
 
     engine = build_engine(cfg)
     model_name = _get_model_display_name(engine)

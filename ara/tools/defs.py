@@ -42,6 +42,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Reasoning effort override (low/medium/high).",
                 },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Max recursion depth for this subtask (e.g. 1 = no further nesting, 2 = one level of sub-subtasks).",
+                },
             },
             "required": ["objective"],
         },
@@ -279,17 +283,52 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "hypothesis_text": {"type": "string", "description": "The hypothesis to branch from."},
                 "branch_type": {
                     "type": "string",
-                    "description": "Type: lateral, methodological, analogical, or convergent.",
+                    "description": "Type: analogical, methodological, contrarian, temporal, geographic, scale, adjacent.",
                 },
                 "query": {"type": "string", "description": "Search query for the branch."},
+                "round_num": {"type": "integer", "description": "Current round number (1-5)."},
+                "parent_branch_id": {"type": "integer", "description": "ID of parent branch (if this is a sub-branch)."},
             },
             "required": ["hypothesis_text", "branch_type", "query"],
+        },
+    },
+    {
+        "name": "score_branches",
+        "description": "Score and rank branch proposals on relevance, novelty, and feasibility (1-10).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "branches": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string", "description": "Branch proposal text."},
+                            "type": {"type": "string", "description": "Branch type."},
+                            "domain": {"type": "string", "description": "Target domain."},
+                        },
+                    },
+                    "description": "List of branch proposals to score.",
+                },
+            },
+            "required": ["branches"],
+        },
+    },
+    {
+        "name": "prune_hypotheses",
+        "description": "Drop lowest-scored hypotheses beyond top N in current session.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "keep_top_n": {"type": "integer", "description": "Number of top hypotheses to keep."},
+            },
+            "required": ["keep_top_n"],
         },
     },
     # === WRITING TOOLS ===
     {
         "name": "write_section",
-        "description": "Save a paper section to .ara/output/sections/{section_name}.md",
+        "description": "Save a paper section to ara_data/output/sections/{section_name}.md",
         "parameters": {
             "type": "object",
             "properties": {

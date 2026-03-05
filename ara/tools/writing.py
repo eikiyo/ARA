@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 
 
 def write_section(section_name: str, content: str, session_id: int, db: ARADB) -> str:
-    """Save a section to .ara/output/sections/{section_name}.md"""
+    """Save a section to ara_data/output/sections/{section_name}.md"""
     try:
-        output_dir = Path(".ara/output/sections")
+        output_dir = Path("ara_data/output/sections")
         output_dir.mkdir(parents=True, exist_ok=True)
 
         section_file = output_dir / f"{section_name}.md"
@@ -81,7 +81,7 @@ def get_citations(session_id: int, db: ARADB) -> str:
         bibliography = "\n\n".join(bibtex_entries)
 
         # Save bibliography file
-        output_dir = Path(".ara/output")
+        output_dir = Path("ara_data/output")
         output_dir.mkdir(parents=True, exist_ok=True)
         bib_file = output_dir / "references.bib"
         bib_file.write_text(bibliography, encoding="utf-8")

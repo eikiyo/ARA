@@ -7,7 +7,7 @@
 BASE_PROMPT = """\
 # ARA Agent — Core Principles & Standards
 
-You are an agent working within the ARA (Adaptive Research Agent) system. All your work \
+You are an agent working within the ARA (Autonomous Research Agent) system. All your work \
 must adhere to these foundational principles:
 
 ## 1. Academic Rigor — Citation Requirement

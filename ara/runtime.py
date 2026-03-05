@@ -37,7 +37,7 @@ def _new_session_id() -> str:
 @dataclass
 class SessionStore:
     workspace: Path
-    session_root_dir: str = ".ara"
+    session_root_dir: str = "ara_data"
 
     def __post_init__(self) -> None:
         self.workspace = self.workspace.expanduser().resolve()
@@ -130,7 +130,7 @@ class SessionRuntime:
         engine.session_dir = store.root
         engine.session_id = sid
 
-        # Initialize SQLite database in .ara/session.db
+        # Initialize SQLite database in ara_data/session.db
         db_path = store.root / "session.db"
         db = ARADB(db_path=db_path)
 

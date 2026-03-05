@@ -12,6 +12,8 @@ from .analyst import ANALYST_TRIAGE_PROMPT, ANALYST_DEEP_READ_PROMPT
 from .verifier import VERIFIER_PROMPT
 from .hypothesis import HYPOTHESIS_PROMPT
 from .brancher import BRANCHER_PROMPT
+from .brancher_scout import BRANCHER_SCOUT_PROMPT
+from .brancher_analyst import BRANCHER_ANALYST_PROMPT
 from .critic import CRITIC_PROMPT
 from .writer import WRITER_PROMPT
 from .manager import MANAGER_PROMPT
@@ -25,6 +27,8 @@ PHASE_PROMPTS = {
     "verifier": VERIFIER_PROMPT,
     "hypothesis": HYPOTHESIS_PROMPT,
     "brancher": BRANCHER_PROMPT,
+    "brancher_scout": BRANCHER_SCOUT_PROMPT,
+    "brancher_analyst": BRANCHER_ANALYST_PROMPT,
     "critic": CRITIC_PROMPT,
     "writer": WRITER_PROMPT,
     "manager": MANAGER_PROMPT,

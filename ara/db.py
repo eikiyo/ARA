@@ -22,7 +22,7 @@ class ARADB:
         """Initialize database connection and create tables if needed.
 
         Args:
-            db_path: Path to SQLite database file. Defaults to .ara/session.db
+            db_path: Path to SQLite database file. Defaults to ara_data/session.db
         """
         if db_path is None:
             db_path = Path.home() / ".ara" / "session.db"
@@ -119,7 +119,7 @@ class ARADB:
             )
         """)
 
-        # hypotheses
+        # hypotheses (v2: with source_branch_id, generation)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS hypotheses (
                 hypothesis_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,9 +131,12 @@ class ARADB:
                 strength TEXT,
                 weakness TEXT,
                 supporting_claims TEXT NOT NULL DEFAULT '[]',
+                source_branch_id INTEGER,
+                generation INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                FOREIGN KEY (session_id) REFERENCES research_sessions(session_id) ON DELETE CASCADE
+                FOREIGN KEY (session_id) REFERENCES research_sessions(session_id) ON DELETE CASCADE,
+                FOREIGN KEY (source_branch_id) REFERENCES branch_map(branch_id) ON DELETE SET NULL
             )
         """)
 
@@ -152,7 +155,7 @@ class ARADB:
             )
         """)
 
-        # branch_map
+        # branch_map (v2: with round, score, status, papers_found)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS branch_map (
                 branch_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -164,6 +167,9 @@ class ARADB:
                 finding TEXT NOT NULL,
                 papers_found INTEGER NOT NULL DEFAULT 0,
                 relevant_papers TEXT NOT NULL DEFAULT '[]',
+                round INTEGER DEFAULT 1,
+                score REAL,
+                status TEXT DEFAULT 'pending',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES research_sessions(session_id) ON DELETE CASCADE,
@@ -183,6 +189,18 @@ class ARADB:
                 gate_data TEXT NOT NULL,
                 resolved_at TEXT,
                 created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES research_sessions(session_id) ON DELETE CASCADE
+            )
+        """)
+
+        # branch_budget (v2: track searches per session)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS branch_budget (
+                session_id INTEGER PRIMARY KEY,
+                searches_used INTEGER DEFAULT 0,
+                searches_cap INTEGER DEFAULT 30,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES research_sessions(session_id) ON DELETE CASCADE
             )
         """)
@@ -228,6 +246,7 @@ class ARADB:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_hypotheses_score ON hypotheses(overall_score DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_branches_session ON branch_map(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_branches_hypothesis ON branch_map(source_hypothesis_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_branches_round ON branch_map(session_id, round)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_gates_session ON approval_gates(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_gates_status ON approval_gates(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_rules_session ON rules(session_id)")
@@ -454,15 +473,17 @@ class ARADB:
     # ============================================================================
 
     def insert_hypothesis(self, session_id: int, text: str, status: str = "generated",
-                         overall_score: float = 0.5, **kwargs) -> int:
+                         overall_score: float = 0.5, source_branch_id: Optional[int] = None,
+                         generation: int = 0, **kwargs) -> int:
         """Insert a hypothesis."""
         cursor = self.conn.cursor()
         now = self._now()
         cursor.execute("""
             INSERT INTO hypotheses
-            (session_id, hypothesis_text, status, overall_score, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (session_id, text, status, overall_score, now, now))
+            (session_id, hypothesis_text, status, overall_score, source_branch_id,
+             generation, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (session_id, text, status, overall_score, source_branch_id, generation, now, now))
         self.conn.commit()
         return cursor.lastrowid
 
@@ -485,7 +506,8 @@ class ARADB:
 
     def update_hypothesis(self, hypothesis_id: int, **kwargs):
         """Update hypothesis fields."""
-        allowed = {'status', 'rank', 'overall_score', 'strength', 'weakness', 'supporting_claims'}
+        allowed = {'status', 'rank', 'overall_score', 'strength', 'weakness', 'supporting_claims',
+                   'source_branch_id', 'generation'}
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
             return
@@ -531,7 +553,9 @@ class ARADB:
     def insert_branch(self, session_id: int, hypothesis_id: int, target_domain: str,
                      branch_type: str, branch_confidence: float = 0.5,
                      finding: str = "", papers_found: int = 0,
-                     relevant_papers: Optional[List[str]] = None) -> int:
+                     relevant_papers: Optional[List[str]] = None,
+                     round: int = 1, score: Optional[float] = None,
+                     status: str = "pending") -> int:
         """Insert a branch."""
         cursor = self.conn.cursor()
         now = self._now()
@@ -539,10 +563,11 @@ class ARADB:
         cursor.execute("""
             INSERT INTO branch_map
             (session_id, source_hypothesis_id, target_domain, branch_type,
-             branch_confidence, finding, papers_found, relevant_papers, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             branch_confidence, finding, papers_found, relevant_papers, round, score,
+             status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (session_id, hypothesis_id, target_domain, branch_type, branch_confidence,
-              finding, papers_found, papers_json, now, now))
+              finding, papers_found, papers_json, round, score, status, now, now))
         self.conn.commit()
         return cursor.lastrowid
 
@@ -554,6 +579,79 @@ class ARADB:
             WHERE session_id = ?
             ORDER BY branch_confidence DESC
         """, (session_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_branches_by_round(self, session_id: int, round_num: int) -> List[Dict[str, Any]]:
+        """Get branches for a specific round."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM branch_map
+            WHERE session_id = ? AND round = ?
+            ORDER BY score DESC NULLS LAST
+        """, (session_id, round_num))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def update_branch(self, branch_id: int, **kwargs):
+        """Update branch fields."""
+        allowed = {'status', 'score', 'finding', 'papers_found', 'branch_confidence', 'relevant_papers'}
+        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        if not updates:
+            return
+
+        # Convert lists to JSON
+        if 'relevant_papers' in updates and isinstance(updates['relevant_papers'], list):
+            updates['relevant_papers'] = json.dumps(updates['relevant_papers'])
+
+        updates['updated_at'] = self._now()
+        cols = ", ".join([f"{k} = ?" for k in updates.keys()])
+        vals = list(updates.values())
+        vals.append(branch_id)
+
+        cursor = self.conn.cursor()
+        cursor.execute(f"UPDATE branch_map SET {cols} WHERE branch_id = ?", vals)
+        self.conn.commit()
+
+    def get_branch_budget(self, session_id: int) -> Dict[str, Any]:
+        """Get branch budget for a session."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM branch_budget
+            WHERE session_id = ?
+        """, (session_id,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        # If no budget exists, create one
+        now = self._now()
+        cursor.execute("""
+            INSERT INTO branch_budget
+            (session_id, searches_used, searches_cap, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (session_id, 0, 30, now, now))
+        self.conn.commit()
+        return {"session_id": session_id, "searches_used": 0, "searches_cap": 30}
+
+    def increment_branch_searches(self, session_id: int):
+        """Increment the branch searches used for a session."""
+        budget = self.get_branch_budget(session_id)
+        new_count = budget['searches_used'] + 1
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE branch_budget
+            SET searches_used = ?, updated_at = ?
+            WHERE session_id = ?
+        """, (new_count, self._now(), session_id))
+        self.conn.commit()
+
+    def get_top_hypotheses(self, session_id: int, limit: int = 3) -> List[Dict[str, Any]]:
+        """Get top-scored hypotheses for a session."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM hypotheses
+            WHERE session_id = ?
+            ORDER BY overall_score DESC
+            LIMIT ?
+        """, (session_id, limit))
         return [dict(row) for row in cursor.fetchall()]
 
     # ============================================================================

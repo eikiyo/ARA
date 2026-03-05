@@ -212,108 +212,75 @@ class _StatusBarState:
     is_processing: bool = False
 
 
-def _build_progress_bar(pct: float, width: int = 16) -> str:
-    """Build a text-based progress bar."""
-    filled = int(pct / 100 * width)
-    filled = max(0, min(width, filled))
-    bar = "\u2588" * filled + "\u2591" * (width - filled)
-    return bar
-
-
 def _build_toolbar_text(state: _StatusBarState) -> list[tuple[str, str]]:
-    """Build prompt_toolkit formatted text for the status bar."""
-    # Calculate token percentage
-    total_tokens = state.total_input_tokens + state.total_output_tokens
-    ctx_pct = (state.total_input_tokens / state.context_window * 100) if state.context_window > 0 else 0
-    ctx_pct = min(ctx_pct, 100)
-
-    # Progress bar
-    bar = _build_progress_bar(ctx_pct)
-
-    # Left side
-    parts: list[tuple[str, str]] = []
-
-    # Separator line (empty line above toolbar for visual gap)
-    parts.append(("class:toolbar.sep", "\n"))
-
-    # Model indicator
-    model_short = state.model_name
-    if len(model_short) > 20:
-        model_short = model_short[:18] + ".."
-    parts.append(("class:toolbar.model", f" {model_short} "))
-    parts.append(("class:toolbar.dim", " | "))
-
-    # Progress bar + percentage
-    if ctx_pct < 50:
-        bar_style = "class:toolbar.bar-ok"
-    elif ctx_pct < 80:
-        bar_style = "class:toolbar.bar-warn"
-    else:
-        bar_style = "class:toolbar.bar-crit"
-    parts.append((bar_style, bar))
-    parts.append(("class:toolbar.text", f" {ctx_pct:.0f}%"))
-    parts.append(("class:toolbar.dim", " | "))
-
-    # Token usage
-    tok_in = _format_token_count(state.total_input_tokens)
-    tok_out = _format_token_count(state.total_output_tokens)
-    ctx_win = _format_token_count(state.context_window)
-    parts.append(("class:toolbar.text", f"Tokens: {tok_in}/{ctx_win}"))
-    parts.append(("class:toolbar.dim", " | "))
-
-    # Phase
-    phase_display = state.current_phase.replace("_", " ").title()
-    if state.is_processing:
-        parts.append(("class:toolbar.phase-active", f"Phase: {phase_display}"))
-    else:
-        parts.append(("class:toolbar.text", f"Phase: {phase_display}"))
-    parts.append(("class:toolbar.dim", " | "))
-
-    # Step
-    if state.is_processing and state.current_step > 0:
-        parts.append(("class:toolbar.text", f"Step: {state.current_step}/{state.max_steps}"))
-    else:
-        parts.append(("class:toolbar.text", f"Step: -/{state.max_steps}"))
-
-    # Right side — budget remaining (pad to right-align)
-    if state.budget_cap > 0:
-        remaining = max(0, state.budget_cap - state.budget_spent)
-        budget_text = f"Budget: ${remaining:.2f} remaining"
-    else:
-        budget_text = "Budget: unlimited"
-
-    # Calculate padding for right alignment (approximate terminal width)
-    left_len = sum(len(text) for _, text in parts)
+    """Build prompt_toolkit formatted text for the status bar (single line)."""
+    import shutil
     try:
-        import shutil
         term_width = shutil.get_terminal_size().columns
     except Exception:
         term_width = 120
-    pad = max(1, term_width - left_len - len(budget_text) - 2)
-    parts.append(("class:toolbar.text", " " * pad))
 
-    if state.budget_cap > 0 and remaining < state.budget_cap * 0.2:
-        parts.append(("class:toolbar.budget-low", budget_text))
+    parts: list[tuple[str, str]] = []
+    # Left: model
+    model_short = state.model_name
+    if len(model_short) > 24:
+        model_short = model_short[:22] + ".."
+    parts.append(("class:tb.model", f" {model_short} "))
+
+    # Tokens
+    total_tok = state.total_input_tokens + state.total_output_tokens
+    ctx_win = _format_token_count(state.context_window)
+    tok_display = _format_token_count(total_tok)
+    ctx_pct = (total_tok / state.context_window * 100) if state.context_window > 0 else 0
+    if ctx_pct < 50:
+        tok_style = "class:tb.text"
+    elif ctx_pct < 80:
+        tok_style = "class:tb.warn"
     else:
-        parts.append(("class:toolbar.budget", budget_text))
-    parts.append(("class:toolbar.text", " "))
+        tok_style = "class:tb.crit"
+    parts.append(("class:tb.dim", " \u2502 "))
+    parts.append((tok_style, f"{tok_display}/{ctx_win}"))
+
+    # Phase > Step (only show when processing or after first step)
+    if state.is_processing or state.current_step > 0:
+        phase_display = state.current_phase.replace("_", " ").title()
+        parts.append(("class:tb.dim", " \u2502 "))
+        parts.append(("class:tb.phase", phase_display))
+        parts.append(("class:tb.dim", " \u203a "))
+        parts.append(("class:tb.text", f"step {state.current_step}"))
+
+    # Right side: budget
+    if state.budget_cap > 0:
+        remaining = max(0, state.budget_cap - state.budget_spent)
+        budget_text = f"${remaining:.2f} left"
+        budget_style = "class:tb.crit" if remaining < state.budget_cap * 0.2 else "class:tb.budget"
+    else:
+        budget_text = "no budget cap"
+        budget_style = "class:tb.dim"
+
+    # Pad to right-align
+    left_len = sum(len(t) for _, t in parts if "\n" not in t and "\u2500" not in t)
+    pad = max(1, term_width - left_len - len(budget_text) - 1)
+    parts.append(("class:tb.bg", " " * pad))
+    parts.append((budget_style, budget_text))
+    parts.append(("class:tb.bg", " "))
 
     return parts
 
 
-# prompt_toolkit style for the toolbar
+# prompt_toolkit style — clean dark theme with ARA cyan accents
 _TOOLBAR_STYLE_DICT = {
-    "toolbar":              "bg:#1a1a2e #e0e0e0",
-    "toolbar.sep":          "bg:#0d0d1a #333",
-    "toolbar.model":        "bg:#16213e bold #00d4ff",
-    "toolbar.dim":          "bg:#1a1a2e #555555",
-    "toolbar.text":         "bg:#1a1a2e #aaaaaa",
-    "toolbar.bar-ok":       "bg:#1a1a2e #00d4ff",
-    "toolbar.bar-warn":     "bg:#1a1a2e #ffaa00",
-    "toolbar.bar-crit":     "bg:#1a1a2e #ff4444",
-    "toolbar.phase-active": "bg:#1a1a2e bold #00ff88",
-    "toolbar.budget":       "bg:#1a1a2e #888888",
-    "toolbar.budget-low":   "bg:#1a1a2e bold #ff4444",
+    "bottom-toolbar":       "noreverse",
+    "bottom-toolbar.text":  "noreverse",
+    "tb.bg":    "#888",
+    "tb.sep":   "#555",
+    "tb.model": "bold #ffffff",
+    "tb.dim":   "#666",
+    "tb.text":  "#cccccc",
+    "tb.warn":  "#ffaa00",
+    "tb.crit":  "bold #ff4444",
+    "tb.phase": "#00d4ff",
+    "tb.budget":"#999",
 }
 
 
@@ -480,7 +447,7 @@ class RichREPL:
             history=FileHistory(str(history_dir / "repl_history")),
             style=pt_style,
             bottom_toolbar=self._toolbar,
-            reserve_space_for_menu=6,
+            reserve_space_for_menu=2,
         )
 
     def _toolbar(self) -> list[tuple[str, str]]:
@@ -567,35 +534,31 @@ class RichREPL:
             return
         self._current_step = None
         from rich.text import Text
+        self.console.print()
+        # Compact step header: "Step 18 · 4.2s"
         ts = datetime.now().strftime("%H:%M:%S")
-        model_name = getattr(self.ctx.runtime.engine.model, "model", "(unknown)")
-        ctx_window = _MODEL_CONTEXT_WINDOWS.get(model_name, _DEFAULT_CONTEXT_WINDOW)
-        ctx_str = f"{_format_token_count(step.input_tokens)}/{_format_token_count(ctx_window)}"
-        right_parts = []
+        header = f"Step {step.step}"
         if step.depth > 0:
-            right_parts.append(f"depth {step.depth}")
-        right_parts.append(f"{step.step}/{step.max_steps}")
-        if step.input_tokens or step.output_tokens:
-            right_parts.append(f"{_format_token_count(step.input_tokens)}in/{_format_token_count(step.output_tokens)}out")
-        right_parts.append(f"[{ctx_str}]")
-        right = " | ".join(right_parts)
-        self.console.rule(f"[bold] {ts}  Step {step.step} [/bold][dim]{right}[/dim]", style="cyan")
+            header += f"  d{step.depth}"
+        header += f"  {step.model_elapsed_sec:.1f}s"
+        self.console.rule(f"[bold]{header}[/bold]", style="dim")
         if step.model_text:
             preview = step.model_text.strip()
-            if len(preview) > 200:
-                preview = preview[:197] + "..."
-            self.console.print(Text(f"  ({step.model_elapsed_sec:.1f}s) {preview}", style="dim"))
+            if len(preview) > 160:
+                preview = preview[:157] + "..."
+            self.console.print(Text(f"  {preview}", style="dim"))
         n = len(step.tool_calls)
         for i, tc in enumerate(step.tool_calls):
             is_last = i == n - 1
             connector = "\u2514\u2500" if is_last else "\u251c\u2500"
             parts = Text()
             parts.append(f"  {connector} ", style="dim")
-            parts.append(f"{tc.name}", style="bold red" if tc.is_error else "")
+            parts.append(f"{tc.name}", style="bold red" if tc.is_error else "bold")
             if tc.key_arg:
                 parts.append(f'  "{tc.key_arg}"', style="dim")
             parts.append(f"  {tc.elapsed_sec:.1f}s", style="dim")
             self.console.print(parts)
+        self.console.print()
 
     def _run_agent(self, objective: str) -> None:
         try:
@@ -638,7 +601,7 @@ class RichREPL:
         from rich.text import Text
         self.console.clear()
         self.console.print(Text(SPLASH_ART, style="bold cyan"))
-        self.console.print(Text("  Adaptive Research Agent", style="bold"))
+        self.console.print(Text("  Autonomous Research Agent", style="bold"))
         self.console.print()
         if self._startup_info:
             for key, val in self._startup_info.items():
@@ -649,7 +612,7 @@ class RichREPL:
         with patch_stdout(raw=True):
             while True:
                 try:
-                    user_input = self.session.prompt("you> ").strip()
+                    user_input = self.session.prompt("\u203a ").strip()
                 except KeyboardInterrupt:
                     continue
                 except EOFError:

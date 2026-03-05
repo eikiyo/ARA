@@ -4,7 +4,7 @@
 # Calls: N/A
 # Imports: config, engine, model, runtime
 
-"""ARA — Adaptive Research Agent."""
+"""ARA — Autonomous Research Agent."""
 
 __version__ = "0.1.0"
 

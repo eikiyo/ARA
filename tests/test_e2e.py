@@ -40,7 +40,7 @@ def tmp_workspace():
 
 @pytest.fixture
 def db(tmp_workspace):
-    db = ARADB(db_path=tmp_workspace / ".ara" / "session.db")
+    db = ARADB(db_path=tmp_workspace / "ara_data" / "session.db")
     yield db
     db.close()
 
@@ -198,18 +198,18 @@ class TestToolDispatch:
 
 class TestToolDefinitions:
     def test_tool_count(self):
-        assert len(TOOL_DEFINITIONS) == 27
+        assert len(TOOL_DEFINITIONS) == 29
 
     def test_openai_format(self):
         openai_tools = to_openai_tools()
-        assert len(openai_tools) == 27
+        assert len(openai_tools) == 29
         for t in openai_tools:
             assert t["type"] == "function"
             assert "name" in t["function"]
 
     def test_anthropic_format(self):
         anthropic_tools = to_anthropic_tools()
-        assert len(anthropic_tools) == 27
+        assert len(anthropic_tools) == 29
         for t in anthropic_tools:
             assert "name" in t
             assert "input_schema" in t
@@ -229,7 +229,7 @@ class TestToolDefinitions:
 
 class TestPrompts:
     def test_phase_count(self):
-        assert len(PHASE_PROMPTS) == 10
+        assert len(PHASE_PROMPTS) == 12
 
     def test_all_phases_have_content(self):
         for phase, prompt in PHASE_PROMPTS.items():
@@ -324,7 +324,7 @@ class TestRuntime:
         runtime = SessionRuntime.bootstrap(engine=engine, config=cfg)
 
         assert runtime.db is not None
-        assert (tmp_workspace / ".ara" / "session.db").exists()
+        assert (tmp_workspace / "ara_data" / "session.db").exists()
         assert engine.tools.db is not None
 
     def test_solve_persists_state(self, tmp_workspace):
@@ -341,7 +341,7 @@ class TestRuntime:
         assert result == "Answer 1."
 
         # Verify state persisted
-        state_path = tmp_workspace / ".ara" / "state.json"
+        state_path = tmp_workspace / "ara_data" / "state.json"
         assert state_path.exists()
         state = json.loads(state_path.read_text())
         assert "turn_history" in state
