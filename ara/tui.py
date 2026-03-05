@@ -199,6 +199,21 @@ def dispatch_slash_command(
             new_engine = build_engine(ctx.cfg)
             ctx.runtime.engine = new_engine
             emit(f"Switched to: {new_model}")
+            # Auto-persist model + provider
+            settings = ctx.settings_store.load()
+            settings.default_provider = ctx.cfg.provider
+            provider = ctx.cfg.provider
+            if provider == "openai":
+                settings.default_model_openai = new_model
+            elif provider == "anthropic":
+                settings.default_model_anthropic = new_model
+            elif provider == "openrouter":
+                settings.default_model_openrouter = new_model
+            elif provider == "ollama":
+                settings.default_model_ollama = new_model
+            else:
+                settings.default_model = new_model
+            ctx.settings_store.save(settings)
         except Exception as exc:
             emit(f"Failed: {exc}")
         return "handled"

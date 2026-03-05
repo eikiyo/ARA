@@ -117,8 +117,9 @@ def main() -> None:
     settings_store = SettingsStore(workspace=cfg.workspace, session_root_dir=cfg.session_root_dir)
     settings = settings_store.load()
 
-    if args.model is None and not os.getenv("ARA_MODEL") and settings.default_model:
-        cfg.model = settings.default_model
+    # Restore persisted provider (before model, since model depends on provider)
+    if args.provider is None and not os.getenv("ARA_PROVIDER") and settings.default_provider:
+        cfg.provider = settings.default_provider
     if args.reasoning_effort is None and settings.default_reasoning_effort:
         cfg.reasoning_effort = settings.default_reasoning_effort
 
@@ -142,6 +143,11 @@ def main() -> None:
     cfg.gemini_api_key = creds.gemini_api_key
     if args.model:
         cfg.model = args.model
+    elif not os.getenv("ARA_MODEL"):
+        # Use per-provider persisted model, or global default
+        persisted_model = settings.default_model_for_provider(cfg.provider)
+        if persisted_model:
+            cfg.model = persisted_model
     if args.reasoning_effort:
         cfg.reasoning_effort = None if args.reasoning_effort == "none" else args.reasoning_effort
 
@@ -184,6 +190,21 @@ def main() -> None:
     }
     if cfg.reasoning_effort:
         startup_info["Reasoning"] = cfg.reasoning_effort
+
+    # Auto-persist provider + model for next session
+    settings.default_provider = cfg.provider
+    provider = cfg.provider
+    if provider == "openai":
+        settings.default_model_openai = cfg.model
+    elif provider == "anthropic":
+        settings.default_model_anthropic = cfg.model
+    elif provider == "openrouter":
+        settings.default_model_openrouter = cfg.model
+    elif provider == "ollama":
+        settings.default_model_ollama = cfg.model
+    else:
+        settings.default_model = cfg.model
+    settings_store.save(settings)
 
     ctx = ChatContext(runtime=runtime, cfg=cfg, settings_store=settings_store)
 
