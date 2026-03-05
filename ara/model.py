@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
@@ -129,6 +130,7 @@ class GeminiModel:
     def generate(
         self, conversation: Conversation,
         on_chunk: Callable[[str], None] | None = None,
+        _max_retries: int = 5,
     ) -> ModelTurn:
         from google.genai import types
 
@@ -141,46 +143,67 @@ class GeminiModel:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
-        text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        usage = TokenUsage()
+        last_exc: Exception | None = None
+        for attempt in range(_max_retries):
+            text_parts: list[str] = []
+            tool_calls: list[ToolCall] = []
+            usage = TokenUsage()
 
-        try:
-            for chunk in self._client.models.generate_content_stream(
-                model=self.model,
-                contents=contents,
-                config=config,
-            ):
-                if chunk.text:
-                    text_parts.append(chunk.text)
+            try:
+                for chunk in self._client.models.generate_content_stream(
+                    model=self.model,
+                    contents=contents,
+                    config=config,
+                ):
+                    if chunk.text:
+                        text_parts.append(chunk.text)
+                        if on_chunk:
+                            on_chunk(chunk.text)
+
+                    if chunk.function_calls:
+                        for fc in chunk.function_calls:
+                            tool_calls.append(ToolCall(
+                                id=f"call_{uuid.uuid4().hex[:12]}",
+                                name=fc.name,
+                                arguments=dict(fc.args) if fc.args else {},
+                            ))
+
+                    if chunk.usage_metadata:
+                        usage.input_tokens = chunk.usage_metadata.prompt_token_count or 0
+                        usage.output_tokens = chunk.usage_metadata.candidates_token_count or 0
+
+                return ModelTurn(
+                    text="".join(text_parts),
+                    tool_calls=tool_calls,
+                    usage=usage,
+                )
+
+            except Exception as exc:
+                error_text = str(exc).lower()
+
+                # Auth errors — no point retrying
+                if "api key" in error_text or "403" in error_text:
+                    raise ModelError(f"Authentication failed: {exc}") from exc
+
+                # Rate limit — retry with exponential backoff
+                if "quota" in error_text or "429" in error_text or "resource_exhausted" in error_text:
+                    last_exc = exc
+                    wait = min(2 ** attempt * 2, 60)  # 2s, 4s, 8s, 16s, 32s
+                    _log.warning("Rate limited (attempt %d/%d), retrying in %ds...", attempt + 1, _max_retries, wait)
                     if on_chunk:
-                        on_chunk(chunk.text)
+                        on_chunk(f"\n[Rate limited — retrying in {wait}s...]\n")
+                    time.sleep(wait)
+                    continue
 
-                if chunk.function_calls:
-                    for fc in chunk.function_calls:
-                        tool_calls.append(ToolCall(
-                            id=f"call_{uuid.uuid4().hex[:12]}",
-                            name=fc.name,
-                            arguments=dict(fc.args) if fc.args else {},
-                        ))
+                # Other API errors — retry once, then fail
+                if attempt == 0:
+                    last_exc = exc
+                    _log.warning("API error (attempt 1), retrying in 3s: %s", exc)
+                    time.sleep(3)
+                    continue
+                raise ModelError(f"Gemini API error: {exc}") from exc
 
-                if chunk.usage_metadata:
-                    usage.input_tokens = chunk.usage_metadata.prompt_token_count or 0
-                    usage.output_tokens = chunk.usage_metadata.candidates_token_count or 0
-
-        except Exception as exc:
-            error_text = str(exc).lower()
-            if "quota" in error_text or "429" in error_text:
-                raise ModelError(f"Rate limited: {exc}") from exc
-            if "api key" in error_text or "403" in error_text:
-                raise ModelError(f"Authentication failed: {exc}") from exc
-            raise ModelError(f"Gemini API error: {exc}") from exc
-
-        return ModelTurn(
-            text="".join(text_parts),
-            tool_calls=tool_calls,
-            usage=usage,
-        )
+        raise ModelError(f"Rate limited after {_max_retries} retries: {last_exc}") from last_exc
 
     def append_user_message(self, conv: Conversation, text: str) -> None:
         conv._messages.append({"role": "user", "text": text})
