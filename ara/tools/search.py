@@ -551,7 +551,7 @@ _ALL_SEARCH_FNS = [
 ]
 
 
-_MIN_PAPERS = 30  # Skip searching if DB already has this many
+_MIN_PAPERS = 150  # Skip searching if DB already has this many (target: 200+)
 _SEARCH_ALL_LOCK = threading.Lock()
 
 
@@ -576,7 +576,7 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
             return json.dumps({
                 "status": "done",
                 "total_in_db": existing,
-                "note": f"{existing} papers already in database. STOP searching. Proceed to next phase.",
+                "note": f"{existing} papers already in database. Target reached. You may proceed to the next phase or do one more reformulated search for diversity.",
             })
 
     query = args.get("query", "")
@@ -645,7 +645,7 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
         "per_source": per_source,
         "top_papers": top_papers,
         "errors": errors,
-        "note": f"{len(all_papers)} papers stored in database. STOP searching. Proceed to next phase.",
+        "note": f"{len(all_papers)} new papers found this round and stored in database.",
     })
 
 

@@ -32,10 +32,10 @@ class ARAConfig:
     budget_limit_usd: float = 10.0
 
     # Paper quality gates
-    min_papers: int = 50
+    min_papers: int = 100
     min_cited: int = 40
     min_paper_words: int = 6000
-    max_search_rounds: int = 4
+    max_search_rounds: int = 6
     paper_critic_max_revisions: int = 3
     section_critic_max_revisions: int = 2
 
@@ -77,10 +77,10 @@ class ARAConfig:
             max_tool_calls_per_turn=_safe_int("ARA_MAX_TOOL_CALLS_PER_TURN", 1),
             max_solve_seconds=_safe_int("ARA_MAX_SOLVE_SECONDS", 1800),
             budget_limit_usd=_safe_float("ARA_BUDGET_LIMIT", 5.0),
-            min_papers=_safe_int("ARA_MIN_PAPERS", 50),
+            min_papers=_safe_int("ARA_MIN_PAPERS", 100),
             min_cited=_safe_int("ARA_MIN_CITED", 40),
             min_paper_words=_safe_int("ARA_MIN_PAPER_WORDS", 6000),
-            max_search_rounds=_safe_int("ARA_MAX_SEARCH_ROUNDS", 4),
+            max_search_rounds=_safe_int("ARA_MAX_SEARCH_ROUNDS", 6),
             paper_critic_max_revisions=_safe_int("ARA_PAPER_CRITIC_MAX_REVISIONS", 3),
             section_critic_max_revisions=_safe_int("ARA_SECTION_CRITIC_MAX_REVISIONS", 2),
         )

@@ -22,11 +22,12 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "scout": ["search_*", "embed_text", "batch_embed_papers", "request_approval", "track_cost"],
     "analyst_triage": ["list_papers", "read_paper", "search_similar", "embed_text", "request_approval", "track_cost"],
     "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "search_similar", "request_approval", "track_cost"],
-    "verifier": ["check_retraction", "get_citation_count", "validate_doi", "read_paper", "request_approval", "track_cost"],
+    "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "read_paper", "request_approval", "track_cost"],
     "hypothesis": ["read_paper", "search_similar", "score_hypothesis", "request_approval", "track_cost"],
     "brancher": ["search_*", "search_similar", "embed_text", "request_approval", "track_cost"],
     "critic": ["read_paper", "search_similar", "request_approval", "track_cost"],
-    "writer": ["read_paper", "search_similar", "write_section", "get_citations", "generate_prisma_diagram", "request_approval", "track_cost"],
+    "synthesis": ["list_papers", "read_paper", "search_similar", "request_approval", "track_cost"],
+    "writer": ["list_papers", "read_paper", "search_similar", "write_section", "get_citations", "generate_prisma_diagram", "request_approval", "track_cost"],
     "paper_critic": ["read_paper", "search_similar", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "request_approval", "track_cost"],
 }
 

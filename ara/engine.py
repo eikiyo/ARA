@@ -110,7 +110,7 @@ class RLMEngine:
             return json.dumps({"error": f"Max depth {self.config.max_depth} reached"})
 
         # Select active model based on phase
-        active_model = self.writer_model if phase in ("writer", "paper_critic") else self.model
+        active_model = self.writer_model if phase in ("writer", "paper_critic", "synthesis") else self.model
         model_name = getattr(active_model, 'model', 'unknown')
         _log.info("-" * 50)
         _log.info("_solve_recursive START | depth=%d | phase=%s | model=%s", depth, phase or "manager", model_name)
@@ -494,6 +494,9 @@ class RLMEngine:
             ("branch", "brancher"),
             ("critic", "critic"),
             ("evaluat", "critic"),
+            ("synthesis", "synthesis"),
+            ("pre-writer", "synthesis"),
+            ("prepare data", "synthesis"),
             ("outline", "writer"),
             ("draft", "writer"),
             ("write", "writer"),

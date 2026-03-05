@@ -199,15 +199,30 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
         (session_id, limit, offset),
     ).fetchall()
 
+    compact = args.get("compact", False)  # Compact mode for writer: less abstract, more citation info
     papers = []
     for row in rows:
         d = dict(row)
-        # Truncate abstract for compact listing
-        abstract = d.get("abstract") or ""
-        if len(abstract) > 300:
-            abstract = abstract[:300] + "..."
-        d["abstract"] = abstract
-        d["authors"] = json.loads(d.get("authors") or "[]")
+        authors_raw = json.loads(d.get("authors") or "[]")
+        # Normalize author names to strings for easy reading
+        author_names = []
+        for a in authors_raw:
+            if isinstance(a, str):
+                author_names.append(a)
+            elif isinstance(a, dict):
+                name = a.get("name") or a.get("family", "")
+                if a.get("given"):
+                    name = f"{a['given']} {name}"
+                author_names.append(name)
+        d["authors"] = author_names
+        # In compact mode, skip abstracts to save tokens
+        if compact:
+            d.pop("abstract", None)
+        else:
+            abstract = d.get("abstract") or ""
+            if len(abstract) > 300:
+                abstract = abstract[:300] + "..."
+            d["abstract"] = abstract
         papers.append(d)
 
     total = db.paper_count(session_id)

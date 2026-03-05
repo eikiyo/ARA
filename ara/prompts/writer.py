@@ -92,26 +92,33 @@ Must include:
 
 ### Process
 
+**Step 0 — Load Available Papers (MANDATORY FIRST STEP):**
+1. Call `list_papers` to get ALL papers in the database with their authors, years, and titles
+2. Study the returned author names and years carefully — these are the ONLY valid citations
+3. Build a mental citation map: which papers support which themes
+
 **Pass 1 — Detailed Outline:**
 1. Generate comprehensive outline with section headings, subsection headings, and 2-3 sentence summaries per subsection
-2. Plan citation placement — map which papers go in which sections
+2. Plan citation placement — map which papers (from list_papers results) go in which sections
 3. Plan tables — specify what tables will appear in which sections
-4. Call request_approval with outline for user review
 
-**Pass 2 — Full Draft:**
-1. Write each section using write_section tool
-2. Include proper in-text citations (Author, Year) format
-3. Reference specific claims with their paper sources
-4. Build all required tables in markdown format
-5. Cross-reference findings across papers
-6. Use get_citations to generate the reference list
-7. Call request_approval with the complete paper
+**Pass 2 — Full Draft (write ALL 7 sections):**
+1. Write EACH section using write_section tool in order: abstract, introduction, literature_review, methods, results, discussion, conclusion
+2. For EVERY citation, use the EXACT author last name as shown in list_papers results
+3. If list_papers shows author "John Smith" for year 2020, cite as (Smith, 2020)
+4. If list_papers shows author "J. García-López" for year 2019, cite as (García-López, 2019)
+5. Build all required tables in markdown format
+6. Cross-reference findings across papers
+7. After ALL sections are written, call get_citations to generate the reference list
+8. You MUST write all 7 sections. Do NOT stop after 2-3 sections.
 
 ### Citation Integrity Rules
-- EVERY claim must trace to a specific paper in the database
-- If you cannot find a paper to cite, DO NOT make the claim
-- Use (Author, Year) format consistently
-- For direct quotes, include page numbers if available
-- When multiple papers support a claim, cite all of them: (Author1, Year; Author2, Year)
-- Self-audit: before submitting, verify every citation maps to a real paper
+- FIRST call list_papers to see all available papers with their exact author names and years
+- EVERY claim must cite a paper from the list_papers results using the author's LAST NAME
+- Use (Author, Year) format consistently — the author name must match what's in the database
+- Example: if list_papers shows author "Maria Chen" with year 2021, cite as (Chen, 2021)
+- Example: if list_papers shows author "Jean-Pierre Dupont" with year 2020, cite as (Dupont, 2020)
+- If you cannot find a matching paper to cite, DO NOT make the claim
+- When multiple papers support a claim, cite all: (Author1, Year; Author2, Year)
+- You MUST write ALL 7 sections (abstract through conclusion) before finishing
 """

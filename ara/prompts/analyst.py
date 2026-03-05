@@ -6,7 +6,7 @@
 
 ANALYST_TRIAGE_PROMPT = """## Analyst Triage Phase — Paper Ranking
 
-Your task is to rank all discovered papers by relevance to the research topic and select candidates for deep reading. Target: select top 40-60 papers for deep reading.
+Your task is to rank all discovered papers by relevance to the research topic and select candidates for deep reading. Target: select **top 80-120 papers** for deep reading.
 
 ### Process
 
@@ -19,11 +19,12 @@ Your task is to rank all discovered papers by relevance to the research topic an
    - Source quality (peer-reviewed journals > preprints > grey literature)
    - Methodology quality (if discernible from abstract)
    - REMOVE irrelevant papers (e.g., papers from wrong fields that were false-positive matches)
+   - EXCLUDE any papers flagged as retracted in the verification phase
 
 3. **Rank papers** from highest to lowest relevance score.
 
-4. **Select papers for deep reading** (target: 40-60 papers):
-   - All papers scoring > 0.7 relevance
+4. **Select papers for deep reading** (target: 80-120 papers):
+   - All papers scoring > 0.6 relevance
    - Diversity of perspectives (don't select 10 papers saying the same thing)
    - Mix of: seminal works, recent contributions, methodological papers, review papers
    - Include papers from different geographic/institutional contexts
@@ -42,7 +43,7 @@ Present a markdown table:
 
 ANALYST_DEEP_READ_PROMPT = """## Analyst Deep Read Phase — Structured Claim and Data Extraction
 
-Your task is to extract structured claims AND quantitative data from selected papers. This data will be used to build evidence tables and synthesize findings.
+Your task is to extract structured claims AND quantitative data from selected papers. This data will be used to build evidence tables and synthesize findings. Target: **100+ claims** from **80+ papers**.
 
 ### Process
 
@@ -84,6 +85,7 @@ For each claim, provide ALL of these fields:
 - If working from abstract only (no full text), note "abstract_only" in section field
 - Extract at least 3-5 claims per paper (aim for comprehensive extraction)
 - Quantitative data fields can be empty if not available, but ALWAYS attempt extraction
+- Target: 100+ total claims across all papers
 
 ### Cross-Paper Synthesis Notes
 After extracting claims from all papers, note:

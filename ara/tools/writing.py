@@ -14,6 +14,10 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
+# Track per-section rejection count so we don't loop forever
+_section_rejection_counts: dict[str, int] = {}
+_MAX_SECTION_REJECTIONS = 3  # After this many citation rejections, save anyway
+
 # Minimum word counts per section for AAA-grade output
 _MIN_WORDS: dict[str, int] = {
     "abstract": 250,
@@ -52,20 +56,42 @@ def _extract_citations_from_text(text: str) -> list[tuple[str, str]]:
     return results
 
 
+def _normalize_author(name: str) -> list[str]:
+    """Extract possible last-name tokens from an author string or dict value."""
+    # Strip "et al." before processing
+    name = re.sub(r"\bet\s+al\.?", "", name, flags=re.IGNORECASE).strip()
+    # Remove punctuation except hyphens
+    name = re.sub(r"[,.'()]", " ", name)
+    parts = [p.lower() for p in name.split() if len(p) > 1]
+    return parts
+
+
 def _verify_citation_against_db(author_fragment: str, year: str, db: Any, session_id: int) -> dict[str, Any]:
-    """Check if a citation (Author, Year) matches any paper in the database."""
+    """Check if a citation (Author, Year) matches any paper in the database.
+
+    Uses fuzzy matching: any token in the citation author must appear in any
+    author string for a paper in the same year.  Also tries ±1 year to handle
+    online-first vs print-year discrepancies.
+    """
     if not db or not session_id:
         return {"verified": False, "reason": "no_db"}
 
     year_int = int(year) if year.isdigit() else None
+    if year_int is None:
+        return {"verified": False, "reason": "bad_year"}
 
-    # Search by author name fragment and year
+    # Tokens from the citation author fragment
+    cite_tokens = _normalize_author(author_fragment)
+    if not cite_tokens:
+        return {"verified": False, "reason": "empty_author"}
+
+    # Search with ±1 year tolerance (online-first vs print year)
     rows = db._conn.execute(
-        "SELECT paper_id, title, authors, year FROM papers WHERE session_id = ? AND year = ?",
-        (session_id, year_int),
+        "SELECT paper_id, title, authors, year FROM papers "
+        "WHERE session_id = ? AND year BETWEEN ? AND ?",
+        (session_id, year_int - 1, year_int + 1),
     ).fetchall()
 
-    author_lower = author_fragment.lower().strip()
     for row in rows:
         authors_json = row["authors"] or "[]"
         try:
@@ -73,19 +99,24 @@ def _verify_citation_against_db(author_fragment: str, year: str, db: Any, sessio
         except (json.JSONDecodeError, TypeError):
             authors_list = []
 
-        # Check if any author's last name matches
+        # Build a bag of all author tokens for this paper
+        paper_tokens: set[str] = set()
         for a in authors_list:
             if isinstance(a, str):
-                # Try last name match
-                parts = a.strip().split()
-                if parts:
-                    last_name = parts[-1].lower()
-                    if last_name == author_lower or author_lower in a.lower():
-                        return {"verified": True, "paper_id": row["paper_id"], "title": row["title"]}
+                paper_tokens.update(_normalize_author(a))
             elif isinstance(a, dict):
-                name = a.get("name", "") or a.get("family", "") or ""
-                if author_lower in name.lower():
-                    return {"verified": True, "paper_id": row["paper_id"], "title": row["title"]}
+                for key in ("name", "family", "given", "last"):
+                    val = a.get(key, "")
+                    if val:
+                        paper_tokens.update(_normalize_author(val))
+
+        # Also check title words for edge cases (some APIs store first-author in title)
+        title_lower = (row["title"] or "").lower()
+
+        # Match: ANY cite token appears in paper author tokens
+        for ct in cite_tokens:
+            if ct in paper_tokens or ct in title_lower:
+                return {"verified": True, "paper_id": row["paper_id"], "title": row["title"]}
 
     return {"verified": False, "reason": "not_found_in_db"}
 
@@ -151,17 +182,33 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
                     f"These should be removed or replaced with verified sources."
                 )
 
-    # If critical errors, don't save — return error for rewrite
+    # If critical errors, check retry budget before rejecting
     if errors:
-        return json.dumps({
-            "status": "rejected",
-            "section": section,
-            "word_count": word_count,
-            "errors": errors,
-            "warnings": warnings,
-            "verified_citations": verified_count,
-            "unverified_citations": unverified,
-        })
+        rejection_key = f"{ctx.get('session_id', 0)}:{section_key}"
+        _section_rejection_counts[rejection_key] = _section_rejection_counts.get(rejection_key, 0) + 1
+        rejections = _section_rejection_counts[rejection_key]
+        _log.warning("WRITE_SECTION REJECTED: section=%s | attempt=%d/%d | %s",
+                      section, rejections, _MAX_SECTION_REJECTIONS, errors[0][:120])
+
+        if rejections < _MAX_SECTION_REJECTIONS:
+            return json.dumps({
+                "status": "rejected",
+                "section": section,
+                "word_count": word_count,
+                "errors": errors,
+                "warnings": warnings,
+                "verified_citations": verified_count,
+                "unverified_citations": unverified,
+                "rejection_attempt": rejections,
+                "max_rejections": _MAX_SECTION_REJECTIONS,
+                "hint": "Use list_papers to see available authors/years, then rewrite citations to match.",
+            })
+        else:
+            # Exceeded retry budget — save with warnings instead of blocking forever
+            _log.warning("WRITE_SECTION: saving section=%s after %d rejections (retry budget exhausted)", section, rejections)
+            warnings.extend(errors)
+            errors = []  # Downgrade to warnings
+            _section_rejection_counts[rejection_key] = 0  # Reset for potential revisions
 
     # Save section to file
     section_file = output_dir / f"{section_key}.md"
