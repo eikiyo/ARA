@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 from ..gates import run_approval_gate
 from ..logging import get_logger
 
@@ -102,13 +104,51 @@ def track_cost(session_id: int, db: ARADB) -> str:
 
 
 def embed_text(text: str) -> str:
-    """Generate embedding vector for text (stub for now)."""
+    """Generate embedding vector for text using Ollama (free, local).
+
+    Uses nomic-embed-text by default. Falls back to all-minilm.
+    Ollama must be running at localhost:11434.
+    """
+    # TODO: Remove hardcoded model list when config supports embedding model selection.
+    _EMBED_MODELS = ["nomic-embed-text", "all-minilm", "mxbai-embed-large"]
+    _OLLAMA_URL = "http://localhost:11434/api/embed"
+
     try:
+        # Try each model in preference order
+        last_err = ""
+        for model_name in _EMBED_MODELS:
+            try:
+                resp = httpx.post(
+                    _OLLAMA_URL,
+                    json={"model": model_name, "input": text},
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    embeddings = data.get("embeddings", [])
+                    if embeddings:
+                        vec = embeddings[0]
+                        return json.dumps({
+                            "status": "ok",
+                            "model": model_name,
+                            "dimensions": len(vec),
+                            "embedding": vec,
+                        })
+                last_err = f"{model_name}: HTTP {resp.status_code}"
+            except httpx.ConnectError:
+                return json.dumps({
+                    "status": "error",
+                    "message": "Ollama not running. Start it with: ollama serve",
+                })
+            except Exception as e:
+                last_err = f"{model_name}: {e}"
+                continue
+
+        # No model worked — try pulling the first one
         return json.dumps({
-            "status": "stub",
-            "dimensions": 768,
-            "message": "Embeddings not yet configured. Set ARA_EMBEDDING_MODEL to enable.",
-            "text_length": len(text),
+            "status": "error",
+            "message": f"No embedding model available ({last_err}). "
+                       f"Pull one with: ollama pull {_EMBED_MODELS[0]}",
         })
     except Exception as e:
         return json.dumps({"error": f"Embed text error: {str(e)}"})

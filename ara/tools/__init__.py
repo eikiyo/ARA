@@ -146,22 +146,26 @@ def _think(tools: ARATools, args: dict[str, Any]) -> str:
 
 
 def _subtask(tools: ARATools, args: dict[str, Any]) -> str:
-    """Delegate a sub-objective to a child agent."""
-    objective = args.get("objective", "")
+    """Fallback — engine.py intercepts subtask before dispatch reaches here.
+
+    If this runs, the engine isn't handling subtask delegation properly.
+    """
     return json.dumps({
-        "status": "subtask_delegated",
-        "objective": objective,
-        "message": "Subtask delegation not yet implemented in this agent"
+        "status": "error",
+        "message": "subtask should be handled by the engine, not tool dispatch. "
+                   "Check that config.recursive=True and engine._apply_tool_call intercepts 'subtask'.",
     })
 
 
 def _execute(tools: ARATools, args: dict[str, Any]) -> str:
-    """Run a focused leaf task on the cheapest model."""
-    objective = args.get("objective", "")
+    """Fallback — engine.py intercepts execute before dispatch reaches here.
+
+    If this runs, the engine isn't handling execute delegation properly.
+    """
     return json.dumps({
-        "status": "task_executed",
-        "objective": objective,
-        "message": "Task execution not yet implemented in this agent"
+        "status": "error",
+        "message": "execute should be handled by the engine, not tool dispatch. "
+                   "Check that engine._apply_tool_call intercepts 'execute'.",
     })
 
 

@@ -396,6 +396,9 @@ def search_pubmed(query: str, limit: int = 10) -> str:
 def search_core(query: str, limit: int = 10) -> str:
     """Search CORE for open access papers.
 
+    Uses CORE API v3. Free tier: 1 req/10s without key, much faster with key.
+    Set CORE_API_KEY env var for higher rate limits.
+
     Args:
         query: Search query string
         limit: Maximum number of results (default 10)
@@ -404,14 +407,66 @@ def search_core(query: str, limit: int = 10) -> str:
         JSON string of standardized paper results
     """
     try:
-        # CORE requires API key; if not available, return stub
-        # For now, return placeholder message
-        return json.dumps([
-            {
-                "error": "CORE API key not configured. Set CORE_API_KEY environment variable to enable this source."
+        import os as _os
+
+        url = "https://api.core.ac.uk/v3/search/works"
+        params = {
+            "q": query,
+            "limit": limit,
+        }
+        headers: dict[str, str] = {}
+        core_key = _os.environ.get("CORE_API_KEY")
+        if core_key:
+            headers["Authorization"] = f"Bearer {core_key}"
+
+        response = _request_with_retry(url, params=params, headers=headers or None, timeout=45)
+        data = response.json()
+
+        results = []
+        for item in data.get("results", []):
+            # Extract authors
+            authors = []
+            for author in item.get("authors", []):
+                name = author.get("name", "")
+                if name:
+                    authors.append(name)
+
+            # Extract year
+            year = None
+            pub_date = item.get("publishedDate") or item.get("yearPublished")
+            if pub_date:
+                try:
+                    year = int(str(pub_date)[:4])
+                except (ValueError, TypeError):
+                    pass
+
+            # Extract DOI
+            doi = None
+            for ident in item.get("identifiers", []):
+                if isinstance(ident, str) and ident.startswith("10."):
+                    doi = ident
+                    break
+            if not doi:
+                doi = item.get("doi")
+
+            result = {
+                "title": item.get("title", ""),
+                "abstract": item.get("abstract", ""),
+                "authors": authors,
+                "year": year,
+                "doi": doi,
+                "source": "core",
+                "url": item.get("downloadUrl") or item.get("sourceFulltextUrls", [""])[0] if item.get("sourceFulltextUrls") else "",
+                "citation_count": 0,
             }
-        ])
+            results.append(result)
+
+        return json.dumps(results)
+    except httpx.HTTPError as e:
+        _log.warning("CORE API error: %s (query=%r)", e, query)
+        return json.dumps([{"error": f"CORE API error: {str(e)}"}])
     except Exception as e:
+        _log.error("CORE unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"CORE error: {str(e)}"}])
 
 
