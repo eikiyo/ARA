@@ -135,21 +135,23 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
     def on_event(event: StepEvent) -> None:
         with lock:
             if event.event_type == "thinking":
-                # Collapse consecutive thinking lines into one
+                # Only show one thinking line ever — replace or add
+                for i in range(len(activity_lines) - 1, -1, -1):
+                    if "thinking" in activity_lines[i]:
+                        depth_str = f"[d{event.depth}]" if event.depth > 0 else ""
+                        activity_lines[i] = f"  [dim]thinking{depth_str}...[/dim]"
+                        return
                 depth_str = f"[d{event.depth}]" if event.depth > 0 else ""
-                new_line = f"  [dim]thinking{depth_str}...[/dim]"
-                if activity_lines and activity_lines[-1].startswith("  [dim]thinking"):
-                    activity_lines[-1] = new_line  # Replace, don't append
-                else:
-                    activity_lines.append(new_line)
+                activity_lines.append(f"  [dim]thinking{depth_str}...[/dim]")
             elif event.event_type == "text":
-                # Collapse rate-limit retry messages into one updating line
                 if event.data.strip().startswith("[Rate limited"):
+                    # Replace existing rate limit line, or add one
                     msg = f"  [yellow]{event.data.strip()}[/yellow]"
-                    if activity_lines and "[Rate limited" in activity_lines[-1]:
-                        activity_lines[-1] = msg  # Replace, don't append
-                    else:
-                        activity_lines.append(msg)
+                    for i in range(len(activity_lines) - 1, -1, -1):
+                        if "[Rate limited" in activity_lines[i]:
+                            activity_lines[i] = msg
+                            return
+                    activity_lines.append(msg)
                 # Don't spam text chunks to activity
             elif event.event_type == "tool_call":
                 activity_lines.append(f"  [yellow]tool:[/yellow] {event.tool_name}")
