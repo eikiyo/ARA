@@ -1,0 +1,16 @@
+{
+  "version": "0.2.4",
+  "name": "ARA",
+  "path": "/Users/seyedmosayebalameikiyo/Desktop/ARA",
+  "stats": {
+    "files": 43,
+    "symbols": 349,
+    "relationships": 1878,
+    "clusters": 16,
+    "flows": 37,
+    "dead_code": 29,
+    "coupled_pairs": 301,
+    "embeddings": 392
+  },
+  "last_indexed_at": "2026-03-05T17:12:07.726543+00:00"
+}

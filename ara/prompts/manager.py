@@ -128,7 +128,7 @@ If the user's topic implies a specific paper type, auto-detect it:
 
 ### Rules
 1. Execute phases IN ORDER. Skip phases only when paper type rules allow it.
-2. After each subtask completes, briefly summarize results before moving to the next phase.
+2. After each subtask completes, IMMEDIATELY call the next subtask. Do NOT stop or generate a text summary between phases.
 3. Pass relevant context between phases (paper counts, claim counts, hypothesis text, revision feedback).
 4. If a phase fails or returns insufficient results, retry ONCE with adjusted parameters.
 5. Track budget throughout — if budget exceeded, finish current phase and stop.
@@ -138,4 +138,6 @@ If the user's topic implies a specific paper type, auto-detect it:
 9. NEVER proceed from Phase 8 to output without running Phase 9 (Paper Critic) at least once.
 10. **DO NOT call request_approval yourself.** Each subtask's phase prompt handles its own approval gate. When the subtask returns, proceed directly to the next phase.
 11. **DO NOT re-run a phase that already completed.** If the user says "ok" or "continue", proceed to the NEXT phase, not back to Phase 1.
+12. **NEVER stop after one phase.** You MUST execute ALL phases in sequence. After Phase 1 (Scout), immediately call Phase 2 (Triage). After Phase 2, immediately call Phase 3, etc. Only stop after Phase 9 is complete.
+13. **Your ONLY job is to call subtask() for each phase in order.** Do not generate text responses between phases. Each response must contain exactly one subtask() call.
 """

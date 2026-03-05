@@ -231,7 +231,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 def _embed_query(text: str) -> list[float] | None:
-    """Embed a query string using Gemini text-embedding-004."""
+    """Embed a query string using Gemini gemini-embedding-001."""
     api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         try:
@@ -245,7 +245,7 @@ def _embed_query(text: str) -> list[float] | None:
         from google import genai
         client = genai.Client(api_key=api_key)
         result = client.models.embed_content(
-            model="text-embedding-004",
+            model="gemini-embedding-001",
             contents=text,
         )
         if result.embeddings and len(result.embeddings) > 0:

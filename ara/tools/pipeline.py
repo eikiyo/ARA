@@ -89,7 +89,7 @@ def embed_text(args: dict[str, Any], ctx: dict) -> str:
         from google import genai
         client = genai.Client(api_key=api_key)
         result = client.models.embed_content(
-            model="text-embedding-004",
+            model="gemini-embedding-001",
             contents=text,
         )
         if result.embeddings and len(result.embeddings) > 0:
@@ -127,7 +127,7 @@ def _build_embed_text(paper: dict) -> str:
 
 
 def batch_embed_papers(args: dict[str, Any], ctx: dict) -> str:
-    """Embed all un-embedded papers in the session using Gemini text-embedding-004."""
+    """Embed all un-embedded papers in the session using Gemini gemini-embedding-001."""
     db = ctx.get("db")
     session_id = ctx.get("session_id")
     if not db or not session_id:
@@ -155,7 +155,7 @@ def batch_embed_papers(args: dict[str, Any], ctx: dict) -> str:
             continue
         try:
             result = client.models.embed_content(
-                model="text-embedding-004",
+                model="gemini-embedding-001",
                 contents=text,
             )
             if result.embeddings and len(result.embeddings) > 0:
