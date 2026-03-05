@@ -207,9 +207,9 @@ class TestEngineFlows:
             ModelTurn(
                 text="",
                 tool_calls=[
-                    # 10 unique calls (different arguments) + 10 dupes = 20 total
+                    # 10 unique calls (different arguments), under 15 spam threshold
                     ToolCall(id=f"c{i}", name="get_rules", arguments={"q": i})
-                    for i in range(20)
+                    for i in range(10)
                 ],
                 usage=TokenUsage(50, 20),
             ),
@@ -222,7 +222,7 @@ class TestEngineFlows:
         events = []
         result = engine.solve("test", on_event=lambda e: events.append(e))
         assert result == "Capped."
-        # Should only see 3 tool_call events (deduped to 20 unique, capped to 3)
+        # Should only see 3 tool_call events (10 unique, capped to 3)
         tool_events = [e for e in events if e.event_type == "tool_call"]
         assert len(tool_events) == 3
 

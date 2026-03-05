@@ -183,78 +183,81 @@ class RLMEngine:
                     self.model.append_assistant_turn(conversation, turn)
                 break
 
-            # Deduplicate tool calls: Gemini often generates 40+ identical calls
-            seen_sigs: dict[str, ToolCall] = {}
+            # Bug 2 fix: detect intent BEFORE dedup — if Gemini tried 15+ of one tool, stop
+            _attempt_counts: dict[str, int] = {}
+            for tc in turn.tool_calls:
+                _attempt_counts[tc.name] = _attempt_counts.get(tc.name, 0) + 1
+
+            loop_detected = False
+            for name, attempts in _attempt_counts.items():
+                if attempts > 15:
+                    _log.warning("Gemini attempted %r %d times in one turn — forcing stop", name, attempts)
+                    loop_detected = True
+                    break
+
+            if loop_detected:
+                self.model.append_assistant_turn(conversation, ModelTurn(text=turn.text, usage=turn.usage))
+                self.model.append_user_message(
+                    conversation,
+                    "STOP. You generated 15+ duplicate tool calls. "
+                    "Summarize your findings and respond with text only.",
+                )
+                try:
+                    final = self.model.generate(conversation, on_chunk=_on_chunk)
+                    if final.text:
+                        last_text = final.text
+                    if final.usage:
+                        self._total_tokens.input_tokens += final.usage.input_tokens
+                        self._total_tokens.output_tokens += final.usage.output_tokens
+                except ModelError:
+                    pass
+                break
+
+            # Dedup identical calls
+            seen_sigs: set[str] = set()
             unique_calls: list[ToolCall] = []
             for tc in turn.tool_calls:
                 sig = f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)}"
                 if sig not in seen_sigs:
-                    seen_sigs[sig] = tc
+                    seen_sigs.add(sig)
                     unique_calls.append(tc)
-            if len(unique_calls) < len(turn.tool_calls):
-                _log.info(
-                    "Deduped tool calls from %d to %d unique",
-                    len(turn.tool_calls), len(unique_calls),
-                )
 
             # Cap after dedup
             capped_calls = unique_calls[:self.config.max_tool_calls_per_turn]
-            if len(unique_calls) > self.config.max_tool_calls_per_turn:
-                _log.warning(
-                    "Capped tool calls from %d to %d",
-                    len(unique_calls), self.config.max_tool_calls_per_turn,
-                )
 
             # Append assistant turn (with only the capped calls)
-            capped_turn = ModelTurn(
-                text=turn.text,
-                tool_calls=capped_calls,
-                usage=turn.usage,
-            )
+            capped_turn = ModelTurn(text=turn.text, tool_calls=capped_calls, usage=turn.usage)
             self.model.append_assistant_turn(conversation, capped_turn)
 
-            # Execute tool calls (with result caching — same call never runs twice)
+            # Execute (cache prevents re-execution, no event for cached calls)
             results = self._execute_tools(
                 capped_calls, context, depth, on_event, _result_cache,
             )
-
-            # Append results
             self.model.append_tool_results(conversation, results)
 
-            # Loop detection
+            # Loop detection across turns
             turn_sig = "|".join(sorted(tc.name for tc in capped_calls))
             _recent_tool_sigs.append(turn_sig)
             for tc in capped_calls:
                 _tool_call_counts[tc.name] = _tool_call_counts.get(tc.name, 0) + 1
 
-            # Check 1: same tool pattern repeated N turns in a row
-            loop_detected = False
-            if len(_recent_tool_sigs) >= _MAX_REPEAT:
-                recent = _recent_tool_sigs[-_MAX_REPEAT:]
-                if len(set(recent)) == 1:
-                    _log.warning("Loop detected: pattern %r repeated %d turns", turn_sig, _MAX_REPEAT)
-                    loop_detected = True
+            # Check: same pattern 2 turns in a row (tightened from 3)
+            if len(_recent_tool_sigs) >= 2 and _recent_tool_sigs[-1] == _recent_tool_sigs[-2]:
+                _log.warning("Loop: pattern %r repeated 2 turns", turn_sig)
+                loop_detected = True
 
-            # Check 2: alternating pattern (A→B→A→B)
-            if not loop_detected and len(_recent_tool_sigs) >= 4:
-                last4 = _recent_tool_sigs[-4:]
-                if last4[0] == last4[2] and last4[1] == last4[3] and last4[0] != last4[1]:
-                    _log.warning("Alternating loop detected: %r ↔ %r", last4[0], last4[1])
-                    loop_detected = True
-
-            # Check 3: any single tool called too many times total
+            # Check: any single tool > MAX total
             if not loop_detected:
                 for name, count in _tool_call_counts.items():
                     if count >= _MAX_SINGLE_TOOL:
-                        _log.warning("Tool %r called %d times (max %d), breaking", name, count, _MAX_SINGLE_TOOL)
+                        _log.warning("Tool %r hit %d calls", name, count)
                         loop_detected = True
                         break
 
             if loop_detected:
                 self.model.append_user_message(
                     conversation,
-                    "STOP. You are repeating tool calls in a loop. "
-                    "Summarize your findings so far and respond with text. Do NOT call any more tools.",
+                    "STOP. You are looping. Summarize findings and respond with text. No more tools.",
                 )
                 try:
                     final = self.model.generate(conversation, on_chunk=_on_chunk)
@@ -297,14 +300,15 @@ class RLMEngine:
             if not tc.name:
                 continue
 
-            # Cache check — same tool+args already executed? Return cached result silently.
+            # Cache check — same tool+args never executes twice (no event, no dispatch)
             cache_key = f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)}"
-            if tc.name not in ("subtask", "execute") and cache_key in cache:
+            if cache_key in cache:
                 results.append(ToolResult(
                     tool_call_id=tc.id, name=tc.name, content=cache[cache_key],
                 ))
                 continue
 
+            # Event fires only for NEW (uncached) tool calls
             if on_event:
                 on_event(StepEvent(
                     "tool_call", data=json.dumps(tc.arguments)[:200],
@@ -314,6 +318,7 @@ class RLMEngine:
             # Handle subtask delegation
             if tc.name == "subtask":
                 result_text = self._handle_subtask(tc, context, depth, on_event)
+                cache[cache_key] = result_text
                 results.append(ToolResult(
                     tool_call_id=tc.id, name="subtask", content=result_text,
                 ))
