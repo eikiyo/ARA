@@ -12,17 +12,13 @@ import sys
 
 from .builder import build_engine, infer_provider_for_model
 from .config import ARAConfig
-from .logging import setup_logging
 from .credentials import (
-    CredentialBundle,
-    CredentialStore,
-    credentials_from_env,
-    parse_env_file,
-    prompt_for_credentials,
+    CredentialBundle, CredentialStore, credentials_from_env,
+    parse_env_file, prompt_for_credentials,
 )
-from .model import ModelError
+from .logging import setup_logging
 from .runtime import SessionError, SessionRuntime
-from .settings import PersistentSettings, SettingsStore
+from .settings import SettingsStore, PersistentSettings
 from .tui import ChatContext, _get_model_display_name, dispatch_slash_command, run_rich_repl
 
 
@@ -34,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", default=".", help="Workspace root directory.")
     parser.add_argument(
         "--provider", default=None,
-        choices=["auto", "openai", "anthropic", "openrouter", "ollama"],
+        choices=["auto", "google", "openai", "anthropic", "openrouter", "ollama"],
         help="Model provider.",
     )
     parser.add_argument("--model", help="Model name.")
@@ -53,31 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _pick_ollama_model(current: str) -> str:
-    """Query Ollama for available models and pick the best one for tool use."""
-    try:
-        import httpx
-        resp = httpx.get("http://localhost:11434/api/tags", timeout=3)
-        if resp.status_code == 200:
-            models = [m["name"] for m in resp.json().get("models", [])]
-            if not models:
-                return current
-            # Prefer models known to support tool calling, largest first
-            preferred = ["qwen3", "qwen2.5", "llama3.1", "llama3.2", "mistral", "command-r"]
-            for pref in preferred:
-                for m in models:
-                    if pref in m.lower():
-                        return m
-            return models[0]
-    except Exception:
-        pass
-    return current
-
-
-def _resolve_provider(requested: str, creds: CredentialBundle) -> str:
-    requested = requested.strip().lower()
-    if requested in {"google", "openai", "anthropic", "openrouter", "ollama"}:
-        return requested
+def _resolve_provider(requested: str | None, creds: CredentialBundle) -> str:
+    if requested and requested not in ("auto", "", None):
+        return requested.strip().lower()
     if creds.google_api_key:
         return "google"
     if creds.anthropic_api_key:
@@ -92,19 +66,20 @@ def _resolve_provider(requested: str, creds: CredentialBundle) -> str:
 def _load_credentials(cfg: ARAConfig, args: argparse.Namespace) -> CredentialBundle:
     store = CredentialStore()
     creds = store.load()
-    env_creds = credentials_from_env()
-    creds.merge_missing(env_creds)
+    creds.merge_missing(credentials_from_env())
     env_path = cfg.workspace / ".env"
     if env_path.exists():
-        file_creds = parse_env_file(env_path)
-        creds.merge_missing(file_creds)
+        creds.merge_missing(parse_env_file(env_path))
+
     if args.configure_keys:
         updated, changed = prompt_for_credentials(creds, force=True)
         creds = updated
         if changed:
             store.save(creds)
+
     if not creds.has_any() and not (args.provider and args.provider.lower() == "ollama"):
         print("No API keys configured. Run `ara --configure-keys` or set env vars.")
+
     return creds
 
 
@@ -120,19 +95,20 @@ def main() -> None:
     settings_store = SettingsStore(workspace=cfg.workspace, session_root_dir=cfg.session_root_dir)
     settings = settings_store.load()
 
-    # Restore persisted provider (before model, since model depends on provider)
-    if args.provider is None and not os.getenv("ARA_PROVIDER") and settings.default_provider:
+    # Restore persisted settings
+    if args.provider is None and settings.default_provider:
         cfg.provider = settings.default_provider
     if args.reasoning_effort is None and settings.default_reasoning_effort:
         cfg.reasoning_effort = settings.default_reasoning_effort
 
     if args.configure_keys and not args.task:
-        creds = _load_credentials(cfg, args)
+        _load_credentials(cfg, args)
         print("Credential configuration complete.")
         return
 
     creds = _load_credentials(cfg, args)
 
+    # Apply CLI overrides
     if args.max_depth is not None:
         cfg.max_depth = args.max_depth
     if args.max_steps is not None:
@@ -141,58 +117,54 @@ def main() -> None:
         cfg.approval_gates = False
     if args.provider:
         cfg.provider = args.provider
+
     cfg.provider = _resolve_provider(cfg.provider, creds)
-    cfg.openai_api_key = creds.openai_api_key
-    cfg.anthropic_api_key = creds.anthropic_api_key
-    cfg.openrouter_api_key = creds.openrouter_api_key
     cfg.google_api_key = creds.google_api_key
+    cfg.anthropic_api_key = creds.anthropic_api_key
+    cfg.openai_api_key = creds.openai_api_key
+    cfg.openrouter_api_key = creds.openrouter_api_key
+
     if args.model:
         cfg.model = args.model
     elif not os.getenv("ARA_MODEL"):
-        # Use per-provider persisted model, or global default
-        persisted_model = settings.default_model_for_provider(cfg.provider)
-        if persisted_model:
-            cfg.model = persisted_model
+        persisted = settings.default_model_for_provider(cfg.provider)
+        if persisted:
+            cfg.model = persisted
+
     if args.reasoning_effort:
         cfg.reasoning_effort = None if args.reasoning_effort == "none" else args.reasoning_effort
 
-    # Auto-switch provider if model implies a different one
+    # Auto-switch provider if model implies different one
     model_check = (cfg.model or "").strip()
-    if model_check and cfg.provider != "openrouter":
+    if model_check:
         inferred = infer_provider_for_model(model_check)
         if inferred and inferred != cfg.provider:
-            key = {"google": cfg.google_api_key, "openai": cfg.openai_api_key,
-                   "anthropic": cfg.anthropic_api_key,
-                   "openrouter": cfg.openrouter_api_key, "ollama": "ollama"}.get(inferred)
-            if key:
+            key_map = {
+                "google": cfg.google_api_key,
+                "anthropic": cfg.anthropic_api_key,
+                "openai": cfg.openai_api_key,
+                "openrouter": cfg.openrouter_api_key,
+                "ollama": "ollama",
+            }
+            if key_map.get(inferred):
                 cfg.provider = inferred
 
-    # Google: disable reasoning (Gemini Flash doesn't support thinking mode)
+    # Google: no reasoning effort
     if cfg.provider == "google" and not args.reasoning_effort:
         cfg.reasoning_effort = None
 
-    # Ollama defaults: pick available model, disable reasoning
-    if cfg.provider == "ollama":
-        if not args.model:
-            cfg.model = _pick_ollama_model(cfg.model)
-        if not args.reasoning_effort:
-            cfg.reasoning_effort = None
-
-    # Initialize logging
+    # Initialize
     setup_logging(cfg.workspace, cfg.session_root_dir)
-
     engine = build_engine(cfg)
     model_name = _get_model_display_name(engine)
 
     try:
-        runtime = SessionRuntime.bootstrap(
-            engine=engine, config=cfg, resume=args.resume,
-        )
+        runtime = SessionRuntime.bootstrap(engine=engine, config=cfg, resume=args.resume)
     except SessionError as exc:
         print(f"Session error: {exc}")
         return
 
-    startup_info: dict[str, str] = {
+    startup_info = {
         "Provider": cfg.provider,
         "Model": model_name,
         "Workspace": str(cfg.workspace),
@@ -201,19 +173,11 @@ def main() -> None:
     if cfg.reasoning_effort:
         startup_info["Reasoning"] = cfg.reasoning_effort
 
-    # Auto-persist provider + model for next session
+    # Persist settings
     settings.default_provider = cfg.provider
-    provider = cfg.provider
-    if provider == "openai":
-        settings.default_model_openai = cfg.model
-    elif provider == "anthropic":
-        settings.default_model_anthropic = cfg.model
-    elif provider == "openrouter":
-        settings.default_model_openrouter = cfg.model
-    elif provider == "ollama":
-        settings.default_model_ollama = cfg.model
-    else:
-        settings.default_model = cfg.model
+    prov = cfg.provider
+    attr = f"default_model_{prov}" if prov in ("google", "openai", "anthropic", "openrouter", "ollama") else "default_model"
+    setattr(settings, attr, cfg.model)
     settings_store.save(settings)
 
     ctx = ChatContext(runtime=runtime, cfg=cfg, settings_store=settings_store)
@@ -222,7 +186,7 @@ def main() -> None:
         for key, val in startup_info.items():
             print(f"{key:>10}  {val}")
         print()
-        result = runtime.solve(args.task, on_event=lambda ev: print(f"trace> {ev[:200]}"))
+        result = runtime.solve(args.task, on_event=lambda ev: print(f"trace> {ev.event_type}: {ev.data[:120]}"))
         print(result)
         return
 
@@ -243,7 +207,7 @@ def main() -> None:
                 break
             if r in ("clear", "handled"):
                 continue
-            response = runtime.solve(objective, on_event=lambda ev: print(f"trace> {ev[:200]}"))
+            response = runtime.solve(objective, on_event=lambda ev: print(f"trace> {ev.event_type}: {ev.data[:120]}"))
             print(f"ara> {response}")
         return
 

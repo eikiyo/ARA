@@ -1,637 +1,474 @@
 # Location: ara/tools/search.py
-# Purpose: Academic API search implementations (9 sources)
-# Functions: search_semantic_scholar, search_arxiv, search_crossref, search_openalex, search_pubmed, search_core, search_dblp, search_europe_pmc, search_base
-# Calls: httpx for HTTP requests
-# Imports: json, httpx, xml.etree.ElementTree
+# Purpose: 9 academic API search implementations
+# Functions: search_semantic_scholar, search_arxiv, search_crossref, etc.
+# Calls: httpx for HTTP requests, xml.etree for XML parsing
+# Imports: httpx, json, os, time, xml.etree.ElementTree
 
 from __future__ import annotations
 
 import json
-import threading
-import time as _time
+import logging
+import os
+import time
 import xml.etree.ElementTree as ET
 from typing import Any
+from urllib.parse import quote_plus
 
 import httpx
 
-from ..logging import get_logger
-
-_log = get_logger("search")
-
-# --- Semantic Scholar API key & rate limiter ---
-# TODO: Remove hardcoded key when credentials are loaded from user config/env.
-# Rate limit: 1 request/second cumulative across ALL S2 endpoints.
-_S2_API_KEY = "ps3k5hrLaT9v0BLcXbNCh4aqRfX7eXqW2n6kIyyg"
-
-_s2_lock = threading.Lock()
-_s2_last_call: float = 0.0
+_log = logging.getLogger(__name__)
+_TIMEOUT = 30
+_MAX_RETRIES = 3
+_s2_last_call = 0.0
 
 
-def _s2_throttle() -> None:
-    """Enforce 1 request/second for Semantic Scholar API (cumulative across all endpoints)."""
-    global _s2_last_call
-    with _s2_lock:
-        now = _time.monotonic()
-        elapsed = now - _s2_last_call
-        if elapsed < 1.05:  # 1.05s to add small safety margin
-            _time.sleep(1.05 - elapsed)
-        _s2_last_call = _time.monotonic()
-
-
-def get_s2_headers() -> dict[str, str]:
-    """Return Semantic Scholar headers with API key."""
-    return {"x-api-key": _S2_API_KEY}
-
-
-def _request_with_retry(url: str, params: dict, headers: dict | None = None,
-                        max_retries: int = 3, timeout: int = 30) -> httpx.Response:
-    """HTTP GET with retry on 429/5xx. Backoff: 3s, 8s, 15s."""
-    delays = [3, 8, 15]
-    last_exc: Exception | None = None
-    for attempt in range(max_retries + 1):
+def _request_with_retry(
+    url: str, headers: dict | None = None,
+    params: dict | None = None, timeout: int = _TIMEOUT,
+) -> dict | str | None:
+    for attempt in range(_MAX_RETRIES):
         try:
-            response = httpx.get(url, params=params, headers=headers,
-                                 timeout=timeout, follow_redirects=True)
-            if response.status_code == 429 and attempt < max_retries:
-                wait = delays[min(attempt, len(delays) - 1)]
-                _log.info("Rate limited by %s, retrying in %ds (attempt %d)", url.split("/")[2], wait, attempt + 1)
-                _time.sleep(wait)
+            resp = httpx.get(url, headers=headers, params=params, timeout=timeout, follow_redirects=True)
+            if resp.status_code == 429:
+                wait = min(3 * (2 ** attempt), 30)
+                _log.warning("Rate limited on %s, waiting %ds", url[:80], wait)
+                time.sleep(wait)
                 continue
-            response.raise_for_status()
-            return response
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code in (429, 500, 502, 503) and attempt < max_retries:
-                wait = delays[min(attempt, len(delays) - 1)]
-                _log.info("HTTP %d from %s, retrying in %ds", e.response.status_code, url.split("/")[2], wait)
-                _time.sleep(wait)
-                last_exc = e
-                continue
-            raise
-        except httpx.HTTPError as e:
-            last_exc = e
-            if attempt < max_retries:
-                wait = delays[min(attempt, len(delays) - 1)]
-                _time.sleep(wait)
-                continue
-            raise
-    raise last_exc  # type: ignore[misc]
+            if resp.status_code >= 400:
+                _log.warning("HTTP %d from %s", resp.status_code, url[:80])
+                return None
+            content_type = resp.headers.get("content-type", "")
+            if "xml" in content_type or resp.text.strip().startswith("<?xml") or resp.text.strip().startswith("<"):
+                return resp.text
+            return resp.json()
+        except Exception as exc:
+            _log.warning("Request failed (attempt %d): %s", attempt + 1, exc)
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(2 * (attempt + 1))
+    return None
 
 
-def search_semantic_scholar(query: str, limit: int = 10) -> str:
-    """Search Semantic Scholar for papers.
+def _paper_dict(
+    title: str, abstract: str | None, authors: list[str],
+    year: int | None, doi: str | None, source: str,
+    url: str | None = None, citation_count: int = 0,
+) -> dict[str, Any]:
+    return {
+        "title": title.strip() if title else "",
+        "abstract": (abstract or "").strip()[:2000],
+        "authors": authors[:20],
+        "year": year,
+        "doi": doi.strip().removeprefix("https://doi.org/") if doi else None,
+        "source": source,
+        "url": url,
+        "citation_count": citation_count,
+    }
 
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
 
-    Returns:
-        JSON string of standardized paper results
-    """
+# ── 1. Semantic Scholar ────────────────────────────────────────────────
+
+def search_semantic_scholar(args: dict[str, Any], ctx: dict) -> str:
+    global _s2_last_call
+    elapsed = time.time() - _s2_last_call
+    if elapsed < 1.0:
+        time.sleep(1.0 - elapsed)
+    _s2_last_call = time.time()
+
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 100)
+    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+    headers = {"x-api-key": api_key} if api_key else {}
+
+    params: dict[str, Any] = {
+        "query": query,
+        "limit": limit,
+        "fields": "title,abstract,authors,year,externalIds,citationCount,url,fieldsOfStudy",
+    }
+    year_range = args.get("year_range")
+    if year_range:
+        params["year"] = year_range
+    fos = args.get("fields_of_study")
+    if fos:
+        params["fieldsOfStudy"] = fos
+
+    data = _request_with_retry(
+        "https://api.semanticscholar.org/graph/v1/paper/search",
+        headers=headers, params=params,
+    )
+    if not isinstance(data, dict):
+        return json.dumps({"papers": [], "error": "Semantic Scholar unavailable"})
+
+    papers = []
+    for p in data.get("data", []):
+        doi = (p.get("externalIds") or {}).get("DOI")
+        authors = [a.get("name", "") for a in (p.get("authors") or [])[:20]]
+        papers.append(_paper_dict(
+            title=p.get("title", ""),
+            abstract=p.get("abstract"),
+            authors=authors,
+            year=p.get("year"),
+            doi=doi,
+            source="semantic_scholar",
+            url=p.get("url"),
+            citation_count=p.get("citationCount", 0),
+        ))
+
+    return json.dumps({"papers": papers, "total": data.get("total", len(papers))})
+
+
+# ── 2. arXiv ───────────────────────────────────────────────────────────
+
+def search_arxiv(args: dict[str, Any], ctx: dict) -> str:
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 50)
+    category = args.get("category")
+
+    search_query = f"all:{quote_plus(query)}"
+    if category:
+        search_query = f"cat:{category} AND {search_query}"
+
+    resp = _request_with_retry(
+        f"http://export.arxiv.org/api/query?search_query={search_query}&max_results={limit}&sortBy=relevance"
+    )
+    if not isinstance(resp, str):
+        return json.dumps({"papers": [], "error": "arXiv unavailable"})
+
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    papers = []
     try:
-        url = "https://api.semanticscholar.org/graph/v1/paper/search"
-        params = {
-            "query": query,
-            "limit": min(limit, 20),  # Cap to conserve 1 req/sec budget
-            "fields": "title,abstract,authors,year,citationCount,externalIds,url"
-        }
-        _s2_throttle()
-        response = _request_with_retry(url, params=params, headers=get_s2_headers())
-        data = response.json()
-
-        results = []
-        for paper in data.get("data", []):
-            doi = None
-            if paper.get("externalIds"):
-                doi = paper["externalIds"].get("DOI")
-
-            result = {
-                "title": paper.get("title", ""),
-                "abstract": paper.get("abstract", ""),
-                "authors": [a.get("name", "") for a in paper.get("authors", [])],
-                "year": paper.get("year"),
-                "doi": doi,
-                "source": "semantic_scholar",
-                "url": paper.get("url", ""),
-                "citation_count": paper.get("citationCount", 0)
-            }
-            results.append(result)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("Semantic Scholar API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"Semantic Scholar API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("Semantic Scholar unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"Semantic Scholar error: {str(e)}"}])
-
-
-def search_arxiv(query: str, limit: int = 10) -> str:
-    """Search arXiv for preprints.
-
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
-
-    Returns:
-        JSON string of standardized paper results
-    """
-    try:
-        url = "https://export.arxiv.org/api/query"
-        params = {
-            "search_query": f"all:{query}",
-            "max_results": limit,
-            "sortBy": "relevance",
-            "sortOrder": "descending"
-        }
-
-        response = _request_with_retry(url, params=params)
-
-        root = ET.fromstring(response.content)
-        # Handle namespaces
-        ns = {"atom": "http://www.w3.org/2005/Atom"}
-
-        results = []
+        root = ET.fromstring(resp)
         for entry in root.findall("atom:entry", ns):
-            title = entry.find("atom:title", ns)
-            summary = entry.find("atom:summary", ns)
-            published = entry.find("atom:published", ns)
-
-            # Extract authors
-            authors = []
-            for author in entry.findall("atom:author", ns):
-                name = author.find("atom:name", ns)
-                if name is not None:
-                    authors.append(name.text)
-
-            # Extract arXiv ID and URL
-            arxiv_id = ""
-            arxiv_url = ""
-            for link in entry.findall("atom:id", ns):
-                arxiv_id = link.text
-                arxiv_url = arxiv_id
-
-            # Extract year from published date
-            year = None
-            if published is not None and published.text:
-                year = int(published.text[:4])
-
-            result = {
-                "title": title.text if title is not None else "",
-                "abstract": summary.text.strip() if summary is not None else "",
-                "authors": authors,
-                "year": year,
-                "doi": None,
-                "source": "arxiv",
-                "url": arxiv_url,
-                "citation_count": 0
-            }
-            results.append(result)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("arXiv API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"arXiv API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("arXiv unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"arXiv error: {str(e)}"}])
-
-
-def search_crossref(query: str, limit: int = 10) -> str:
-    """Search Crossref for papers.
-
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
-
-    Returns:
-        JSON string of standardized paper results
-    """
-    try:
-        url = "https://api.crossref.org/works"
-        params = {
-            "query": query,
-            "rows": limit
-        }
-        headers = {
-            "User-Agent": "ARA/0.1 (Academic Research Agent)"
-        }
-
-        response = _request_with_retry(url, params=params, headers=headers)
-        data = response.json()
-
-        results = []
-        for item in data.get("message", {}).get("items", []):
-            # Extract authors
-            authors = []
-            for author in item.get("author", []):
-                name_parts = []
-                if "given" in author:
-                    name_parts.append(author["given"])
-                if "family" in author:
-                    name_parts.append(author["family"])
-                if name_parts:
-                    authors.append(" ".join(name_parts))
-
-            result = {
-                "title": item.get("title", [""])[0] if item.get("title") else "",
-                "abstract": item.get("abstract", ""),
-                "authors": authors,
-                "year": item.get("issued", {}).get("date-parts", [[None]])[0][0],
-                "doi": item.get("DOI"),
-                "source": "crossref",
-                "url": item.get("URL", ""),
-                "citation_count": item.get("is-referenced-by-count", 0)
-            }
-            results.append(result)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("CrossRef API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"Crossref API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("CrossRef unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"Crossref error: {str(e)}"}])
-
-
-def search_openalex(query: str, limit: int = 10) -> str:
-    """Search OpenAlex for papers.
-
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
-
-    Returns:
-        JSON string of standardized paper results
-    """
-    try:
-        url = "https://api.openalex.org/works"
-        params = {
-            "search": query,
-            "per_page": limit
-        }
-        headers = {
-            "User-Agent": "ARA/0.1 (Academic Research Agent; mailto:ara@research.local)"
-        }
-
-        response = _request_with_retry(url, params=params, headers=headers)
-        data = response.json()
-
-        results = []
-        for work in data.get("results", []):
-            # Extract authors
-            authors = []
-            for author in work.get("authorships", []):
-                if author.get("author", {}).get("display_name"):
-                    authors.append(author["author"]["display_name"])
-
-            result = {
-                "title": work.get("title", ""),
-                "abstract": work.get("abstract", ""),
-                "authors": authors,
-                "year": work.get("publication_year"),
-                "doi": work.get("doi", "").replace("https://doi.org/", "") if work.get("doi") else None,
-                "source": "openalex",
-                "url": work.get("canonical_url", ""),
-                "citation_count": work.get("cited_by_count", 0)
-            }
-            results.append(result)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("OpenAlex API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"OpenAlex API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("OpenAlex unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"OpenAlex error: {str(e)}"}])
-
-
-def search_pubmed(query: str, limit: int = 10) -> str:
-    """Search PubMed for papers (two-step: esearch then efetch).
-
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
-
-    Returns:
-        JSON string of standardized paper results
-    """
-    try:
-        # Step 1: Search for PMIDs
-        esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-        esearch_params = {
-            "db": "pubmed",
-            "term": query,
-            "retmax": limit,
-            "retmode": "json"
-        }
-
-        esearch_response = _request_with_retry(esearch_url, params=esearch_params)
-        esearch_data = esearch_response.json()
-
-        pmids = esearch_data.get("esearchresult", {}).get("idlist", [])
-        if not pmids:
-            return json.dumps([])
-
-        # Step 2: Get summaries via esummary (returns proper JSON, unlike efetch)
-        esummary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-        esummary_params = {
-            "db": "pubmed",
-            "id": ",".join(pmids),
-            "retmode": "json"
-        }
-
-        esummary_response = _request_with_retry(esummary_url, params=esummary_params)
-        esummary_data = esummary_response.json()
-
-        results = []
-        result_dict = esummary_data.get("result", {})
-        for pmid in pmids:
-            article_data = result_dict.get(str(pmid), {})
-            if not article_data or not isinstance(article_data, dict):
-                continue
-
-            # Extract authors
-            authors = []
-            for author in article_data.get("authors", []):
-                if "name" in author:
-                    authors.append(author["name"])
-
-            # Extract year from pubdate (e.g., "2024 Jan 15")
-            year = None
-            pubdate = article_data.get("pubdate", "")
-            if pubdate and len(pubdate) >= 4:
-                try:
-                    year = int(pubdate[:4])
-                except ValueError:
-                    pass
-
-            # Extract DOI from articleids
-            doi = None
-            for aid in article_data.get("articleids", []):
-                if aid.get("idtype") == "doi":
-                    doi = aid.get("value")
-                    break
-
-            result = {
-                "title": article_data.get("title", ""),
-                "abstract": "",  # esummary doesn't include abstracts
-                "authors": authors,
-                "year": year,
-                "doi": doi,
-                "source": "pubmed",
-                "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                "citation_count": 0
-            }
-            results.append(result)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("PubMed API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"PubMed API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("PubMed unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"PubMed error: {str(e)}"}])
-
-
-def search_core(query: str, limit: int = 10) -> str:
-    """Search CORE for open access papers.
-
-    Uses CORE API v3. Free tier: 1 req/10s without key, much faster with key.
-    Set CORE_API_KEY env var for higher rate limits.
-
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
-
-    Returns:
-        JSON string of standardized paper results
-    """
-    try:
-        # TODO: Remove hardcoded key when credentials are loaded from user config/env.
-        _CORE_API_KEY = "V6E8SYro5K0OzmXQg1TPD9ZkJhdpWavx"
-
-        url = "https://api.core.ac.uk/v3/search/works/"  # Trailing slash required
-        params = {
-            "q": query,
-            "limit": limit,
-        }
-        headers: dict[str, str] = {"Authorization": f"Bearer {_CORE_API_KEY}"}
-
-        response = _request_with_retry(url, params=params, headers=headers or None, timeout=45)
-        data = response.json()
-
-        results = []
-        for item in data.get("results", []):
-            # Extract authors
-            authors = []
-            for author in item.get("authors", []):
-                name = author.get("name", "")
-                if name:
-                    authors.append(name)
-
-            # Extract year
-            year = None
-            pub_date = item.get("publishedDate") or item.get("yearPublished")
-            if pub_date:
-                try:
-                    year = int(str(pub_date)[:4])
-                except (ValueError, TypeError):
-                    pass
-
-            # Extract DOI (direct field or from identifiers)
-            doi = item.get("doi")
-            if not doi:
-                for ident in item.get("identifiers", []):
-                    if isinstance(ident, dict) and ident.get("type") == "DOI":
-                        doi = ident.get("identifier")
-                        break
-
-            # Best URL: downloadUrl > first sourceFulltextUrl
-            url = item.get("downloadUrl", "")
-            if not url:
-                source_urls = item.get("sourceFulltextUrls") or []
-                url = source_urls[0] if source_urls else ""
-
-            result = {
-                "title": item.get("title", ""),
-                "abstract": item.get("abstract", ""),
-                "authors": authors,
-                "year": year,
-                "doi": doi,
-                "source": "core",
-                "url": url,
-                "citation_count": item.get("citationCount", 0),
-            }
-            results.append(result)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("CORE API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"CORE API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("CORE unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"CORE error: {str(e)}"}])
-
-
-def search_dblp(query: str, limit: int = 10) -> str:
-    """Search DBLP for computer science papers.
-
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
-
-    Returns:
-        JSON string of standardized paper results
-    """
-    try:
-        url = "https://dblp.org/search/publ/api"
-        params = {
-            "q": query,
-            "h": limit,
-            "format": "json"
-        }
-
-        response = _request_with_retry(url, params=params)
-        data = response.json()
-
-        results = []
-        for hit in data.get("result", {}).get("hits", {}).get("hit", []):
-            info = hit.get("info", {})
-
-            # Extract authors
-            authors = []
-            authors_obj = info.get("authors", {})
-            if isinstance(authors_obj, dict) and "author" in authors_obj:
-                author_list = authors_obj["author"]
-                if not isinstance(author_list, list):
-                    author_list = [author_list]
-                authors = [a.get("text", "") for a in author_list if isinstance(a, dict)]
-
-            # Extract year
-            year = None
-            year_str = info.get("year", "")
-            if year_str:
-                try:
-                    year = int(year_str)
-                except (ValueError, TypeError):
-                    pass
-
-            result = {
-                "title": info.get("title", ""),
-                "abstract": "",
-                "authors": authors,
-                "year": year,
-                "doi": None,
-                "source": "dblp",
-                "url": info.get("url", ""),
-                "citation_count": 0
-            }
-            results.append(result)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("DBLP API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"DBLP API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("DBLP unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"DBLP error: {str(e)}"}])
-
-
-def search_europe_pmc(query: str, limit: int = 10) -> str:
-    """Search Europe PMC for biomedical papers.
-
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
-
-    Returns:
-        JSON string of standardized paper results
-    """
-    try:
-        url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
-        params = {
-            "query": query,
-            "pageSize": limit,
-            "format": "json"
-        }
-
-        response = _request_with_retry(url, params=params)
-        data = response.json()
-
-        results = []
-        for result in data.get("resultList", {}).get("result", []):
-            # Extract authors
-            authors = []
-            for author in result.get("authorList", {}).get("author", []):
-                name_parts = []
-                if "firstName" in author:
-                    name_parts.append(author["firstName"])
-                if "lastName" in author:
-                    name_parts.append(author["lastName"])
-                if name_parts:
-                    authors.append(" ".join(name_parts))
-
-            result_obj = {
-                "title": result.get("title", ""),
-                "abstract": result.get("abstractText", ""),
-                "authors": authors,
-                "year": result.get("pubYear"),
-                "doi": result.get("doi"),
-                "source": "europe_pmc",
-                "url": result.get("pmcid") and f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{result['pmcid']}/",
-                "citation_count": 0
-            }
-            results.append(result_obj)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("Europe PMC API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"Europe PMC API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("Europe PMC unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"Europe PMC error: {str(e)}"}])
-
-
-def search_base(query: str, limit: int = 10) -> str:
-    """Search BASE (Bielefeld Academic Search Engine).
-
-    Args:
-        query: Search query string
-        limit: Maximum number of results (default 10)
-
-    Returns:
-        JSON string of standardized paper results
-    """
-    try:
-        url = "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi"
-        params = {
-            "func": "PerformSearch",
-            "query": query,
-            "hits": limit,
-            "format": "json"
-        }
-
-        response = _request_with_retry(url, params=params)
-        data = response.json()
-
-        results = []
-        for hit in data.get("data", []):
-            result = {
-                "title": hit.get("title", ""),
-                "abstract": hit.get("abstract", ""),
-                "authors": hit.get("authors", []),
-                "year": hit.get("year"),
-                "doi": hit.get("doi"),
-                "source": "base",
-                "url": hit.get("url", ""),
-                "citation_count": 0
-            }
-            results.append(result)
-
-        return json.dumps(results)
-    except httpx.HTTPError as e:
-        _log.warning("BASE API error: %s (query=%r)", e, query)
-        return json.dumps([{"error": f"BASE API error: {str(e)}"}])
-    except Exception as e:
-        _log.error("BASE unexpected error: %s", e, exc_info=True)
-        return json.dumps([{"error": f"BASE error: {str(e)}"}])
+            title = (entry.findtext("atom:title", "", ns) or "").strip().replace("\n", " ")
+            abstract = (entry.findtext("atom:summary", "", ns) or "").strip()
+            authors = [a.findtext("atom:name", "", ns) for a in entry.findall("atom:author", ns)]
+            published = entry.findtext("atom:published", "", ns)
+            year = int(published[:4]) if published and len(published) >= 4 else None
+            link = entry.find("atom:id", ns)
+            url = link.text.strip() if link is not None and link.text else None
+            # arXiv IDs → DOI mapping not always available
+            doi_el = entry.find('.//atom:link[@title="doi"]', ns)
+            doi = doi_el.get("href", "").removeprefix("http://dx.doi.org/") if doi_el is not None else None
+
+            papers.append(_paper_dict(
+                title=title, abstract=abstract, authors=authors,
+                year=year, doi=doi, source="arxiv", url=url,
+            ))
+    except ET.ParseError:
+        return json.dumps({"papers": [], "error": "arXiv XML parse error"})
+
+    return json.dumps({"papers": papers, "total": len(papers)})
+
+
+# ── 3. CrossRef ────────────────────────────────────────────────────────
+
+def search_crossref(args: dict[str, Any], ctx: dict) -> str:
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 100)
+    params: dict[str, Any] = {
+        "query": query,
+        "rows": limit,
+        "select": "DOI,title,abstract,author,published-print,is-referenced-by-count,URL",
+        "mailto": "ara-research@example.com",
+    }
+    from_year = args.get("from_year")
+    if from_year:
+        params["filter"] = f"from-pub-date:{from_year}"
+
+    data = _request_with_retry("https://api.crossref.org/works", params=params)
+    if not isinstance(data, dict):
+        return json.dumps({"papers": [], "error": "CrossRef unavailable"})
+
+    papers = []
+    for item in (data.get("message", {}).get("items", [])):
+        title = (item.get("title") or [""])[0]
+        abstract = item.get("abstract", "")
+        # Strip HTML from abstract
+        if "<" in abstract:
+            import re
+            abstract = re.sub(r"<[^>]+>", "", abstract)
+        authors = [
+            f"{a.get('given', '')} {a.get('family', '')}".strip()
+            for a in (item.get("author") or [])[:20]
+        ]
+        date_parts = (item.get("published-print") or item.get("published-online") or {}).get("date-parts", [[]])
+        year = date_parts[0][0] if date_parts and date_parts[0] else None
+
+        papers.append(_paper_dict(
+            title=title, abstract=abstract, authors=authors,
+            year=year, doi=item.get("DOI"),
+            source="crossref", url=item.get("URL"),
+            citation_count=item.get("is-referenced-by-count", 0),
+        ))
+
+    total = data.get("message", {}).get("total-results", len(papers))
+    return json.dumps({"papers": papers, "total": total})
+
+
+# ── 4. OpenAlex ────────────────────────────────────────────────────────
+
+def search_openalex(args: dict[str, Any], ctx: dict) -> str:
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 200)
+    params: dict[str, Any] = {
+        "search": query,
+        "per_page": limit,
+        "mailto": "ara-research@example.com",
+    }
+    from_year = args.get("from_year")
+    if from_year:
+        params["filter"] = f"from_publication_date:{from_year}-01-01"
+
+    data = _request_with_retry("https://api.openalex.org/works", params=params)
+    if not isinstance(data, dict):
+        return json.dumps({"papers": [], "error": "OpenAlex unavailable"})
+
+    papers = []
+    for item in data.get("results", []):
+        title = item.get("title", "")
+        # OpenAlex abstracts come as inverted index — reconstruct
+        abstract = ""
+        inv_idx = item.get("abstract_inverted_index")
+        if inv_idx and isinstance(inv_idx, dict):
+            words: list[tuple[int, str]] = []
+            for word, positions in inv_idx.items():
+                for pos in positions:
+                    words.append((pos, word))
+            words.sort()
+            abstract = " ".join(w for _, w in words)
+
+        authors = []
+        for authorship in (item.get("authorships") or [])[:20]:
+            name = (authorship.get("author") or {}).get("display_name", "")
+            if name:
+                authors.append(name)
+
+        year = item.get("publication_year")
+        doi = (item.get("doi") or "").removeprefix("https://doi.org/") or None
+
+        papers.append(_paper_dict(
+            title=title, abstract=abstract, authors=authors,
+            year=year, doi=doi, source="openalex",
+            url=item.get("id"),
+            citation_count=item.get("cited_by_count", 0),
+        ))
+
+    total = data.get("meta", {}).get("count", len(papers))
+    return json.dumps({"papers": papers, "total": total})
+
+
+# ── 5. PubMed ──────────────────────────────────────────────────────────
+
+def search_pubmed(args: dict[str, Any], ctx: dict) -> str:
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 100)
+    ncbi_key = os.getenv("NCBI_API_KEY", "")
+
+    search_params: dict[str, Any] = {
+        "db": "pubmed", "term": query, "retmax": limit,
+        "retmode": "json", "sort": "relevance",
+    }
+    if ncbi_key:
+        search_params["api_key"] = ncbi_key
+
+    search_data = _request_with_retry(
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        params=search_params,
+    )
+    if not isinstance(search_data, dict):
+        return json.dumps({"papers": [], "error": "PubMed unavailable"})
+
+    ids = search_data.get("esearchresult", {}).get("idlist", [])
+    if not ids:
+        return json.dumps({"papers": [], "total": 0})
+
+    # Fetch summaries
+    summary_params: dict[str, Any] = {
+        "db": "pubmed", "id": ",".join(ids),
+        "retmode": "json",
+    }
+    if ncbi_key:
+        summary_params["api_key"] = ncbi_key
+
+    summ_data = _request_with_retry(
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+        params=summary_params,
+    )
+    if not isinstance(summ_data, dict):
+        return json.dumps({"papers": [], "error": "PubMed summary unavailable"})
+
+    papers = []
+    result = summ_data.get("result", {})
+    for pmid in ids:
+        item = result.get(pmid)
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title", "")
+        authors = [a.get("name", "") for a in (item.get("authors") or [])[:20]]
+        pubdate = item.get("pubdate", "")
+        year = int(pubdate[:4]) if pubdate and len(pubdate) >= 4 and pubdate[:4].isdigit() else None
+        doi_list = [eid.get("value") for eid in (item.get("articleids") or []) if eid.get("idtype") == "doi"]
+        doi = doi_list[0] if doi_list else None
+
+        papers.append(_paper_dict(
+            title=title, abstract="",
+            authors=authors, year=year, doi=doi,
+            source="pubmed", url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+        ))
+
+    total = int(search_data.get("esearchresult", {}).get("count", len(papers)))
+    return json.dumps({"papers": papers, "total": total})
+
+
+# ── 6. CORE ────────────────────────────────────────────────────────────
+
+def search_core(args: dict[str, Any], ctx: dict) -> str:
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 100)
+    api_key = os.getenv("CORE_API_KEY", "")
+    if not api_key:
+        return json.dumps({"papers": [], "error": "CORE_API_KEY not set"})
+
+    data = _request_with_retry(
+        "https://api.core.ac.uk/v3/search/works",
+        headers={"Authorization": f"Bearer {api_key}"},
+        params={"q": query, "limit": limit},
+    )
+    if not isinstance(data, dict):
+        return json.dumps({"papers": [], "error": "CORE unavailable"})
+
+    papers = []
+    for item in data.get("results", []):
+        title = item.get("title", "")
+        abstract = item.get("abstract", "")
+        authors = [a.get("name", "") for a in (item.get("authors") or [])[:20] if isinstance(a, dict)]
+        year = item.get("yearPublished")
+        doi = (item.get("doi") or "").removeprefix("https://doi.org/") or None
+
+        papers.append(_paper_dict(
+            title=title, abstract=abstract, authors=authors,
+            year=year, doi=doi, source="core",
+            url=item.get("downloadUrl") or item.get("sourceFulltextUrls", [None])[0] if item.get("sourceFulltextUrls") else None,
+        ))
+
+    total = data.get("totalHits", len(papers))
+    return json.dumps({"papers": papers, "total": total})
+
+
+# ── 7. DBLP ────────────────────────────────────────────────────────────
+
+def search_dblp(args: dict[str, Any], ctx: dict) -> str:
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 100)
+
+    data = _request_with_retry(
+        "https://dblp.org/search/publ/api",
+        params={"q": query, "h": limit, "format": "json"},
+    )
+    if not isinstance(data, dict):
+        return json.dumps({"papers": [], "error": "DBLP unavailable"})
+
+    papers = []
+    hits = data.get("result", {}).get("hits", {}).get("hit", [])
+    for hit in hits:
+        info = hit.get("info", {})
+        title = info.get("title", "")
+        authors_raw = info.get("authors", {}).get("author", [])
+        if isinstance(authors_raw, dict):
+            authors_raw = [authors_raw]
+        authors = [a.get("text", a) if isinstance(a, dict) else str(a) for a in authors_raw]
+        year_str = info.get("year", "")
+        year = int(year_str) if year_str and year_str.isdigit() else None
+        doi = info.get("doi")
+
+        papers.append(_paper_dict(
+            title=title, abstract="", authors=authors,
+            year=year, doi=doi, source="dblp",
+            url=info.get("url"),
+        ))
+
+    total = int(data.get("result", {}).get("hits", {}).get("@total", len(papers)))
+    return json.dumps({"papers": papers, "total": total})
+
+
+# ── 8. Europe PMC ──────────────────────────────────────────────────────
+
+def search_europe_pmc(args: dict[str, Any], ctx: dict) -> str:
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 100)
+
+    data = _request_with_retry(
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+        params={"query": query, "pageSize": limit, "format": "json", "resultType": "core"},
+    )
+    if not isinstance(data, dict):
+        return json.dumps({"papers": [], "error": "Europe PMC unavailable"})
+
+    papers = []
+    for item in data.get("resultList", {}).get("result", []):
+        title = item.get("title", "")
+        abstract = item.get("abstractText", "")
+        authors = []
+        for a in (item.get("authorList", {}).get("author", []) or [])[:20]:
+            name = f"{a.get('firstName', '')} {a.get('lastName', '')}".strip()
+            if name:
+                authors.append(name)
+        year_str = item.get("pubYear", "")
+        year = int(year_str) if year_str and year_str.isdigit() else None
+        doi = item.get("doi")
+        pmid = item.get("pmid")
+
+        papers.append(_paper_dict(
+            title=title, abstract=abstract, authors=authors,
+            year=year, doi=doi, source="europe_pmc",
+            url=f"https://europepmc.org/article/MED/{pmid}" if pmid else None,
+            citation_count=item.get("citedByCount", 0),
+        ))
+
+    total = data.get("hitCount", len(papers))
+    return json.dumps({"papers": papers, "total": total})
+
+
+# ── 9. BASE ────────────────────────────────────────────────────────────
+
+def search_base(args: dict[str, Any], ctx: dict) -> str:
+    query = args.get("query", "")
+    limit = min(args.get("limit", 20), 100)
+
+    resp = _request_with_retry(
+        "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi",
+        params={"func": "PerformSearch", "query": query, "hits": limit, "format": "json"},
+    )
+    if not isinstance(resp, dict):
+        return json.dumps({"papers": [], "error": "BASE unavailable"})
+
+    papers = []
+    for doc in resp.get("response", {}).get("docs", []):
+        title = doc.get("dctitle", "")
+        if isinstance(title, list):
+            title = title[0] if title else ""
+        abstract = doc.get("dcsubject", "") or doc.get("dcdescription", "")
+        if isinstance(abstract, list):
+            abstract = " ".join(abstract)
+        creators = doc.get("dccreator", [])
+        if isinstance(creators, str):
+            creators = [creators]
+        year_str = (doc.get("dcyear") or "")
+        if isinstance(year_str, list):
+            year_str = year_str[0] if year_str else ""
+        year = int(year_str) if year_str and str(year_str).isdigit() else None
+        doi = doc.get("dcrelation", [None])
+        if isinstance(doi, list):
+            doi = next((d for d in doi if d and "doi.org" in str(d)), None)
+        if isinstance(doi, str):
+            doi = doi.removeprefix("https://doi.org/").removeprefix("http://dx.doi.org/")
+
+        papers.append(_paper_dict(
+            title=title, abstract=abstract if isinstance(abstract, str) else "",
+            authors=creators[:20], year=year,
+            doi=doi if isinstance(doi, str) else None,
+            source="base",
+            url=doc.get("dclink") or doc.get("dcidentifier"),
+        ))
+
+    total = resp.get("response", {}).get("numFound", len(papers))
+    return json.dumps({"papers": papers, "total": total})

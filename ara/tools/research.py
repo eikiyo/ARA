@@ -1,151 +1,67 @@
 # Location: ara/tools/research.py
-# Purpose: Research analysis tools (claim extraction, hypothesis scoring, branch search)
+# Purpose: Research tools — claim extraction, hypothesis scoring, branch search
 # Functions: extract_claims, score_hypothesis, branch_search
-# Calls: search_semantic_scholar, search_openalex from search module; ARADB
-# Imports: json, typing
+# Calls: db.py
+# Imports: json
 
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
-
-from .search import search_semantic_scholar, search_openalex
-
-if TYPE_CHECKING:
-    from ara.db import ARADB
+from typing import Any
 
 
-def extract_claims(paper_id: int, db: ARADB) -> str:
-    """Generate instruction for agent to extract claims from paper."""
-    try:
-        paper = db.get_paper(paper_id)
-        if not paper:
-            return json.dumps({"error": f"Paper {paper_id} not found"})
+def extract_claims(args: dict[str, Any], ctx: dict) -> str:
+    paper_id = args.get("paper_id")
+    if paper_id is None:
+        return json.dumps({"error": "paper_id is required"})
 
-        return json.dumps({
-            "task": "extract_claims",
-            "paper_id": paper["paper_id"],
-            "title": paper["title"],
-            "abstract": paper.get("abstract", ""),
-            "instruction": (
-                f"Extract atomic claims from paper {paper['paper_id']}: {paper['title']}. "
-                "Analyze the abstract and identify specific, verifiable statements. "
-                "Each claim should be a single assertion that can be supported or contradicted by other papers. "
-                "Return as JSON array of claim objects with 'text', 'confidence', and 'evidence_type' fields."
-            )
-        })
-    except Exception as e:
-        return json.dumps({"error": f"Extract claims error: {str(e)}"})
+    db = ctx.get("db")
+    if not db:
+        return json.dumps({"error": "Database not available"})
+
+    paper = db.get_paper(paper_id)
+    if not paper:
+        return json.dumps({"error": f"Paper {paper_id} not found"})
+
+    # Return paper content for LLM to process
+    # The LLM itself extracts claims and stores via the engine
+    return json.dumps({
+        "paper_id": paper_id,
+        "title": paper.get("title", ""),
+        "abstract": paper.get("abstract", ""),
+        "full_text": paper.get("full_text", ""),
+        "instruction": "Extract structured claims from this paper. For each claim, identify: claim_text, claim_type (finding/method/limitation/gap), confidence (0-1), supporting_quotes, and section.",
+    }, default=str)
 
 
-def score_hypothesis(hypothesis_text: str, dimensions: list[str] | None = None) -> str:
-    """Generate scoring template for agent to evaluate hypothesis."""
-    if dimensions is None:
-        dimensions = [
-            "novelty",
-            "evidence_strength",
-            "feasibility",
-            "coherence",
-            "cross_domain_support",
-            "methodology_fit"
-        ]
+def score_hypothesis(args: dict[str, Any], ctx: dict) -> str:
+    hypothesis = args.get("hypothesis", "")
+    context = args.get("context", "")
+    if not hypothesis:
+        return json.dumps({"error": "hypothesis is required"})
 
     return json.dumps({
-        "task": "score_hypothesis",
-        "hypothesis": hypothesis_text,
-        "dimensions": dimensions,
-        "instruction": (
-            f"Score the following hypothesis across multiple dimensions:\n\n"
-            f"Hypothesis: {hypothesis_text}\n\n"
-            f"Score each dimension from 0.0 to 1.0:\n"
-            + "\n".join([f"  - {dim}" for dim in dimensions])
-            + "\n\nProvide a brief justification for each score. "
-            "Return as JSON object with scores and explanations."
-        ),
-        "score_template": {dim: None for dim in dimensions}
+        "hypothesis": hypothesis,
+        "context": context,
+        "instruction": "Score this hypothesis on 6 dimensions (0.0-1.0): novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility. Also suggest any domain-specific custom dimensions.",
+        "dimensions": ["novelty", "feasibility", "evidence_strength", "methodology_fit", "impact", "reproducibility"],
     })
 
 
-def branch_search(hypothesis_text: str, branch_type: str, query: str,
-                  round_num: int = 1, parent_branch_id: int | None = None,
-                  session_id: int | None = None, db: ARADB | None = None) -> str:
-    """Perform cross-domain search based on hypothesis and branch type.
+def branch_search(args: dict[str, Any], ctx: dict) -> str:
+    hypothesis = args.get("hypothesis", "")
+    branch_type = args.get("branch_type", "lateral")
+    domain_hint = args.get("domain_hint", "")
 
-    Tracks search budget if db and session_id provided.
-    """
-    try:
-        # Check budget if db is available
-        if db and session_id:
-            budget = db.get_branch_budget(session_id)
-            searches_used = budget.get('searches_used', 0)
-            searches_cap = budget.get('searches_cap', 30)
+    if not hypothesis:
+        return json.dumps({"error": "hypothesis is required"})
 
-            if searches_used >= searches_cap:
-                return json.dumps({
-                    "error": "Branch search budget exhausted",
-                    "searches_used": searches_used,
-                    "searches_cap": searches_cap,
-                })
-        else:
-            budget = {"searches_used": 0, "searches_cap": 30}
-
-        if branch_type == "lateral":
-            modified_query = f"({query}) AND alternative perspective"
-        elif branch_type == "methodological":
-            modified_query = f"({query}) AND method technique approach"
-        elif branch_type == "analogical":
-            modified_query = f"({query}) AND analogy application transfer"
-        elif branch_type == "convergent":
-            modified_query = f"({query}) AND convergent evidence synthesis"
-        elif branch_type == "contrarian":
-            modified_query = f"({query}) AND contrary opposing viewpoint"
-        elif branch_type == "temporal":
-            modified_query = f"({query}) AND historical precedent temporal"
-        elif branch_type == "geographic":
-            modified_query = f"({query}) AND geographic region culture"
-        elif branch_type == "scale":
-            modified_query = f"({query}) AND scale micro meso macro"
-        elif branch_type == "adjacent":
-            modified_query = f"({query}) AND adjacent field related"
-        else:
-            modified_query = query
-
-        scholar_results = search_semantic_scholar(modified_query, limit=5)
-        openalex_results = search_openalex(modified_query, limit=5)
-
-        try:
-            scholar_papers = json.loads(scholar_results)
-        except Exception:
-            scholar_papers = []
-
-        try:
-            openalex_papers = json.loads(openalex_results)
-        except Exception:
-            openalex_papers = []
-
-        scholar_list = scholar_papers[:5] if isinstance(scholar_papers, list) else []
-        openalex_list = openalex_papers[:5] if isinstance(openalex_papers, list) else []
-
-        # Increment budget if db available
-        if db and session_id:
-            db.increment_branch_searches(session_id)
-
-        return json.dumps({
-            "task": "branch_search",
-            "hypothesis": hypothesis_text,
-            "branch_type": branch_type,
-            "query": modified_query,
-            "round": round_num,
-            "parent_branch_id": parent_branch_id,
-            "results": {
-                "semantic_scholar": scholar_list,
-                "openalex": openalex_list,
-            },
-            "total_papers_found": len(scholar_list) + len(openalex_list),
-            "budget_status": {
-                "searches_used": budget.get('searches_used', 0) + 1,
-                "searches_cap": budget.get('searches_cap', 30),
-            }
-        })
-    except Exception as e:
-        return json.dumps({"error": f"Branch search error: {str(e)}"})
+    return json.dumps({
+        "hypothesis": hypothesis,
+        "branch_type": branch_type,
+        "domain_hint": domain_hint,
+        "instruction": f"Perform a {branch_type} branch search for this hypothesis. "
+                       f"Search in adjacent or related fields to find connections, "
+                       f"alternative approaches, or convergent evidence. "
+                       f"Use search tools to find relevant papers in the branched domain.",
+    })

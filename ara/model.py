@@ -1,800 +1,693 @@
 # Location: ara/model.py
-# Purpose: Provider-agnostic LLM abstraction (OpenAI, Anthropic, OpenRouter, Ollama)
-# Functions: OpenAICompatibleModel, AnthropicModel, ScriptedModel, EchoFallbackModel
-# Calls: tools/defs.py (for tool format conversion)
-# Imports: json, urllib, socket, dataclasses, datetime, typing
+# Purpose: Provider-agnostic LLM abstraction — Gemini (native), OpenAI, Anthropic
+# Functions: GeminiModel, OpenAIModel, AnthropicModel, BaseModel protocol
+# Calls: google-genai, openai, anthropic SDKs
+# Imports: dataclasses, typing, json, logging
 
 from __future__ import annotations
 
 import json
-import socket
-import urllib.error
-import urllib.request
+import logging
+import time
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
-from .tools.defs import TOOL_DEFINITIONS, to_anthropic_tools, to_openai_tools
+_log = logging.getLogger(__name__)
 
 
-class ModelError(RuntimeError):
-    pass
+# ── Data types ──────────────────────────────────────────────────────────
 
-
-@dataclass
+@dataclass(slots=True)
 class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
 
 
-@dataclass
-class ImageData:
-    base64_data: str
-    media_type: str
-
-
-@dataclass
+@dataclass(slots=True)
 class ToolResult:
     tool_call_id: str
     name: str
     content: str
-    is_error: bool = False
-    image: ImageData | None = None
 
 
-@dataclass
-class ModelTurn:
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    text: str | None = None
-    stop_reason: str = ""
-    raw_response: Any = None
+@dataclass(slots=True)
+class TokenUsage:
     input_tokens: int = 0
     output_tokens: int = 0
 
 
+@dataclass(slots=True)
+class ModelTurn:
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: TokenUsage | None = None
+    raw_response: Any = None
+
+
+class ModelError(Exception):
+    pass
+
+
+# ── Conversation ────────────────────────────────────────────────────────
+
 @dataclass
 class Conversation:
-    _provider_messages: list[Any] = field(default_factory=list)
     system_prompt: str = ""
-    turn_count: int = 0
-    stop_sequences: list[str] = field(default_factory=list)
+    tool_defs: list[dict[str, Any]] = field(default_factory=list)
+    _messages: list[dict[str, Any]] = field(default_factory=list)
 
-    def get_messages(self) -> list[Any]:
-        return list(self._provider_messages)
+    def message_count(self) -> int:
+        return len(self._messages)
 
+
+# ── Base protocol ───────────────────────────────────────────────────────
 
 class BaseModel(Protocol):
-    def create_conversation(self, system_prompt: str, initial_user_message: str) -> Conversation: ...
-    def complete(self, conversation: Conversation) -> ModelTurn: ...
-    def append_assistant_turn(self, conversation: Conversation, turn: ModelTurn) -> None: ...
-    def append_tool_results(self, conversation: Conversation, results: list[ToolResult]) -> None: ...
-
-
-# ---------------------------------------------------------------------------
-# Shared HTTP helpers
-# ---------------------------------------------------------------------------
-
-def _split_concatenated_json(s: str) -> list[dict[str, Any]]:
-    """Split concatenated JSON objects like '{"a":1}{"b":2}' into a list.
-
-    Gemini Flash sometimes jams multiple tool call arguments into one string
-    instead of separate tool_calls entries. This splits them back out.
-    """
-    s = s.strip()
-    if not s:
-        return [{}]
-    # Fast path: single valid JSON
-    try:
-        obj = json.loads(s)
-        return [obj if isinstance(obj, dict) else {}]
-    except json.JSONDecodeError:
-        pass
-    # Split on }{ boundary (handles concatenated JSON objects)
-    results: list[dict[str, Any]] = []
-    depth = 0
-    start = 0
-    for i, ch in enumerate(s):
-        if ch == '{':
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                chunk = s[start:i + 1]
-                try:
-                    obj = json.loads(chunk)
-                    if isinstance(obj, dict):
-                        results.append(obj)
-                except json.JSONDecodeError:
-                    pass
-    return results if results else [{}]
-
-
-def _extract_content(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            maybe = part.get("text")
-            if isinstance(maybe, str):
-                parts.append(maybe)
-                continue
-            if part.get("type") == "text":
-                nested = part.get("text")
-                if isinstance(nested, str):
-                    parts.append(nested)
-        return "\n".join(parts)
-    return ""
-
-
-def _http_json(
-    url: str, method: str, headers: dict[str, str],
-    payload: dict[str, Any] | None = None, timeout_sec: int = 90,
-) -> dict[str, Any]:
-    req = urllib.request.Request(
-        url=url,
-        data=(json.dumps(payload).encode("utf-8") if payload is not None else None),
-        headers=headers, method=method,
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise ModelError(f"HTTP {exc.code} calling {url}: {body}") from exc
-    except (urllib.error.URLError, OSError) as exc:
-        raise ModelError(f"Network error calling {url}: {exc}") from exc
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ModelError(f"Non-JSON response from {url}: {raw[:500]}") from exc
-    if not isinstance(parsed, dict):
-        raise ModelError(f"Unexpected non-object JSON from {url}")
-    return parsed
-
-
-def _extend_socket_timeout(resp: Any, timeout: float) -> None:
-    try:
-        resp.fp.raw._sock.settimeout(timeout)
-    except (AttributeError, OSError):
-        pass
-
-
-def _read_sse_events(
-    resp: Any, on_sse_event: Callable[[str, dict[str, Any]], None] | None = None,
-) -> list[tuple[str, dict[str, Any]]]:
-    events: list[tuple[str, dict[str, Any]]] = []
-    current_event = ""
-    current_data_lines: list[str] = []
-    for raw_line in resp:
-        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-        if line.startswith("event:"):
-            current_event = line[len("event:"):].strip()
-            continue
-        if line.startswith("data:"):
-            data_str = line[len("data:"):].strip()
-            if data_str == "[DONE]":
-                break
-            current_data_lines.append(data_str)
-            continue
-        if not line:
-            if current_data_lines:
-                joined = "\n".join(current_data_lines)
-                try:
-                    data_dict = json.loads(joined)
-                except json.JSONDecodeError:
-                    data_dict = {"_raw": joined}
-                if isinstance(data_dict, dict):
-                    if data_dict.get("type") == "error":
-                        err_msg = data_dict.get("error", {}).get("message", str(data_dict))
-                        raise ModelError(f"Stream error: {err_msg}")
-                    events.append((current_event, data_dict))
-                    if on_sse_event:
-                        try:
-                            on_sse_event(current_event, data_dict)
-                        except Exception:
-                            pass
-                current_data_lines = []
-                current_event = ""
-            continue
-    if current_data_lines:
-        joined = "\n".join(current_data_lines)
-        try:
-            data_dict = json.loads(joined)
-        except json.JSONDecodeError:
-            data_dict = {"_raw": joined}
-        if isinstance(data_dict, dict):
-            if data_dict.get("type") == "error":
-                err_msg = data_dict.get("error", {}).get("message", str(data_dict))
-                raise ModelError(f"Stream error: {err_msg}")
-            events.append((current_event, data_dict))
-            if on_sse_event:
-                try:
-                    on_sse_event(current_event, data_dict)
-                except Exception:
-                    pass
-    return events
-
-
-def _http_stream_sse(
-    url: str, method: str, headers: dict[str, str], payload: dict[str, Any],
-    first_byte_timeout: float = 10, stream_timeout: float = 120,
-    max_retries: int = 3,
-    on_sse_event: Callable[[str, dict[str, Any]], None] | None = None,
-) -> list[tuple[str, dict[str, Any]]]:
-    data = json.dumps(payload).encode("utf-8")
-    last_exc: Exception | None = None
-    for attempt in range(max_retries):
-        req = urllib.request.Request(url=url, data=data, headers=headers, method=method)
-        try:
-            resp = urllib.request.urlopen(req, timeout=first_byte_timeout)
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise ModelError(f"HTTP {exc.code} calling {url}: {body}") from exc
-        except (socket.timeout, urllib.error.URLError, OSError) as exc:
-            last_exc = exc
-            continue
-        _extend_socket_timeout(resp, stream_timeout)
-        try:
-            return _read_sse_events(resp, on_sse_event=on_sse_event)
-        finally:
-            resp.close()
-    raise ModelError(f"Timed out after {max_retries} attempts calling {url}: {last_exc}")
-
-
-def _accumulate_openai_stream(events: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
-    text_parts: list[str] = []
-    tool_calls_by_index: dict[int, dict[str, Any]] = {}
-    finish_reason = ""
-    usage: dict[str, Any] = {}
-    for _event_type, chunk in events:
-        if "usage" in chunk and chunk["usage"]:
-            usage = chunk["usage"]
-        choices = chunk.get("choices")
-        if not choices:
-            continue
-        choice = choices[0]
-        fr = choice.get("finish_reason")
-        if fr:
-            finish_reason = fr
-        delta = choice.get("delta", {})
-        if not delta:
-            continue
-        content = delta.get("content")
-        if content:
-            text_parts.append(content)
-        tc_deltas = delta.get("tool_calls")
-        if tc_deltas:
-            for tc_delta in tc_deltas:
-                idx = tc_delta.get("index")
-                # Gemini sends all tool calls in one chunk without index.
-                # Auto-assign: if no index, use next available slot when we
-                # see a new id or name (indicating a new tool call).
-                if idx is None:
-                    tc_id = tc_delta.get("id", "")
-                    tc_name = (tc_delta.get("function") or {}).get("name", "")
-                    if tc_id or tc_name:
-                        # New tool call — find next unused index
-                        idx = len(tool_calls_by_index)
-                        # But check if this id already exists
-                        for existing_idx, existing_tc in tool_calls_by_index.items():
-                            if existing_tc["id"] == tc_id and tc_id:
-                                idx = existing_idx
-                                break
-                    else:
-                        # Continuation of last tool call
-                        idx = max(tool_calls_by_index.keys()) if tool_calls_by_index else 0
-                if idx not in tool_calls_by_index:
-                    tool_calls_by_index[idx] = {
-                        "id": tc_delta.get("id", ""),
-                        "type": "function",
-                        "function": {"name": "", "arguments": ""},
-                    }
-                tc = tool_calls_by_index[idx]
-                if tc_delta.get("id"):
-                    tc["id"] = tc_delta["id"]
-                func = tc_delta.get("function", {})
-                if func.get("name"):
-                    tc["function"]["name"] = func["name"]
-                if func.get("arguments"):
-                    tc["function"]["arguments"] += func["arguments"]
-    message: dict[str, Any] = {
-        "role": "assistant",
-        "content": "".join(text_parts) if text_parts else None,
-    }
-    if tool_calls_by_index:
-        message["tool_calls"] = [tool_calls_by_index[i] for i in sorted(tool_calls_by_index)]
-    result: dict[str, Any] = {"choices": [{"message": message, "finish_reason": finish_reason}]}
-    if usage:
-        result["usage"] = usage
-    return result
-
-
-def _accumulate_anthropic_stream(events: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
-    content_blocks: list[dict[str, Any]] = []
-    blocks_by_index: dict[int, dict[str, Any]] = {}
-    stop_reason = ""
-    usage: dict[str, Any] = {}
-    for event_type, data in events:
-        msg_type = data.get("type", event_type)
-        if msg_type == "message_start":
-            msg = data.get("message", {})
-            msg_usage = msg.get("usage", {})
-            if msg_usage:
-                usage.update(msg_usage)
-        elif msg_type == "content_block_start":
-            idx = data.get("index", len(blocks_by_index))
-            block = data.get("content_block", {})
-            btype = block.get("type", "text")
-            if btype == "text":
-                blocks_by_index[idx] = {"type": "text", "text": block.get("text", "")}
-            elif btype == "tool_use":
-                blocks_by_index[idx] = {
-                    "type": "tool_use", "id": block.get("id", ""),
-                    "name": block.get("name", ""), "input": {}, "_input_json": "",
-                }
-            elif btype == "thinking":
-                blocks_by_index[idx] = {"type": "thinking", "thinking": block.get("thinking", "")}
-            else:
-                blocks_by_index[idx] = dict(block)
-        elif msg_type == "content_block_delta":
-            idx = data.get("index", 0)
-            delta = data.get("delta", {})
-            delta_type = delta.get("type", "")
-            block = blocks_by_index.get(idx)
-            if block is None:
-                continue
-            if delta_type == "text_delta":
-                block["text"] = block.get("text", "") + delta.get("text", "")
-            elif delta_type == "input_json_delta":
-                block["_input_json"] = block.get("_input_json", "") + delta.get("partial_json", "")
-            elif delta_type == "thinking_delta":
-                block["thinking"] = block.get("thinking", "") + delta.get("thinking", "")
-            elif delta_type == "signature_delta":
-                block["signature"] = delta.get("signature", "")
-        elif msg_type == "content_block_stop":
-            idx = data.get("index", 0)
-            block = blocks_by_index.get(idx)
-            if block and block.get("type") == "tool_use":
-                raw_json = block.pop("_input_json", "")
-                if raw_json:
-                    try:
-                        block["input"] = json.loads(raw_json)
-                    except json.JSONDecodeError:
-                        block["input"] = {}
-        elif msg_type == "message_delta":
-            delta = data.get("delta", {})
-            if delta.get("stop_reason"):
-                stop_reason = delta["stop_reason"]
-            delta_usage = data.get("usage", {})
-            if delta_usage:
-                usage.update(delta_usage)
-    for idx in sorted(blocks_by_index):
-        block = blocks_by_index[idx]
-        block.pop("_input_json", None)
-        content_blocks.append(block)
-    return {"content": content_blocks, "stop_reason": stop_reason, "usage": usage}
-
-
-# ---------------------------------------------------------------------------
-# OpenAI-compatible model
-# ---------------------------------------------------------------------------
-
-@dataclass
-class OpenAICompatibleModel:
     model: str
-    api_key: str
-    base_url: str = "https://api.openai.com/v1"
-    temperature: float = 0.0
-    reasoning_effort: str | None = None
-    timeout_sec: int = 300
-    extra_headers: dict[str, str] = field(default_factory=dict)
-    first_byte_timeout: float = 10
-    strict_tools: bool = True
-    tool_defs: list[dict[str, Any]] | None = None
-    on_content_delta: Callable[[str, str], None] | None = None
 
-    def _is_reasoning_model(self) -> bool:
-        lower = self.model.lower()
-        if lower.startswith(("o1-", "o3-", "o4-")) or lower in ("o1", "o3", "o4"):
-            return True
-        if lower.startswith("gpt-5"):
-            return True
-        return False
+    def create_conversation(
+        self, system_prompt: str, tool_defs: list[dict[str, Any]],
+    ) -> Conversation: ...
 
-    def create_conversation(self, system_prompt: str, initial_user_message: str) -> Conversation:
-        messages: list[Any] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": initial_user_message},
-        ]
-        return Conversation(_provider_messages=messages, system_prompt=system_prompt)
+    def generate(
+        self, conversation: Conversation,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ModelTurn: ...
 
-    def complete(self, conversation: Conversation) -> ModelTurn:
-        is_reasoning = self._is_reasoning_model()
-        is_local = "localhost" in self.base_url or "127.0.0.1" in self.base_url
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": conversation._provider_messages,
-            "tools": to_openai_tools(defs=self.tool_defs, strict=self.strict_tools),
-            "tool_choice": "auto",
-            "stream": True,
-        }
-        payload["stream_options"] = {"include_usage": True}
-        if conversation.stop_sequences:
-            payload["stop"] = conversation.stop_sequences
-        if not is_reasoning:
-            payload["temperature"] = self.temperature
-        effort = (self.reasoning_effort or "").strip().lower()
-        is_local = "localhost" in self.base_url or "127.0.0.1" in self.base_url
-        if effort and not is_local:
-            payload["reasoning_effort"] = effort
-        url = self.base_url.rstrip("/") + "/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            **self.extra_headers,
-        }
+    def append_user_message(self, conv: Conversation, text: str) -> None: ...
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None: ...
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None: ...
+    def condense_conversation(self, conv: Conversation, summary: str) -> None: ...
+    def estimate_tokens(self, conv: Conversation) -> int: ...
+    def context_window(self) -> int: ...
 
-        def _forward_delta(_et: str, data: dict[str, Any]) -> None:
-            cb = self.on_content_delta
-            if cb is None:
-                return
-            choices = data.get("choices")
-            if not choices:
-                return
-            delta = choices[0].get("delta", {})
-            if not delta:
-                return
-            content = delta.get("content")
-            if content:
-                cb("text", content)
-            tc_deltas = delta.get("tool_calls")
-            if tc_deltas:
-                for tc_d in tc_deltas:
-                    func = tc_d.get("function", {})
-                    name = func.get("name")
-                    if name:
-                        cb("tool_call_start", name)
-                    args_chunk = func.get("arguments", "")
-                    if args_chunk:
-                        cb("tool_call_args", args_chunk)
 
-        sse_cb = _forward_delta if self.on_content_delta else None
-        try:
-            events = _http_stream_sse(
-                url=url, method="POST", headers=headers, payload=payload,
-                first_byte_timeout=self.first_byte_timeout,
-                stream_timeout=self.timeout_sec, on_sse_event=sse_cb,
-            )
-            parsed = _accumulate_openai_stream(events)
-        except ModelError as exc:
-            text = str(exc).lower()
-            retried = False
-            if "stream_options" in text:
-                payload.pop("stream_options", None)
-                retried = True
-            if effort and ("reasoning_effort" in text or "thinking" in text or "does not support" in text):
-                payload.pop("reasoning_effort", None)
-                retried = True
-            if retried:
-                events = _http_stream_sse(
-                    url=url, method="POST", headers=headers, payload=payload,
-                    first_byte_timeout=self.first_byte_timeout,
-                    stream_timeout=self.timeout_sec, on_sse_event=sse_cb,
-                )
-                parsed = _accumulate_openai_stream(events)
-            else:
-                raise
-        try:
-            message = parsed["choices"][0]["message"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ModelError(f"Model response missing content: {parsed}") from exc
-        finish_reason = parsed["choices"][0].get("finish_reason", "")
-        raw_tc = message.get("tool_calls")
-        tool_calls: list[ToolCall] = []
-        if raw_tc and isinstance(raw_tc, list):
-            for tc in raw_tc:
-                func = tc.get("function", {})
-                args_str = func.get("arguments", "{}")
-                tc_name = func.get("name", "") or ""
-                if not tc_name:
-                    continue
-                # Gemini sometimes concatenates multiple JSON objects into one
-                # arguments string (e.g. '{"a":1}{"b":2}{"c":3}'). Split them.
-                parsed_args_list = _split_concatenated_json(args_str)
-                if not parsed_args_list:
-                    parsed_args_list = [{}]
-                # First parsed object becomes the original tool call
-                tool_calls.append(ToolCall(
-                    id=tc.get("id", ""), name=tc_name,
-                    arguments=parsed_args_list[0],
-                ))
-                # Extra concatenated objects become additional tool calls
-                for extra_idx, extra_args in enumerate(parsed_args_list[1:], 1):
-                    tool_calls.append(ToolCall(
-                        id=f"{tc.get('id', '')}_{extra_idx}", name=tc_name,
-                        arguments=extra_args,
-                    ))
-        text_content = _extract_content(message.get("content", "")) or None
-        if text_content is not None and not text_content.strip():
-            text_content = None
-        # Rebuild raw_response with cleaned tool_calls so conversation stays valid
-        clean_message: dict[str, Any] = {"role": "assistant", "content": text_content}
-        if tool_calls:
-            clean_message["tool_calls"] = [
-                {"id": tc.id, "type": "function",
-                 "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
-                for tc in tool_calls
-            ]
-        usage_data = parsed.get("usage", {})
-        return ModelTurn(
-            tool_calls=tool_calls, text=text_content,
-            stop_reason=finish_reason, raw_response=clean_message,
-            input_tokens=usage_data.get("prompt_tokens", 0) if isinstance(usage_data, dict) else 0,
-            output_tokens=usage_data.get("completion_tokens", 0) if isinstance(usage_data, dict) else 0,
+# ── Gemini (native SDK) ────────────────────────────────────────────────
+
+_GEMINI_CONTEXT_WINDOWS: dict[str, int] = {
+    "gemini-2.0-flash": 1_048_576,
+    "gemini-2.5-flash": 1_048_576,
+    "gemini-2.5-pro": 1_048_576,
+    "gemini-1.5-flash": 1_048_576,
+    "gemini-1.5-pro": 2_097_152,
+}
+
+
+def _tool_defs_to_gemini(tool_defs: list[dict[str, Any]]) -> list[Any]:
+    """Convert ARA tool definitions to Gemini FunctionDeclaration objects."""
+    from google.genai import types
+
+    declarations = []
+    for td in tool_defs:
+        params = td.get("parameters", {})
+        # Gemini requires parameters_json_schema format
+        declarations.append(types.FunctionDeclaration(
+            name=td["name"],
+            description=td.get("description", ""),
+            parameters_json_schema=params if params.get("properties") else None,
+        ))
+    return [types.Tool(function_declarations=declarations)]
+
+
+class GeminiModel:
+    def __init__(self, model: str, api_key: str):
+        from google import genai
+        self.model = model
+        self._client = genai.Client(api_key=api_key)
+
+    def context_window(self) -> int:
+        return _GEMINI_CONTEXT_WINDOWS.get(self.model, 1_048_576)
+
+    def create_conversation(
+        self, system_prompt: str, tool_defs: list[dict[str, Any]],
+    ) -> Conversation:
+        return Conversation(
+            system_prompt=system_prompt,
+            tool_defs=tool_defs,
         )
 
-    def append_assistant_turn(self, conversation: Conversation, turn: ModelTurn) -> None:
-        conversation._provider_messages.append(turn.raw_response)
-        conversation.turn_count += 1
+    def generate(
+        self, conversation: Conversation,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ModelTurn:
+        from google.genai import types
 
-    def append_tool_results(self, conversation: Conversation, results: list[ToolResult]) -> None:
-        for r in results:
-            # Synthetic tool results (system nudges, empty handlers) don't correspond
-            # to real tool_calls — send them as user messages so Gemini doesn't reject.
-            if not r.name or r.name == "system" or r.tool_call_id in ("error", "empty", "system_nudge"):
-                conversation._provider_messages.append({
-                    "role": "user", "content": f"[system] {r.content}",
-                })
-                continue
-            conversation._provider_messages.append({
-                "role": "tool", "tool_call_id": r.tool_call_id,
-                "name": r.name, "content": r.content,
-            })
+        tools = _tool_defs_to_gemini(conversation.tool_defs) if conversation.tool_defs else None
+        contents = self._build_contents(conversation)
 
-    def condense_conversation(self, conversation: Conversation, keep_recent_turns: int = 4) -> int:
-        msgs = conversation._provider_messages
-        tool_indices = [i for i, m in enumerate(msgs) if isinstance(m, dict) and m.get("role") == "tool"]
-        if len(tool_indices) <= keep_recent_turns:
-            return 0
-        to_condense = tool_indices[:-keep_recent_turns]
-        condensed = 0
-        placeholder = "[earlier tool output condensed]"
-        for idx in to_condense:
-            msg = msgs[idx]
-            if msg.get("content") != placeholder:
-                msg["content"] = placeholder
-                condensed += 1
-        return condensed
+        config = types.GenerateContentConfig(
+            system_instruction=conversation.system_prompt or None,
+            tools=tools,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
 
-
-# ---------------------------------------------------------------------------
-# Anthropic model
-# ---------------------------------------------------------------------------
-
-@dataclass
-class AnthropicModel:
-    model: str
-    api_key: str
-    base_url: str = "https://api.anthropic.com/v1"
-    temperature: float = 0.0
-    reasoning_effort: str | None = None
-    max_tokens: int = 16384
-    timeout_sec: int = 300
-    tool_defs: list[dict[str, Any]] | None = None
-    on_content_delta: Callable[[str, str], None] | None = None
-
-    def create_conversation(self, system_prompt: str, initial_user_message: str) -> Conversation:
-        messages: list[Any] = [{"role": "user", "content": initial_user_message}]
-        return Conversation(_provider_messages=messages, system_prompt=system_prompt)
-
-    def _is_opus_46(self) -> bool:
-        return "opus-4-6" in self.model.lower() or "opus-4.6" in self.model.lower()
-
-    def complete(self, conversation: Conversation) -> ModelTurn:
-        effort = (self.reasoning_effort or "").strip().lower()
-        use_thinking = effort in {"low", "medium", "high"}
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "messages": conversation._provider_messages,
-            "tools": to_anthropic_tools(defs=self.tool_defs),
-            "stream": True,
-        }
-        if conversation.stop_sequences:
-            payload["stop_sequences"] = conversation.stop_sequences
-        if not use_thinking:
-            payload["temperature"] = self.temperature
-        if use_thinking:
-            if self._is_opus_46():
-                payload["thinking"] = {"type": "adaptive"}
-                payload["output_config"] = {"effort": effort}
-            else:
-                budget = {"low": 1024, "medium": 4096, "high": 8192}[effort]
-                if payload["max_tokens"] <= budget:
-                    payload["max_tokens"] = budget + 8192
-                payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
-        if conversation.system_prompt:
-            payload["system"] = conversation.system_prompt
-        url = self.base_url.rstrip("/") + "/messages"
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-
-        def _forward_delta(_et: str, data: dict[str, Any]) -> None:
-            cb = self.on_content_delta
-            if cb is None:
-                return
-            msg_type = data.get("type", _et)
-            if msg_type == "content_block_start":
-                block = data.get("content_block", {})
-                if block.get("type") == "tool_use":
-                    name = block.get("name", "")
-                    if name:
-                        cb("tool_call_start", name)
-                return
-            if msg_type != "content_block_delta":
-                return
-            delta = data.get("delta", {})
-            dt = delta.get("type", "")
-            if dt == "thinking_delta":
-                t = delta.get("thinking", "")
-                if t:
-                    cb("thinking", t)
-            elif dt == "text_delta":
-                t = delta.get("text", "")
-                if t:
-                    cb("text", t)
-            elif dt == "input_json_delta":
-                c = delta.get("partial_json", "")
-                if c:
-                    cb("tool_call_args", c)
-
-        sse_cb = _forward_delta if self.on_content_delta else None
-        try:
-            events = _http_stream_sse(
-                url=url, method="POST", headers=headers, payload=payload,
-                stream_timeout=self.timeout_sec, on_sse_event=sse_cb,
-            )
-            parsed = _accumulate_anthropic_stream(events)
-        except ModelError as exc:
-            text = str(exc).lower()
-            if use_thinking and "thinking" in text and ("unknown" in text or "unsupported" in text or "invalid" in text):
-                payload.pop("thinking", None)
-                payload.pop("output_config", None)
-                events = _http_stream_sse(
-                    url=url, method="POST", headers=headers, payload=payload,
-                    stream_timeout=self.timeout_sec, on_sse_event=sse_cb,
-                )
-                parsed = _accumulate_anthropic_stream(events)
-            else:
-                raise
-        stop_reason = parsed.get("stop_reason", "")
-        content_blocks = parsed.get("content", [])
-        if not isinstance(content_blocks, list):
-            content_blocks = []
-        tool_calls: list[ToolCall] = []
         text_parts: list[str] = []
-        for block in content_blocks:
-            if not isinstance(block, dict):
-                continue
-            bt = block.get("type", "")
-            if bt == "tool_use":
-                tool_calls.append(ToolCall(
-                    id=block.get("id", ""), name=block.get("name", ""),
-                    arguments=block.get("input", {}) if isinstance(block.get("input"), dict) else {},
-                ))
-            elif bt == "text":
-                t = block.get("text", "")
-                if isinstance(t, str) and t.strip():
-                    text_parts.append(t)
-        text_content = "\n".join(text_parts) if text_parts else None
-        usage_data = parsed.get("usage", {})
-        return ModelTurn(
-            tool_calls=tool_calls, text=text_content,
-            stop_reason=stop_reason, raw_response=content_blocks,
-            input_tokens=usage_data.get("input_tokens", 0) if isinstance(usage_data, dict) else 0,
-            output_tokens=usage_data.get("output_tokens", 0) if isinstance(usage_data, dict) else 0,
-        )
+        tool_calls: list[ToolCall] = []
+        usage = TokenUsage()
+        raw_response = None
 
-    def append_assistant_turn(self, conversation: Conversation, turn: ModelTurn) -> None:
-        conversation._provider_messages.append({"role": "assistant", "content": turn.raw_response})
-        conversation.turn_count += 1
-
-    def append_tool_results(self, conversation: Conversation, results: list[ToolResult]) -> None:
-        blocks = []
-        for r in results:
-            block: dict[str, Any] = {
-                "type": "tool_result", "tool_use_id": r.tool_call_id, "content": r.content,
-            }
-            if r.is_error:
-                block["is_error"] = True
-            blocks.append(block)
-        conversation._provider_messages.append({"role": "user", "content": blocks})
-
-    def condense_conversation(self, conversation: Conversation, keep_recent_turns: int = 4) -> int:
-        msgs = conversation._provider_messages
-        placeholder = "[earlier tool output condensed]"
-        tool_msg_indices: list[int] = []
-        for i, m in enumerate(msgs):
-            if not isinstance(m, dict) or m.get("role") != "user":
-                continue
-            content = m.get("content")
-            if isinstance(content, list) and any(
-                isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+        try:
+            for chunk in self._client.models.generate_content_stream(
+                model=self.model,
+                contents=contents,
+                config=config,
             ):
-                tool_msg_indices.append(i)
-        if len(tool_msg_indices) <= keep_recent_turns:
-            return 0
-        to_condense = tool_msg_indices[:-keep_recent_turns]
-        condensed = 0
-        for idx in to_condense:
-            content = msgs[idx].get("content", [])
-            if not isinstance(content, list):
-                continue
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                raw_response = chunk
+                # Text content
+                if chunk.text:
+                    text_parts.append(chunk.text)
+                    if on_chunk:
+                        on_chunk(chunk.text)
+
+                # Function calls
+                if chunk.function_calls:
+                    for fc in chunk.function_calls:
+                        tool_calls.append(ToolCall(
+                            id=f"call_{uuid.uuid4().hex[:12]}",
+                            name=fc.name,
+                            arguments=dict(fc.args) if fc.args else {},
+                        ))
+
+                # Usage
+                if chunk.usage_metadata:
+                    usage.input_tokens = chunk.usage_metadata.prompt_token_count or 0
+                    usage.output_tokens = chunk.usage_metadata.candidates_token_count or 0
+
+        except Exception as exc:
+            error_text = str(exc).lower()
+            if "quota" in error_text or "429" in error_text:
+                raise ModelError(f"Rate limited: {exc}") from exc
+            if "api key" in error_text or "403" in error_text:
+                raise ModelError(f"Authentication failed: {exc}") from exc
+            raise ModelError(f"Gemini API error: {exc}") from exc
+
+        return ModelTurn(
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            usage=usage,
+            raw_response=raw_response,
+        )
+
+    def append_user_message(self, conv: Conversation, text: str) -> None:
+        conv._messages.append({"role": "user", "text": text})
+
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None:
+        if not turn.text and not turn.tool_calls:
+            return
+        conv._messages.append({
+            "role": "assistant",
+            "text": turn.text,
+            "tool_calls": [
+                {"name": tc.name, "args": tc.arguments, "id": tc.id}
+                for tc in turn.tool_calls
+            ],
+        })
+
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
+        conv._messages.append({
+            "role": "tool",
+            "results": [
+                {"name": r.name, "tool_call_id": r.tool_call_id, "content": r.content}
+                for r in results
+            ],
+        })
+
+    def condense_conversation(self, conv: Conversation, summary: str) -> None:
+        conv._messages = [{"role": "user", "text": f"[Previous context summary]\n{summary}"}]
+
+    def estimate_tokens(self, conv: Conversation) -> int:
+        total = len(conv.system_prompt) // 4
+        for msg in conv._messages:
+            total += len(str(msg)) // 4
+        return total
+
+    def _build_contents(self, conv: Conversation) -> list[Any]:
+        from google.genai import types
+
+        contents: list[types.Content] = []
+        for msg in conv._messages:
+            role = msg["role"]
+
+            if role == "user":
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=msg["text"])],
+                ))
+
+            elif role == "assistant":
+                parts: list[types.Part] = []
+                if msg.get("text"):
+                    parts.append(types.Part.from_text(text=msg["text"]))
+                for tc in msg.get("tool_calls", []):
+                    parts.append(types.Part.from_function_call(
+                        name=tc["name"],
+                        args=tc["args"],
+                    ))
+                if parts:
+                    contents.append(types.Content(role="model", parts=parts))
+
+            elif role == "tool":
+                parts = []
+                for r in msg.get("results", []):
+                    parts.append(types.Part.from_function_response(
+                        name=r["name"],
+                        response={"result": r["content"]},
+                    ))
+                if parts:
+                    contents.append(types.Content(role="tool", parts=parts))
+
+        return contents
+
+
+# ── OpenAI-compatible (OpenAI, OpenRouter, Ollama) ──────────────────────
+
+_OPENAI_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4-turbo": 128_000,
+    "o1": 200_000,
+    "o1-mini": 128_000,
+    "o3-mini": 200_000,
+}
+
+
+def _tool_defs_to_openai(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tools = []
+    for td in tool_defs:
+        params = td.get("parameters", {"type": "object", "properties": {}})
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": td["name"],
+                "description": td.get("description", ""),
+                "parameters": params,
+            },
+        })
+    return tools
+
+
+class OpenAIModel:
+    def __init__(
+        self, model: str, api_key: str,
+        base_url: str | None = None,
+        reasoning_effort: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout: float = 120,
+    ):
+        from openai import OpenAI
+        self.model = model
+        self._reasoning_effort = reasoning_effort
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            default_headers=extra_headers,
+            timeout=timeout,
+        )
+
+    def context_window(self) -> int:
+        return _OPENAI_CONTEXT_WINDOWS.get(self.model, 128_000)
+
+    def create_conversation(
+        self, system_prompt: str, tool_defs: list[dict[str, Any]],
+    ) -> Conversation:
+        return Conversation(system_prompt=system_prompt, tool_defs=tool_defs)
+
+    def generate(
+        self, conversation: Conversation,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ModelTurn:
+        messages = self._build_messages(conversation)
+        tools = _tool_defs_to_openai(conversation.tool_defs) if conversation.tool_defs else None
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+        }
+        if tools:
+            kwargs["tools"] = tools
+        if self._reasoning_effort:
+            kwargs["reasoning_effort"] = self._reasoning_effort
+
+        text_parts: list[str] = []
+        tool_calls_by_idx: dict[int, dict[str, Any]] = {}
+        usage = TokenUsage()
+
+        try:
+            stream = self._client.chat.completions.create(**kwargs)
+            for chunk in stream:
+                if not chunk.choices:
+                    if chunk.usage:
+                        usage.input_tokens = chunk.usage.prompt_tokens or 0
+                        usage.output_tokens = chunk.usage.completion_tokens or 0
                     continue
-                if block.get("content") != placeholder:
-                    block["content"] = placeholder
-                    condensed += 1
-        return condensed
 
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    text_parts.append(delta.content)
+                    if on_chunk:
+                        on_chunk(delta.content)
 
-# ---------------------------------------------------------------------------
-# Test / fallback models
-# ---------------------------------------------------------------------------
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index if tc_delta.index is not None else 0
+                        if idx not in tool_calls_by_idx:
+                            tool_calls_by_idx[idx] = {
+                                "id": tc_delta.id or f"call_{uuid.uuid4().hex[:12]}",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        entry = tool_calls_by_idx[idx]
+                        if tc_delta.id:
+                            entry["id"] = tc_delta.id
+                        if tc_delta.function and tc_delta.function.name:
+                            entry["name"] = tc_delta.function.name
+                        if tc_delta.function and tc_delta.function.arguments:
+                            entry["arguments"] += tc_delta.function.arguments
 
-@dataclass
-class ScriptedModel:
-    scripted_turns: list[ModelTurn] = field(default_factory=list)
+        except Exception as exc:
+            error_text = str(exc).lower()
+            if "rate" in error_text or "429" in error_text:
+                raise ModelError(f"Rate limited: {exc}") from exc
+            raise ModelError(f"OpenAI API error: {exc}") from exc
 
-    def create_conversation(self, system_prompt: str, initial_user_message: str) -> Conversation:
-        return Conversation(
-            _provider_messages=[{"role": "user", "content": initial_user_message}],
-            system_prompt=system_prompt,
+        tool_calls = []
+        for idx in sorted(tool_calls_by_idx):
+            entry = tool_calls_by_idx[idx]
+            if not entry["name"]:
+                continue
+            try:
+                args = json.loads(entry["arguments"]) if entry["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(id=entry["id"], name=entry["name"], arguments=args))
+
+        return ModelTurn(
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            usage=usage,
         )
 
-    def complete(self, conversation: Conversation) -> ModelTurn:
-        if not self.scripted_turns:
-            raise ModelError("ScriptedModel exhausted.")
-        return self.scripted_turns.pop(0)
+    def append_user_message(self, conv: Conversation, text: str) -> None:
+        conv._messages.append({"role": "user", "text": text})
 
-    def append_assistant_turn(self, conversation: Conversation, turn: ModelTurn) -> None:
-        pass
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None:
+        if not turn.text and not turn.tool_calls:
+            return
+        conv._messages.append({
+            "role": "assistant",
+            "text": turn.text,
+            "tool_calls": [
+                {"name": tc.name, "args": tc.arguments, "id": tc.id}
+                for tc in turn.tool_calls
+            ],
+        })
 
-    def append_tool_results(self, conversation: Conversation, results: list[ToolResult]) -> None:
-        pass
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
+        conv._messages.append({
+            "role": "tool",
+            "results": [
+                {"name": r.name, "tool_call_id": r.tool_call_id, "content": r.content}
+                for r in results
+            ],
+        })
 
-    def condense_conversation(self, conversation: Conversation, keep_recent_turns: int = 4) -> int:
-        return 0
+    def condense_conversation(self, conv: Conversation, summary: str) -> None:
+        conv._messages = [{"role": "user", "text": f"[Previous context summary]\n{summary}"}]
+
+    def estimate_tokens(self, conv: Conversation) -> int:
+        total = len(conv.system_prompt) // 4
+        for msg in conv._messages:
+            total += len(str(msg)) // 4
+        return total
+
+    def _build_messages(self, conv: Conversation) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        if conv.system_prompt:
+            messages.append({"role": "system", "content": conv.system_prompt})
+
+        for msg in conv._messages:
+            role = msg["role"]
+            if role == "user":
+                messages.append({"role": "user", "content": msg["text"]})
+
+            elif role == "assistant":
+                entry: dict[str, Any] = {"role": "assistant", "content": msg.get("text") or None}
+                tcs = msg.get("tool_calls", [])
+                if tcs:
+                    entry["tool_calls"] = [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {"name": tc["name"], "arguments": json.dumps(tc["args"])},
+                        }
+                        for tc in tcs
+                    ]
+                messages.append(entry)
+
+            elif role == "tool":
+                for r in msg.get("results", []):
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": r["tool_call_id"],
+                        "content": r["content"],
+                    })
+
+        return messages
 
 
-@dataclass
+# ── Anthropic ───────────────────────────────────────────────────────────
+
+_ANTHROPIC_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-sonnet-4-6": 200_000,
+    "claude-opus-4-6": 200_000,
+    "claude-haiku-4-5-20251001": 200_000,
+    "claude-3-5-sonnet-20241022": 200_000,
+}
+
+
+def _tool_defs_to_anthropic(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tools = []
+    for td in tool_defs:
+        tools.append({
+            "name": td["name"],
+            "description": td.get("description", ""),
+            "input_schema": td.get("parameters", {"type": "object", "properties": {}}),
+        })
+    return tools
+
+
+class AnthropicModel:
+    def __init__(
+        self, model: str, api_key: str,
+        base_url: str | None = None,
+        reasoning_effort: str | None = None,
+    ):
+        import anthropic
+        self.model = model
+        self._reasoning_effort = reasoning_effort
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = anthropic.Anthropic(**kwargs)
+
+    def context_window(self) -> int:
+        return _ANTHROPIC_CONTEXT_WINDOWS.get(self.model, 200_000)
+
+    def create_conversation(
+        self, system_prompt: str, tool_defs: list[dict[str, Any]],
+    ) -> Conversation:
+        return Conversation(system_prompt=system_prompt, tool_defs=tool_defs)
+
+    def generate(
+        self, conversation: Conversation,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ModelTurn:
+        messages = self._build_messages(conversation)
+        tools = _tool_defs_to_anthropic(conversation.tool_defs) if conversation.tool_defs else []
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": 16384,
+            "messages": messages,
+            "stream": True,
+        }
+        if conversation.system_prompt:
+            kwargs["system"] = conversation.system_prompt
+        if tools:
+            kwargs["tools"] = tools
+
+        # Thinking/extended reasoning
+        if self._reasoning_effort and self._is_thinking_capable():
+            budget_map = {"low": 4096, "medium": 10000, "high": 32000}
+            budget = budget_map.get(self._reasoning_effort, 10000)
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        usage = TokenUsage()
+        current_tc: dict[str, Any] | None = None
+
+        try:
+            with self._client.messages.stream(**kwargs) as stream:
+                for event in stream:
+                    event_type = getattr(event, "type", "")
+
+                    if event_type == "content_block_start":
+                        block = event.content_block
+                        if block.type == "tool_use":
+                            current_tc = {"id": block.id, "name": block.name, "args_json": ""}
+
+                    elif event_type == "content_block_delta":
+                        delta = event.delta
+                        if delta.type == "text_delta":
+                            text_parts.append(delta.text)
+                            if on_chunk:
+                                on_chunk(delta.text)
+                        elif delta.type == "input_json_delta" and current_tc is not None:
+                            current_tc["args_json"] += delta.partial_json
+
+                    elif event_type == "content_block_stop":
+                        if current_tc is not None:
+                            try:
+                                args = json.loads(current_tc["args_json"]) if current_tc["args_json"] else {}
+                            except json.JSONDecodeError:
+                                args = {}
+                            tool_calls.append(ToolCall(
+                                id=current_tc["id"],
+                                name=current_tc["name"],
+                                arguments=args,
+                            ))
+                            current_tc = None
+
+                    elif event_type == "message_delta":
+                        u = getattr(event, "usage", None)
+                        if u:
+                            usage.output_tokens = getattr(u, "output_tokens", 0)
+
+                    elif event_type == "message_start":
+                        u = getattr(event.message, "usage", None)
+                        if u:
+                            usage.input_tokens = getattr(u, "input_tokens", 0)
+
+        except Exception as exc:
+            error_text = str(exc).lower()
+            if "rate" in error_text or "429" in error_text:
+                raise ModelError(f"Rate limited: {exc}") from exc
+            if "overloaded" in error_text:
+                raise ModelError(f"API overloaded: {exc}") from exc
+            raise ModelError(f"Anthropic API error: {exc}") from exc
+
+        return ModelTurn(
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            usage=usage,
+        )
+
+    def _is_thinking_capable(self) -> bool:
+        m = self.model.lower()
+        return "claude-3-7" in m or "claude-4" in m or "opus" in m or "sonnet-4" in m
+
+    def append_user_message(self, conv: Conversation, text: str) -> None:
+        conv._messages.append({"role": "user", "text": text})
+
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None:
+        if not turn.text and not turn.tool_calls:
+            return
+        conv._messages.append({
+            "role": "assistant",
+            "text": turn.text,
+            "tool_calls": [
+                {"name": tc.name, "args": tc.arguments, "id": tc.id}
+                for tc in turn.tool_calls
+            ],
+        })
+
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
+        conv._messages.append({
+            "role": "tool",
+            "results": [
+                {"name": r.name, "tool_call_id": r.tool_call_id, "content": r.content}
+                for r in results
+            ],
+        })
+
+    def condense_conversation(self, conv: Conversation, summary: str) -> None:
+        conv._messages = [{"role": "user", "text": f"[Previous context summary]\n{summary}"}]
+
+    def estimate_tokens(self, conv: Conversation) -> int:
+        total = len(conv.system_prompt) // 4
+        for msg in conv._messages:
+            total += len(str(msg)) // 4
+        return total
+
+    def _build_messages(self, conv: Conversation) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        for msg in conv._messages:
+            role = msg["role"]
+            if role == "user":
+                messages.append({"role": "user", "content": msg["text"]})
+
+            elif role == "assistant":
+                content: list[dict[str, Any]] = []
+                if msg.get("text"):
+                    content.append({"type": "text", "text": msg["text"]})
+                for tc in msg.get("tool_calls", []):
+                    content.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "input": tc["args"],
+                    })
+                if content:
+                    messages.append({"role": "assistant", "content": content})
+
+            elif role == "tool":
+                content = []
+                for r in msg.get("results", []):
+                    content.append({
+                        "type": "tool_result",
+                        "tool_use_id": r["tool_call_id"],
+                        "content": r["content"],
+                    })
+                if content:
+                    messages.append({"role": "user", "content": content})
+
+        return messages
+
+
+# ── Fallback (no API key) ──────────────────────────────────────────────
+
 class EchoFallbackModel:
-    note: str = (
-        "No provider API keys configured. Set OpenAI/Anthropic/OpenRouter keys "
-        "or use --provider ollama for a local model."
-    )
+    def __init__(self, note: str = "No API keys configured"):
+        self.model = "echo-fallback"
+        self._note = note
 
-    def create_conversation(self, system_prompt: str, initial_user_message: str) -> Conversation:
-        return Conversation(
-            _provider_messages=[{"role": "user", "content": initial_user_message}],
-            system_prompt=system_prompt,
-        )
+    def context_window(self) -> int:
+        return 4096
 
-    def complete(self, conversation: Conversation) -> ModelTurn:
-        return ModelTurn(text=self.note, stop_reason="end_turn")
+    def create_conversation(self, system_prompt: str, tool_defs: list[dict[str, Any]]) -> Conversation:
+        return Conversation(system_prompt=system_prompt, tool_defs=tool_defs)
 
-    def append_assistant_turn(self, conversation: Conversation, turn: ModelTurn) -> None:
+    def generate(self, conversation: Conversation, on_chunk: Callable[[str], None] | None = None) -> ModelTurn:
+        text = f"[ARA] {self._note}. Run `ara --configure-keys` to set up API keys."
+        if on_chunk:
+            on_chunk(text)
+        return ModelTurn(text=text)
+
+    def append_user_message(self, conv: Conversation, text: str) -> None:
+        conv._messages.append({"role": "user", "text": text})
+
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None:
         pass
 
-    def append_tool_results(self, conversation: Conversation, results: list[ToolResult]) -> None:
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
         pass
+
+    def condense_conversation(self, conv: Conversation, summary: str) -> None:
+        pass
+
+    def estimate_tokens(self, conv: Conversation) -> int:
+        return 0

@@ -1,124 +1,66 @@
 # Location: ara/prompts/analyst.py
-# Purpose: Analyst phase — triage and deep reading of papers
-# Functions: None (constant export)
-# Calls: fetch_fulltext, request_approval
-# Imports: None
+# Purpose: Analyst phase prompts — triage ranking and deep reading
+# Functions: ANALYST_TRIAGE_PROMPT, ANALYST_DEEP_READ_PROMPT
+# Calls: N/A
+# Imports: N/A
 
-ANALYST_TRIAGE_PROMPT = """\
-# Analyst Triage Phase — Paper Scoring & Selection
+ANALYST_TRIAGE_PROMPT = """## Analyst Triage Phase — Paper Ranking
 
-**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
-Call tools DIRECTLY (read_paper, etc.). Any delegation = failure.**
+Your task is to rank all discovered papers by relevance to the research topic.
 
-Your mission: Read abstracts of all discovered papers and score their relevance to the \
-research question. Identify the most important papers for deep reading.
+### Process
 
-## Step 1: Relevance Scoring
-For each paper, score relevance on a 0-1 scale based on:
-- **Direct relevance** (0.3): Does the paper address the core research question directly?
-- **Topic alignment** (0.3): Does it cover key concepts or related phenomena?
-- **Methodological relevance** (0.2): Does its methodology apply to the question?
-- **Source credibility** (0.2): Is it peer-reviewed? Highly cited? By recognized authors?
+1. **Read paper metadata** using read_paper for each paper in the database.
+2. **Score each paper** on a 0-1 scale considering:
+   - Title and abstract relevance to the research topic
+   - Citation count (higher = more established)
+   - Recency (recent papers may be more relevant)
+   - Source quality (peer-reviewed journals > preprints)
+   - Methodology quality (if discernible from abstract)
 
-Score = (direct_weight × 0.3) + (topic_weight × 0.3) + (method_weight × 0.2) + \
-        (credibility_weight × 0.2)
+3. **Rank papers** from highest to lowest relevance score.
 
-Document the reasoning for each score.
+4. **Recommend papers for deep reading**: Select the top papers based on:
+   - High relevance scores
+   - Diversity of perspectives (don't select 10 papers saying the same thing)
+   - Mix of seminal works and recent contributions
 
-## Step 2: Thematic Grouping
-Cluster papers by subtopic or theme:
-- Identify natural groupings (e.g., by methodology, by domain, by theoretical perspective)
-- Label each cluster (e.g., "computational methods", "empirical studies", "theoretical frameworks")
-- Note which clusters are well-represented and which are sparse
+5. **Present ranking** in a clear table format and call request_approval.
+   The user will select which papers to deep-read.
 
-## Step 3: Selection for Deep Read
-Apply tiered selection:
-- **Tier 1** (must read): Relevance ≥ 0.8, or foundational papers, or key methodological papers
-- **Tier 2** (should read): Relevance 0.6-0.8, or addresses important gaps
-- **Tier 3** (optional): Relevance 0.4-0.6, or provides context
-
-Typically select 10-30 papers for deep reading (Tiers 1 & 2). Adjust based on topic breadth.
-
-## Step 4: Ranked List & Approval
-Produce a ranked list of top 30 papers, formatted as:
-[Rank]. [Relevance Score] | [Authors, Year] | [Title] | [DOI/Source]
-    Reason: [brief justification]
-
-**Do NOT call request_approval yourself.** The manager handles approval gates. \
-Return your ranked list and cluster summary as a text response when done.
+### Output Format
+Present a markdown table:
+| Rank | Paper ID | Title | Year | Citations | Relevance | Recommendation |
 """
 
-ANALYST_DEEP_READ_PROMPT = """\
-# Analyst Deep Read Phase — Claim Extraction
+ANALYST_DEEP_READ_PROMPT = """## Analyst Deep Read Phase — Claim Extraction
 
-**CRITICAL: You are a LEAF worker. NEVER call subtask() or execute(). \
-Call tools DIRECTLY (fetch_fulltext, extract_claims, etc.). Any delegation = failure.**
+Your task is to extract structured claims from selected papers.
 
-Your mission: Read the full text of selected papers and extract atomic claims, \
-noting methodology, limitations, and contradictions.
+### Process
 
-## Step 1: Full-Text Retrieval
-For each selected paper:
-- Attempt to fetch_fulltext using DOI
-- If full text unavailable, use the abstract + available methods/results sections
-- Log access failures (paywall, format issues)
-- Note which papers are open-access vs. restricted
+1. **For each selected paper**, use read_paper to get full content.
+2. **Try fetch_fulltext** if full text is not cached (requires DOI).
+3. **Extract claims** using extract_claims tool for each paper.
+4. **For each claim, identify:**
+   - **claim_text**: The core assertion (one sentence)
+   - **claim_type**: finding | method | limitation | gap
+   - **confidence**: 0.0-1.0 (how confident are you in this extraction?)
+   - **supporting_quotes**: Exact quotes from the paper
+   - **section**: Which section of the paper it came from
 
-## Step 2: Atomic Claim Extraction
-For each paper, identify and extract:
-- **Atomic claim**: A specific, factual statement (e.g., "Study X found that Y increases \
-  Z by 15% under conditions W")
-- **Evidence type**: empirical result, theoretical prediction, meta-analysis finding, \
-  survey result, expert opinion
-- **Confidence of claim**: How confident are the authors? (from paper language: "demonstrates", \
-  "suggests", "likely", "speculates")
-- **Scope**: What population/context does this apply to? (sample size, domain, constraints)
-- **Supporting quote**: Exact text from the paper that states the claim
-- **Methodology**: How did they reach this conclusion? (experiment, survey, model, etc.)
-- **Limitations noted**: What do the authors say are limitations of this finding?
+5. **Look for:**
+   - Key findings and results
+   - Novel methods or approaches
+   - Stated limitations
+   - Research gaps (explicitly stated or implied)
+   - Contradictions between papers
 
-Format each claim:
-```
-[Paper Author, Year]
-Claim: [atomic statement]
-Evidence Type: [empirical/theoretical/meta/survey/opinion]
-Confidence: [high/medium/low]
-Scope: [population/context]
-Quote: "[exact text]"
-Method: [how derived]
-Limitations: [author-noted limits]
-```
+6. **Present extracted claims** organized by type and call request_approval.
 
-## Step 3: Contradiction Flagging
-As you extract claims, identify contradictions:
-- When two papers make opposite or conflicting claims about the same phenomenon
-- Document each contradiction with both claims side-by-side
-- Note possible reasons (different populations, different methods, different time periods, etc.)
-- Do not try to resolve — just flag and report
-
-Format contradictions:
-```
-Contradiction: [phenomenon in question]
-Paper A (Author, Year): [claim A]
-Paper B (Author, Year): [claim B]
-Possible causes: [methodological difference / population difference / temporal difference / ...]
-```
-
-## Step 4: Gap Identification
-Note:
-- Claims that appear frequently (consensus)
-- Claims that appear in only one or two papers (outliers)
-- Questions mentioned by papers that are NOT answered in any paper (gaps)
-- Methodological innovations or debates across papers
-
-## Step 5: Approval & Handoff
-Report:
-- Total papers read: [count]
-- Total claims extracted: [count] (broken down by evidence type)
-- Contradictions found: [count]
-- Major gaps identified: [list]
-- Papers with access issues: [count]
-
-**Do NOT call request_approval yourself.** The manager handles approval gates. \
-Return all extracted claims organized by theme, contradictions, and gaps as a text response.
+### Quality Standards
+- Each claim must have at least one supporting quote.
+- Claims must be atomic (one assertion per claim).
+- Contradictions between papers must be explicitly noted.
+- If working from abstract only (no full text), note this limitation.
 """

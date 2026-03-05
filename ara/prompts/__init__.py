@@ -1,123 +1,95 @@
 # Location: ara/prompts/__init__.py
-# Purpose: Prompt registry — imports and exports all ARA phase prompts
-# Functions: build_system_prompt, build_phase_prompt
-# Calls: base.py, scout.py, analyst.py, verifier.py, hypothesis.py, brancher.py, critic.py, writer.py, manager.py
-# Imports: All prompt modules
+# Purpose: Prompt registry — build system prompts per phase
+# Functions: build_system_prompt, build_phase_prompt, PHASE_PROMPTS
+# Calls: All prompt modules
+# Imports: N/A
 
 from __future__ import annotations
 
+from typing import Any
+
 from .base import BASE_PROMPT
+from .manager import MANAGER_PROMPT
 from .scout import SCOUT_PROMPT
 from .analyst import ANALYST_TRIAGE_PROMPT, ANALYST_DEEP_READ_PROMPT
 from .verifier import VERIFIER_PROMPT
 from .hypothesis import HYPOTHESIS_PROMPT
 from .brancher import BRANCHER_PROMPT
-from .brancher_scout import BRANCHER_SCOUT_PROMPT
-from .brancher_analyst import BRANCHER_ANALYST_PROMPT
 from .critic import CRITIC_PROMPT
 from .writer import WRITER_PROMPT
-from .manager import MANAGER_PROMPT
 
-# Phase prompt registry — maps phase names to their prompts
-PHASE_PROMPTS = {
-    "base": BASE_PROMPT,
+PHASE_PROMPTS: dict[str, str] = {
+    "manager": MANAGER_PROMPT,
     "scout": SCOUT_PROMPT,
     "analyst_triage": ANALYST_TRIAGE_PROMPT,
     "analyst_deep_read": ANALYST_DEEP_READ_PROMPT,
     "verifier": VERIFIER_PROMPT,
     "hypothesis": HYPOTHESIS_PROMPT,
     "brancher": BRANCHER_PROMPT,
-    "brancher_scout": BRANCHER_SCOUT_PROMPT,
-    "brancher_analyst": BRANCHER_ANALYST_PROMPT,
     "critic": CRITIC_PROMPT,
     "writer": WRITER_PROMPT,
-    "manager": MANAGER_PROMPT,
 }
+
+_RECURSIVE_SECTION = """
+## Delegation Tools
+
+You have two delegation tools:
+- **subtask(objective, acceptance_criteria, prompt, model)**: Delegate a sub-objective to a child agent with its own context window. Use for complex, multi-step work (e.g., each research phase). The child runs autonomously and returns results.
+- **execute(objective)**: Run a quick sub-task without depth tracking. Use for simple lookups or summaries.
+
+When delegating, be specific about:
+1. What to accomplish (objective)
+2. How to judge success (acceptance_criteria)
+3. Which phase prompt to use (prompt)
+"""
 
 
 def build_system_prompt(
-    recursive: bool = True,
-    acceptance_criteria: bool = True,
+    topic: str = "",
+    paper_type: str = "research_article",
+    rules: list[dict[str, Any]] | None = None,
+    include_delegation: bool = True,
 ) -> str:
-    """
-    Build the system prompt for the ARA manager agent.
+    parts = [BASE_PROMPT]
+    if include_delegation:
+        parts.append(_RECURSIVE_SECTION)
 
-    Combines the manager prompt with optional recursive delegation
-    and acceptance criteria sections.
+    parts.append(MANAGER_PROMPT)
 
-    Args:
-        recursive: Include section on recursive delegation via subtask/execute
-        acceptance_criteria: Include section on acceptance criteria requirements
+    if topic:
+        parts.append(f"\n## Current Research\n- **Topic:** {topic}\n- **Paper type:** {paper_type}\n")
 
-    Returns:
-        Complete system prompt string for manager agent
-    """
-    sections = [MANAGER_PROMPT]
+    if rules:
+        rules_text = "\n## Active Rules\n"
+        for r in rules:
+            rules_text += f"- {r.get('rule_type', 'RULE').upper()}: {r.get('rule_text', '')}\n"
+        parts.append(rules_text)
 
-    if recursive:
-        sections.append(_RECURSIVE_SECTION)
-
-    if acceptance_criteria:
-        sections.append(_ACCEPTANCE_SECTION)
-
-    return "\n\n".join(sections)
+    return "\n\n".join(parts)
 
 
-def build_phase_prompt(phase_name: str) -> str:
-    """
-    Get the system prompt for a specific research phase.
-
-    Args:
-        phase_name: Name of the phase (scout, analyst_triage, analyst_deep_read,
-                   verifier, hypothesis, brancher, critic, writer, manager, base)
-
-    Returns:
-        Phase-specific system prompt string
-
-    Raises:
-        ValueError: If phase_name is not recognized
-    """
-    phase_name = phase_name.lower().strip()
-
-    if phase_name not in PHASE_PROMPTS:
-        available = ", ".join(PHASE_PROMPTS.keys())
-        raise ValueError(
-            f"Unknown phase: {phase_name}. "
-            f"Available phases: {available}"
-        )
-
-    return PHASE_PROMPTS[phase_name]
+def build_phase_prompt(phase: str) -> str:
+    prompt = PHASE_PROMPTS.get(phase)
+    if not prompt:
+        available = ", ".join(sorted(PHASE_PROMPTS.keys()))
+        raise ValueError(f"Unknown phase '{phase}'. Available: {available}")
+    return BASE_PROMPT + "\n\n" + prompt
 
 
-# Optional: Include base prompt in all system prompts
-def build_phase_system_prompt(phase_name: str) -> str:
-    """
-    Build a complete system prompt for a phase, including base principles.
+def build_phase_system_prompt(
+    phase: str,
+    topic: str = "",
+    rules: list[dict[str, Any]] | None = None,
+) -> str:
+    parts = [build_phase_prompt(phase)]
 
-    Args:
-        phase_name: Name of the research phase
+    if topic:
+        parts.append(f"\n## Current Research\n- **Topic:** {topic}\n")
 
-    Returns:
-        Combined prompt with base principles + phase-specific instructions
-    """
-    phase_prompt = build_phase_prompt(phase_name)
-    return f"{BASE_PROMPT}\n\n{phase_prompt}"
+    if rules:
+        rules_text = "\n## Active Rules\n"
+        for r in rules:
+            rules_text += f"- {r.get('rule_type', 'RULE').upper()}: {r.get('rule_text', '')}\n"
+        parts.append(rules_text)
 
-
-_RECURSIVE_SECTION = """\
-## Recursive Delegation
-You can delegate work to child agents using `subtask` (same-tier model) or \
-`execute` (cheapest model for simple tasks).
-
-Guidelines:
-- Each research phase should be a subtask
-- Subtasks get their own step budget
-- Cannot delegate to a higher-tier model
-- Include clear acceptance_criteria for each subtask\
-"""
-
-_ACCEPTANCE_SECTION = """\
-## Acceptance Criteria
-When using subtask or execute, always provide specific acceptance_criteria. \
-Results are automatically judged against these criteria.\
-"""
+    return "\n\n".join(parts)

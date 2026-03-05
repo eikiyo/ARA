@@ -1,96 +1,81 @@
 # Location: ara/tools/papers.py
-# Purpose: Paper reading and similarity search
+# Purpose: Paper management tools — fetch, read, similarity search
 # Functions: fetch_fulltext, read_paper, search_similar
-# Calls: httpx for Unpaywall API, ARADB for database queries
-# Imports: json, httpx, typing
+# Calls: httpx, db.py
+# Imports: json, httpx
 
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+import logging
+from typing import Any
 
 import httpx
 
-if TYPE_CHECKING:
-    from ara.db import ARADB
+_log = logging.getLogger(__name__)
 
 
-def fetch_fulltext(doi: str) -> str:
-    """Fetch open access version of paper via Unpaywall API."""
+def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
+    doi = args.get("doi", "").strip()
+    if not doi:
+        return json.dumps({"error": "DOI is required"})
+
+    # Try Unpaywall
     try:
-        url = f"https://api.unpaywall.org/v2/{doi}"
-        params = {"email": "ara@research.local"}
-
-        response = httpx.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-
-        if data.get("is_oa"):
-            oa_location = data.get("best_oa_location", {})
-            if oa_location:
+        resp = httpx.get(
+            f"https://api.unpaywall.org/v2/{doi}",
+            params={"email": "ara-research@example.com"},
+            timeout=15, follow_redirects=True,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            best_oa = data.get("best_oa_location") or {}
+            pdf_url = best_oa.get("url_for_pdf") or best_oa.get("url")
+            if pdf_url:
+                # Store in DB if available
+                db = ctx.get("db")
+                if db:
+                    db.update_paper_fulltext(doi=doi, url=pdf_url)
                 return json.dumps({
+                    "status": "found",
                     "doi": doi,
-                    "found": True,
-                    "url": oa_location.get("url", ""),
-                    "host_type": oa_location.get("host_type", ""),
-                    "version": oa_location.get("version", "")
+                    "url": pdf_url,
+                    "is_oa": data.get("is_oa", False),
                 })
+    except Exception as exc:
+        _log.warning("Unpaywall failed for %s: %s", doi, exc)
 
-        return json.dumps({
-            "doi": doi,
-            "found": False,
-            "message": "No open access version found"
-        })
-    except httpx.HTTPError as e:
-        return json.dumps({"doi": doi, "error": f"Unpaywall API error: {str(e)}"})
-    except Exception as e:
-        return json.dumps({"doi": doi, "error": f"Fetch fulltext error: {str(e)}"})
+    return json.dumps({"status": "not_found", "doi": doi, "message": "No open access full text available"})
 
 
-def read_paper(paper_id: int, db: ARADB) -> str:
-    """Read paper from database and return formatted summary."""
-    try:
-        paper = db.get_paper(paper_id)
-        if not paper:
-            return json.dumps({"error": f"Paper {paper_id} not found"})
+def read_paper(args: dict[str, Any], ctx: dict) -> str:
+    paper_id = args.get("paper_id")
+    if paper_id is None:
+        return json.dumps({"error": "paper_id is required"})
 
-        result = {
-            "paper_id": paper["paper_id"],
-            "title": paper["title"],
-            "abstract": paper.get("abstract", ""),
-            "authors": json.loads(paper["authors"]) if isinstance(paper["authors"], str) else paper.get("authors", []),
-            "year": paper.get("publication_year"),
-            "doi": paper.get("doi"),
-            "citation_count": paper.get("citation_count", 0),
-            "url": paper.get("url", ""),
-            "retraction_status": paper.get("retraction_status", "none"),
-        }
-        return json.dumps(result)
-    except Exception as e:
-        return json.dumps({"error": f"Read paper error: {str(e)}"})
+    db = ctx.get("db")
+    if not db:
+        return json.dumps({"error": "Database not available"})
+
+    paper = db.get_paper(paper_id)
+    if not paper:
+        return json.dumps({"error": f"Paper {paper_id} not found"})
+
+    return json.dumps(paper, default=str)
 
 
-def search_similar(query_text: str, session_id: int, db: ARADB, limit: int = 5) -> str:
-    """Search for papers similar to query text in current session."""
-    try:
-        papers = db.get_papers(session_id)
-        # Sort by relevance_score descending, take top N
-        scored = [p for p in papers if p.get("relevance_score") is not None]
-        scored.sort(key=lambda p: p.get("relevance_score", 0), reverse=True)
-        top = scored[:limit] if scored else papers[:limit]
+def search_similar(args: dict[str, Any], ctx: dict) -> str:
+    text = args.get("text", "")
+    limit = args.get("limit", 10)
 
-        results = []
-        for p in top:
-            results.append({
-                "paper_id": p["paper_id"],
-                "title": p["title"],
-                "abstract": p.get("abstract", ""),
-                "authors": json.loads(p["authors"]) if isinstance(p["authors"], str) else p.get("authors", []),
-                "year": p.get("publication_year"),
-                "doi": p.get("doi"),
-                "citation_count": p.get("citation_count", 0),
-                "relevance_score": p.get("relevance_score"),
-            })
-        return json.dumps(results)
-    except Exception as e:
-        return json.dumps({"error": f"Search similar error: {str(e)}"})
+    if not text:
+        return json.dumps({"error": "text is required"})
+
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+    if not db or not session_id:
+        return json.dumps({"error": "Database or session not available"})
+
+    # For now, do keyword-based search until embeddings are wired
+    papers = db.search_papers_by_keyword(session_id=session_id, keyword=text, limit=limit)
+    return json.dumps({"papers": papers, "method": "keyword"}, default=str)

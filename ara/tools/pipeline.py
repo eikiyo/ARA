@@ -1,259 +1,101 @@
 # Location: ara/tools/pipeline.py
-# Purpose: Pipeline control (approval gates, rules, budget, embeddings, phase output)
-# Functions: request_approval, get_rules, track_cost, embed_text, save_phase_output
-# Calls: ARADB, gates.py
-# Imports: json, pathlib, typing, datetime
+# Purpose: Pipeline tools — approval gates, rules, cost tracking, embeddings
+# Functions: request_approval, get_rules, track_cost, embed_text
+# Calls: gates.py, db.py
+# Imports: json, os
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+import logging
+import os
+from typing import Any
 
-import httpx
-
-from ..gates import run_approval_gate
-from ..logging import get_logger
-
-_log = get_logger("pipeline")
-
-if TYPE_CHECKING:
-    from ara.db import ARADB
+_log = logging.getLogger(__name__)
 
 
-def request_approval(
-    phase: str,
-    summary: str,
-    data: dict[str, Any] | None = None,
-    session_id: int | None = None,
-    db: ARADB | None = None,
-    workspace: Path | None = None,
-) -> str:
-    """Request user approval at a phase gate."""
+def request_approval(args: dict[str, Any], ctx: dict) -> str:
+    phase = args.get("phase", "unknown")
+    summary = args.get("summary", "")
+    data_json = args.get("data", "{}")
+
+    approval_gates = ctx.get("approval_gates", True)
+    if not approval_gates:
+        _log.info("Auto-approving gate: %s", phase)
+        return json.dumps({"decision": "approved", "phase": phase, "auto": True})
+
+    # Import gates module for interactive approval
     try:
-        if data is None:
-            data = {}
-
-        # Record gate in database
-        if db and session_id:
-            gate_id = db.insert_gate(session_id, phase, data)
-
-        # Run interactive approval gate
-        ws = workspace or Path(".")
-        decision = run_approval_gate(ws, phase, summary, data)
-
-        # Update gate in database
-        if db and session_id:
-            status = "approved" if decision == "approved" else "resolved"
-            action = decision.split(":")[0].strip() if ":" in decision else decision
-            comments = decision.split(":", 1)[1].strip() if ":" in decision else None
-            db.resolve_gate(gate_id, status, action, comments)
-
-        return json.dumps({
-            "phase": phase,
-            "decision": decision,
-        })
-    except Exception as e:
-        return json.dumps({"error": f"Request approval error: {str(e)}"})
+        from ..gates import run_approval_gate
+        decision = run_approval_gate(phase=phase, summary=summary, data_json=data_json, ctx=ctx)
+        return json.dumps({"decision": decision, "phase": phase})
+    except ImportError:
+        _log.warning("Gates module not available, auto-approving")
+        return json.dumps({"decision": "approved", "phase": phase, "auto": True})
 
 
-def get_rules(session_id: int, db: ARADB) -> str:
-    """Get all active rules for session."""
-    try:
-        rules = db.get_active_rules(session_id)
+def get_rules(args: dict[str, Any], ctx: dict) -> str:
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
 
-        formatted = []
-        for rule in rules:
-            formatted.append({
-                "rule_id": rule["rule_id"],
-                "text": rule["rule_text"],
-                "type": rule["rule_type"],
-                "created_by": rule["created_by"],
-            })
+    if not db or not session_id:
+        return json.dumps({"rules": [], "note": "No active session"})
 
-        return json.dumps({
-            "session_id": session_id,
-            "total_rules": len(formatted),
-            "rules": formatted,
-        })
-    except Exception as e:
-        return json.dumps({"error": f"Get rules error: {str(e)}"})
+    rules = db.get_rules(session_id)
+    return json.dumps({"rules": rules})
 
 
-def track_cost(session_id: int, db: ARADB) -> str:
-    """Track current session cost and remaining budget."""
-    try:
-        session = db.get_session(session_id)
-        if not session:
-            return json.dumps({"error": f"Session {session_id} not found"})
+def track_cost(args: dict[str, Any], ctx: dict) -> str:
+    model = args.get("model", "unknown")
+    input_tokens = args.get("input_tokens", 0)
+    output_tokens = args.get("output_tokens", 0)
 
-        budget_cap = float(session.get("budget_cap", 0))
-        budget_spent = float(session.get("budget_spent", 0))
-        remaining = budget_cap - budget_spent
+    # Rough cost estimation (per million tokens)
+    cost_per_m: dict[str, tuple[float, float]] = {
+        "gemini-2.0-flash": (0.10, 0.40),
+        "gemini-2.5-flash": (0.15, 0.60),
+        "gemini-2.5-pro": (1.25, 10.0),
+        "gpt-4o": (2.50, 10.0),
+        "gpt-4o-mini": (0.15, 0.60),
+        "claude-sonnet-4-6": (3.0, 15.0),
+        "claude-opus-4-6": (15.0, 75.0),
+    }
+    input_rate, output_rate = cost_per_m.get(model, (1.0, 3.0))
+    cost = (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000
 
-        return json.dumps({
-            "session_id": session_id,
-            "budget_cap_usd": budget_cap,
-            "budget_spent_usd": budget_spent,
-            "budget_remaining_usd": remaining,
-            "utilization_percent": (budget_spent / budget_cap * 100) if budget_cap > 0 else 0,
-        })
-    except Exception as e:
-        return json.dumps({"error": f"Track cost error: {str(e)}"})
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+    if db and session_id:
+        db.log_cost(session_id=session_id, model=model,
+                     input_tokens=input_tokens, output_tokens=output_tokens,
+                     cost_usd=cost)
+
+    return json.dumps({
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_usd": round(cost, 6),
+    })
 
 
-def embed_text(text: str) -> str:
-    """Generate embedding vector for text using Ollama (free, local).
+def embed_text(args: dict[str, Any], ctx: dict) -> str:
+    text = args.get("text", "")
+    if not text:
+        return json.dumps({"error": "text is required"})
 
-    Uses nomic-embed-text by default. Falls back to all-minilm.
-    Ollama must be running at localhost:11434.
-    """
-    # TODO: Remove hardcoded model list when config supports embedding model selection.
-    _EMBED_MODELS = ["nomic-embed-text", "all-minilm", "mxbai-embed-large"]
-    _OLLAMA_URL = "http://localhost:11434/api/embed"
+    api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return json.dumps({"error": "GOOGLE_API_KEY not set for embeddings"})
 
     try:
-        # Try each model in preference order
-        last_err = ""
-        for model_name in _EMBED_MODELS:
-            try:
-                resp = httpx.post(
-                    _OLLAMA_URL,
-                    json={"model": model_name, "input": text},
-                    timeout=30,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    embeddings = data.get("embeddings", [])
-                    if embeddings:
-                        vec = embeddings[0]
-                        return json.dumps({
-                            "status": "ok",
-                            "model": model_name,
-                            "dimensions": len(vec),
-                            "embedding": vec,
-                        })
-                last_err = f"{model_name}: HTTP {resp.status_code}"
-            except httpx.ConnectError:
-                return json.dumps({
-                    "status": "error",
-                    "message": "Ollama not running. Start it with: ollama serve",
-                })
-            except Exception as e:
-                last_err = f"{model_name}: {e}"
-                continue
-
-        # No model worked — try pulling the first one
-        return json.dumps({
-            "status": "error",
-            "message": f"No embedding model available ({last_err}). "
-                       f"Pull one with: ollama pull {_EMBED_MODELS[0]}",
-        })
-    except Exception as e:
-        return json.dumps({"error": f"Embed text error: {str(e)}"})
-
-
-def save_phase_output(
-    phase: str,
-    content: str,
-    workspace: Path | None = None,
-) -> str:
-    """Save phase output to ara_data/phases/{phase}.md for visibility."""
-    try:
-        ws = workspace or Path(".")
-        phases_dir = ws / "ara_data" / "phases"
-        phases_dir.mkdir(parents=True, exist_ok=True)
-
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        phase_slug = phase.lower().replace(" ", "_") or "output"
-        filename = f"{phase_slug}.md"
-        filepath = phases_dir / filename
-
-        # Add header with metadata
-        header = f"# Phase: {phase}\n"
-        header += f"Generated: {datetime.now(timezone.utc).isoformat()}\n\n---\n\n"
-
-        filepath.write_text(header + content, encoding="utf-8")
-        _log.info("Phase output saved: %s (%d bytes)", filepath, len(content))
-
-        return json.dumps({
-            "status": "saved",
-            "phase": phase,
-            "file_path": str(filepath),
-            "bytes_written": len(content),
-        })
-    except Exception as e:
-        _log.error("Failed to save phase output for %s: %s", phase, e)
-        return json.dumps({"error": f"Save phase output error: {str(e)}"})
-
-
-def score_branches(branches: list[dict[str, Any]], session_id: int, db: ARADB) -> str:
-    """Score and rank branch proposals (1-10 on relevance, novelty, feasibility)."""
-    try:
-        if not branches:
-            return json.dumps({
-                "error": "No branches provided",
-                "branches_scored": 0,
-            })
-
-        # Return instruction for agent to score branches
-        return json.dumps({
-            "task": "score_branches",
-            "session_id": session_id,
-            "branches_to_score": branches,
-            "instruction": (
-                "Score each branch proposal on a scale of 1-10 across three dimensions:\n"
-                "1. Relevance: How directly does this branch address the core hypothesis?\n"
-                "2. Novelty: How original or unexplored is this direction?\n"
-                "3. Feasibility: How likely are we to find good evidence in this branch?\n\n"
-                "Provide a composite score (average of the three) for each branch. "
-                "Return as JSON array of objects with branch text/type, individual scores, "
-                "composite score, and brief justification."
-            ),
-            "branches_count": len(branches),
-        })
-    except Exception as e:
-        return json.dumps({"error": f"Score branches error: {str(e)}"})
-
-
-def prune_hypotheses(session_id: int, keep_top_n: int, db: ARADB) -> str:
-    """Drop lowest-scored hypotheses beyond top N."""
-    try:
-        all_hypotheses = db.get_hypotheses(session_id)
-
-        if len(all_hypotheses) <= keep_top_n:
-            return json.dumps({
-                "session_id": session_id,
-                "action": "no_pruning_needed",
-                "total_hypotheses": len(all_hypotheses),
-                "keep_top_n": keep_top_n,
-                "message": f"Only {len(all_hypotheses)} hypotheses exist; no pruning needed.",
-            })
-
-        # Sort by overall_score descending
-        sorted_hyps = sorted(all_hypotheses, key=lambda h: h['overall_score'], reverse=True)
-        top_hyps = sorted_hyps[:keep_top_n]
-        bottom_hyps = sorted_hyps[keep_top_n:]
-
-        # Mark bottom hypotheses as pruned
-        for hyp in bottom_hyps:
-            db.update_hypothesis(hyp['hypothesis_id'], status='pruned')
-
-        return json.dumps({
-            "session_id": session_id,
-            "action": "pruned",
-            "total_hypotheses_before": len(all_hypotheses),
-            "total_hypotheses_after": keep_top_n,
-            "pruned_count": len(bottom_hyps),
-            "kept_hypotheses": [
-                {
-                    "hypothesis_id": h['hypothesis_id'],
-                    "text": h['hypothesis_text'],
-                    "score": h['overall_score'],
-                }
-                for h in top_hyps
-            ],
-        })
-    except Exception as e:
-        return json.dumps({"error": f"Prune hypotheses error: {str(e)}"})
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        result = client.models.embed_content(
+            model="text-embedding-004",
+            contents=text,
+        )
+        embedding = result.embeddings[0].values if result.embeddings else []
+        return json.dumps({"embedding": embedding[:768], "dimensions": len(embedding)})
+    except Exception as exc:
+        _log.warning("Embedding failed: %s", exc)
+        return json.dumps({"error": f"Embedding failed: {exc}"})
