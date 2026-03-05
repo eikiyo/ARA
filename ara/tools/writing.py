@@ -294,11 +294,54 @@ def _extract_prisma_from_methods(content: str, db: Any, session_id: int) -> None
 def get_citations(args: dict[str, Any], ctx: dict) -> str:
     db = ctx.get("db")
     session_id = ctx.get("session_id")
+    workspace = ctx.get("workspace", Path("."))
 
     if not db or not session_id:
         return json.dumps({"error": "Database or session not available"})
 
-    papers = db.get_cited_papers(session_id)
+    # Collect ALL in-text citations from written sections to filter references
+    sections_dir = workspace / "ara_data" / "output" / "sections"
+    in_text_citations: set[tuple[str, str]] = set()
+    if sections_dir.exists():
+        for f in sections_dir.iterdir():
+            if f.suffix == ".md" and f.is_file():
+                cites = _extract_citations_from_text(f.read_text(encoding="utf-8"))
+                in_text_citations.update(cites)
+
+    # Get all papers from DB, then filter to only those actually cited in-text
+    all_papers = db.get_cited_papers(session_id)
+    if not all_papers:
+        # Fallback: get all papers
+        rows = db._conn.execute(
+            "SELECT paper_id, title, authors, year, doi FROM papers WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+        all_papers = [dict(r) for r in rows]
+        for p in all_papers:
+            p["authors"] = json.loads(p.get("authors") or "[]")
+
+    # Filter papers to only those matching in-text citations
+    papers = []
+    if in_text_citations:
+        for p in all_papers:
+            authors_list = p.get("authors", [])
+            year = str(p.get("year", ""))
+            matched = False
+            for author_frag, cite_year in in_text_citations:
+                if abs(int(cite_year) - int(year)) <= 1 if year.isdigit() and cite_year.isdigit() else False:
+                    author_tokens = _normalize_author(author_frag)
+                    for a in authors_list:
+                        a_str = a if isinstance(a, str) else (a.get("name", "") or a.get("family", ""))
+                        paper_tokens = _normalize_author(a_str)
+                        if any(ct in paper_tokens for ct in author_tokens):
+                            matched = True
+                            break
+                    if matched:
+                        break
+            if matched:
+                papers.append(p)
+    if not papers:
+        papers = all_papers  # Fallback if no matches
 
     # Generate both BibTeX and APA formatted references
     bibtex_entries = []

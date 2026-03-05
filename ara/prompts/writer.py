@@ -109,8 +109,11 @@ Must include:
 4. If list_papers shows author "J. García-López" for year 2019, cite as (García-López, 2019)
 5. Build all required tables in markdown format
 6. Cross-reference findings across papers
-7. After ALL sections are written, call get_citations to generate the reference list
-8. You MUST write all 7 sections. Do NOT stop after 2-3 sections.
+7. Do NOT use markdown headers (### or ##) at the start of section content — the system adds headings automatically
+8. Report effect sizes where available (e.g., "Cohen's d = 0.45", "OR = 2.3, 95% CI: 1.2-3.4")
+9. After ALL sections are written, call `generate_prisma_diagram` to create the PRISMA flow diagram
+10. After PRISMA, call `get_citations` to generate the reference list
+11. You MUST write all 7 sections. Do NOT stop after 2-3 sections.
 
 ### Citation Density Requirements (MINIMUM per section)
 - **Introduction**: 6+ citations (establish the field)

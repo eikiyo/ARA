@@ -268,7 +268,10 @@ def _load_sections(sections_dir: Path) -> dict[str, str]:
         return sections
     for f in sections_dir.iterdir():
         if f.suffix == ".md" and f.is_file():
-            sections[f.stem] = f.read_text(encoding="utf-8")
+            content = f.read_text(encoding="utf-8")
+            # Strip leading markdown headers to avoid duplication (output.py adds its own)
+            content = re.sub(r'^#{1,4}\s+.*\n*', '', content, count=1).strip()
+            sections[f.stem] = content
     return sections
 
 
