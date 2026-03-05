@@ -125,7 +125,9 @@ class RLMEngine:
         steps = 0
         start_time = time.time()
         _recent_tool_sigs: list[str] = []  # Track recent tool call signatures for loop detection
+        _tool_call_counts: dict[str, int] = {}  # Track total calls per tool name
         _MAX_REPEAT = 3  # Break if same tool signature repeats this many times
+        _MAX_SINGLE_TOOL = 10  # Break if any single tool called more than this total
 
         while steps < self.config.max_steps_per_call:
             if self.cancel_flag:
@@ -191,19 +193,41 @@ class RLMEngine:
             # Append results
             self.model.append_tool_results(conversation, results)
 
-            # Loop detection: break if model keeps calling the same tools
+            # Loop detection
             turn_sig = "|".join(sorted(tc.name for tc in capped_calls))
             _recent_tool_sigs.append(turn_sig)
-            if len(_recent_tool_sigs) > _MAX_REPEAT:
-                _recent_tool_sigs = _recent_tool_sigs[-_MAX_REPEAT:]
-            if len(_recent_tool_sigs) == _MAX_REPEAT and len(set(_recent_tool_sigs)) == 1:
-                _log.warning("Loop detected: same tool pattern %r repeated %d times, breaking", turn_sig, _MAX_REPEAT)
+            for tc in capped_calls:
+                _tool_call_counts[tc.name] = _tool_call_counts.get(tc.name, 0) + 1
+
+            # Check 1: same tool pattern repeated N turns in a row
+            loop_detected = False
+            if len(_recent_tool_sigs) >= _MAX_REPEAT:
+                recent = _recent_tool_sigs[-_MAX_REPEAT:]
+                if len(set(recent)) == 1:
+                    _log.warning("Loop detected: pattern %r repeated %d turns", turn_sig, _MAX_REPEAT)
+                    loop_detected = True
+
+            # Check 2: alternating pattern (A→B→A→B)
+            if not loop_detected and len(_recent_tool_sigs) >= 4:
+                last4 = _recent_tool_sigs[-4:]
+                if last4[0] == last4[2] and last4[1] == last4[3] and last4[0] != last4[1]:
+                    _log.warning("Alternating loop detected: %r ↔ %r", last4[0], last4[1])
+                    loop_detected = True
+
+            # Check 3: any single tool called too many times total
+            if not loop_detected:
+                for name, count in _tool_call_counts.items():
+                    if count >= _MAX_SINGLE_TOOL:
+                        _log.warning("Tool %r called %d times (max %d), breaking", name, count, _MAX_SINGLE_TOOL)
+                        loop_detected = True
+                        break
+
+            if loop_detected:
                 self.model.append_user_message(
                     conversation,
-                    "STOP. You are repeating the same tool calls in a loop. "
-                    "Summarize your findings and respond with text. Do NOT call any more tools.",
+                    "STOP. You are repeating tool calls in a loop. "
+                    "Summarize your findings so far and respond with text. Do NOT call any more tools.",
                 )
-                # Give model one more chance to produce text
                 try:
                     final = self.model.generate(conversation, on_chunk=_on_chunk)
                     if final.text:
