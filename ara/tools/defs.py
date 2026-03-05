@@ -124,6 +124,20 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
 
+    # ── Batch search ─────────────────────────────────────────────
+    {
+        "name": "search_all",
+        "description": "Search ALL 9 academic APIs in parallel with a single call. Returns combined results with per-source counts. Use this instead of calling individual search tools.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "description": "Max results per API (default 20)"},
+            },
+            "required": ["query"],
+        },
+    },
+
     # ── Paper tools ─────────────────────────────────────────────
     {
         "name": "fetch_fulltext",

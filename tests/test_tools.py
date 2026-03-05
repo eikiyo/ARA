@@ -32,11 +32,18 @@ def test_tool_names_unique():
 
 def test_ara_tools_get_definitions():
     tools = ARATools()
-    defs = tools.get_definitions(include_subtask=True)
+    # At depth 0 (manager), only delegation + pipeline tools
+    defs = tools.get_definitions(include_subtask=True, depth=0)
     names = [d["name"] for d in defs]
     assert "subtask" in names
     assert "execute" in names
-    assert "search_semantic_scholar" in names
+    assert "search_semantic_scholar" not in names  # hidden at depth 0
+
+    # At depth 1+ (worker), all tools exposed
+    defs_worker = tools.get_definitions(include_subtask=True, depth=1)
+    names_worker = [d["name"] for d in defs_worker]
+    assert "search_semantic_scholar" in names_worker
+    assert "search_all" in names_worker
 
     defs_no_sub = tools.get_definitions(include_subtask=False)
     names_no_sub = [d["name"] for d in defs_no_sub]
@@ -52,4 +59,4 @@ def test_dispatch_unknown_tool():
 
 def test_search_tools_count():
     search_tools = [td for td in TOOL_DEFINITIONS if td["name"].startswith("search_")]
-    assert len(search_tools) == 10  # 9 APIs + search_similar
+    assert len(search_tools) == 11  # 9 APIs + search_similar + search_all

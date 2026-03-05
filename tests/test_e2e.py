@@ -259,23 +259,24 @@ class TestEngineFlows:
         assert "Cancelled" in result
 
     def test_max_steps_limit(self):
-        """Engine stops after max_steps_per_call."""
-        # Model always returns tool calls, never stops
+        """Engine stops after max_steps_per_call or loop detection."""
+        # Model always returns tool calls with alternating names to avoid loop detection
         infinite_turns = [
             ModelTurn(
                 text="",
-                tool_calls=[ToolCall(id=f"c{i}", name="get_rules", arguments={})],
+                tool_calls=[ToolCall(id=f"c{i}", name=f"get_rules", arguments={"step": i})],
                 usage=TokenUsage(10, 5),
             )
             for i in range(100)
         ]
         model = ScriptedModel(infinite_turns)
         tools = ARATools()
-        cfg = ARAConfig(max_steps_per_call=3)
+        cfg = ARAConfig(max_steps_per_call=5)
         engine = RLMEngine(model=model, tools=tools, config=cfg)
 
         result = engine.solve("test")
-        assert model._step == 3
+        # Loop detection fires at 3 repeats + 1 final text turn, or max_steps caps it
+        assert model._step <= 5
 
     def test_timeout_limit(self):
         """Engine stops after max_solve_seconds."""

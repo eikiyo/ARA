@@ -105,6 +105,7 @@ class RLMEngine:
         # Create conversation
         tool_defs = self.tools.get_definitions(
             include_subtask=depth < self.config.max_depth,
+            depth=depth,
         )
         conversation = self.model.create_conversation(
             system_prompt=system_prompt,
@@ -123,6 +124,8 @@ class RLMEngine:
         last_text = ""
         steps = 0
         start_time = time.time()
+        _recent_tool_sigs: list[str] = []  # Track recent tool call signatures for loop detection
+        _MAX_REPEAT = 3  # Break if same tool signature repeats this many times
 
         while steps < self.config.max_steps_per_call:
             if self.cancel_flag:
@@ -187,6 +190,30 @@ class RLMEngine:
 
             # Append results
             self.model.append_tool_results(conversation, results)
+
+            # Loop detection: break if model keeps calling the same tools
+            turn_sig = "|".join(sorted(tc.name for tc in capped_calls))
+            _recent_tool_sigs.append(turn_sig)
+            if len(_recent_tool_sigs) > _MAX_REPEAT:
+                _recent_tool_sigs = _recent_tool_sigs[-_MAX_REPEAT:]
+            if len(_recent_tool_sigs) == _MAX_REPEAT and len(set(_recent_tool_sigs)) == 1:
+                _log.warning("Loop detected: same tool pattern %r repeated %d times, breaking", turn_sig, _MAX_REPEAT)
+                self.model.append_user_message(
+                    conversation,
+                    "STOP. You are repeating the same tool calls in a loop. "
+                    "Summarize your findings and respond with text. Do NOT call any more tools.",
+                )
+                # Give model one more chance to produce text
+                try:
+                    final = self.model.generate(conversation, on_chunk=_on_chunk)
+                    if final.text:
+                        last_text = final.text
+                    if final.usage:
+                        self._total_tokens.input_tokens += final.usage.input_tokens
+                        self._total_tokens.output_tokens += final.usage.output_tokens
+                except ModelError:
+                    pass
+                break
 
             # Context condensation check
             estimated_tokens = self.model.estimate_tokens(conversation)

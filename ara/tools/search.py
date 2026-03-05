@@ -516,3 +516,59 @@ def search_base(args: dict[str, Any], ctx: dict) -> str:
 
     total = resp.get("response", {}).get("numFound", len(papers))
     return json.dumps({"papers": papers, "total": total})
+
+
+# ── Batch search (all APIs) ──────────────────────────────────────────
+
+_ALL_SEARCH_FNS = [
+    ("semantic_scholar", search_semantic_scholar),
+    ("arxiv", search_arxiv),
+    ("crossref", search_crossref),
+    ("openalex", search_openalex),
+    ("pubmed", search_pubmed),
+    ("core", search_core),
+    ("dblp", search_dblp),
+    ("europe_pmc", search_europe_pmc),
+    ("base", search_base),
+]
+
+
+def search_all(args: dict[str, Any], ctx: dict) -> str:
+    """Search all 9 academic APIs in parallel with one call."""
+    query = args.get("query", "")
+    limit = args.get("limit", 20)
+
+    results: dict[str, Any] = {}
+    errors: list[str] = []
+
+    def _run(name: str, fn: Any) -> None:
+        try:
+            raw = fn({"query": query, "limit": limit}, ctx)
+            data = json.loads(raw)
+            results[name] = data.get("papers", [])
+            if data.get("error"):
+                errors.append(f"{name}: {data['error']}")
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+
+    threads = []
+    for name, fn in _ALL_SEARCH_FNS:
+        t = threading.Thread(target=_run, args=(name, fn), daemon=True)
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join(timeout=60)
+
+    all_papers = []
+    per_source: dict[str, int] = {}
+    for name, papers in results.items():
+        per_source[name] = len(papers)
+        all_papers.extend(papers)
+
+    return json.dumps({
+        "papers": all_papers,
+        "total": len(all_papers),
+        "per_source": per_source,
+        "errors": errors,
+    })

@@ -27,6 +27,7 @@ TOOL_DISPATCH: dict[str, Any] = {
     "search_dblp": search.search_dblp,
     "search_europe_pmc": search.search_europe_pmc,
     "search_base": search.search_base,
+    "search_all": search.search_all,
     # Paper tools
     "fetch_fulltext": papers.fetch_fulltext,
     "read_paper": papers.read_paper,
@@ -63,8 +64,15 @@ class ARATools:
         self.session_id = session_id
         self.approval_gates = approval_gates
 
-    def get_definitions(self, include_subtask: bool = True) -> list[dict[str, Any]]:
-        defs = list(TOOL_DEFINITIONS)
+    def get_definitions(self, include_subtask: bool = True, depth: int = 0) -> list[dict[str, Any]]:
+        # At depth 0 (manager), only expose delegation + pipeline tools
+        # This prevents the model from calling search tools directly instead of delegating
+        _MANAGER_TOOLS = {"get_rules", "request_approval", "track_cost"}
+        if depth == 0 and include_subtask:
+            defs = [td for td in TOOL_DEFINITIONS if td["name"] in _MANAGER_TOOLS]
+        else:
+            defs = list(TOOL_DEFINITIONS)
+
         if include_subtask:
             defs.append({
                 "name": "subtask",
