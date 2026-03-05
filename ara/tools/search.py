@@ -533,12 +533,30 @@ _ALL_SEARCH_FNS = [
 ]
 
 
+_search_all_call_count: int = 0
+_SEARCH_ALL_MAX_CALLS: int = 2
+
+
+def reset_search_all_counter() -> None:
+    global _search_all_call_count
+    _search_all_call_count = 0
+
+
 def search_all(args: dict[str, Any], ctx: dict) -> str:
     """Search all 9 academic APIs in parallel with one call.
 
     Returns a summary to the model (counts + top 10 papers) to save tokens.
     Full results are auto-stored in the DB by the tool dispatch layer.
+    Hard-limited to 2 calls per session.
     """
+    global _search_all_call_count
+    _search_all_call_count += 1
+    if _search_all_call_count > _SEARCH_ALL_MAX_CALLS:
+        return json.dumps({
+            "error": f"search_all already called {_SEARCH_ALL_MAX_CALLS} times. Papers are in the database. Move to the next phase.",
+            "total": 0,
+        })
+
     query = args.get("query", "")
     limit = args.get("limit", 20)
 
