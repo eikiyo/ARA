@@ -1,23 +1,77 @@
 # ARA - Current Phase
 
-## Phase: Design Complete → Ready for Phase 1 Implementation
+## Phase: Design v2 Complete → Ready for Phase 1 Implementation
 
-## Phase 1: Infrastructure + Core Pipeline
+## Architecture Pivot (v1 → v2)
 
-### Features (max 3):
+v1 was a web app (Next.js + n8n + Supabase + Cloudflare). v2 is a CLI tool built on OpenPlanter's recursive engine. v1 docs archived at `Support Docs/Product Design/archive-v1/`.
 
-1. **Docker Stack on Railway**
-   - Definition of done: n8n + Postgres + Qdrant + Redis + GROBID all running on Railway, communicating via private network. Schema migrated. Manager workflow polling task_queue every 5s.
+**Why:** Cheaper (no hosting), simpler (3 fewer services), better token efficiency (recursive model vs fixed 7-agent pipeline), and the primary user (Eikiyo) works from the terminal anyway.
 
-2. **Scout + Analyst + Verifier Pipeline**
-   - Definition of done: User submits topic via n8n webhook → Scout searches Semantic Scholar → papers stored in Postgres + Qdrant → Analyst triages abstracts → Analyst deep-reads selected papers → Verifier checks claims → results visible in n8n execution logs. Full text via GROBID where available.
+---
 
-3. **Next.js Approval UI (basic)**
-   - Definition of done: PIN gate, session config form (topic, paper type, sources, budget), live phase stepper, approval gates with Approve/Reject buttons, WebSocket connection showing progress. Rule Gate panel for adding rules.
+## Phase 1: Core Pipeline (end-to-end Research Article)
 
-## Not in Phase 1:
-- Hypothesis Generator, Brancher, Critic, Writer (Phase 2-3)
-- Session history page (Phase 3)
-- Export/ZIP generation (Phase 3)
-- Fork sessions (Phase 3)
-- Presets (Phase 2)
+### Engine Setup:
+1. **Copy OpenPlanter engine** — Copy engine.py, model.py, builder.py, runtime.py, tui.py into fresh `ara/` package. Strip investigation-specific code. Keep recursive loop, model abstraction, session persistence, TUI framework.
+   - DoD: `ara` command launches, engine loop runs, can call a model and execute tools.
+
+2. **SQLite + sqlite-vec database** — `db.py` with schema from design doc. Session, papers, claims, hypotheses, branches, gates, rules, events, cost_log tables.
+   - DoD: DB created on first run at `.ara/session.db`. All CRUD operations tested. Vector search works on paper embeddings.
+
+3. **Config system** — Global `~/.ara/config.yaml` + per-project `.ara/config.yaml` + env vars. Priority: CLI flags > env > per-project > global.
+   - DoD: `ara` reads config from all sources correctly. Provider/model/keys resolved.
+
+### Tools (all ~20):
+4. **Search tools (9)** — Semantic Scholar, arXiv, CrossRef, OpenAlex, PubMed, CORE, DBLP, Europe PMC, BASE.
+   - DoD: Each tool returns standardized paper objects. Rate limiting handled. Results stored in DB.
+
+5. **Paper tools** — fetch_fulltext (Unpaywall), read_paper, search_similar (sqlite-vec).
+   - DoD: Full text cached to `.ara/papers/`. Vector similarity returns relevant papers.
+
+6. **Verification tools** — check_retraction, get_citation_count, validate_doi.
+   - DoD: Each tool calls the correct API and returns structured results.
+
+7. **Research tools** — extract_claims, score_hypothesis, branch_search.
+   - DoD: Claims have full schema (text, type, confidence, quotes, contradictions). Hypotheses scored on 6+ dimensions.
+
+8. **Writing tools** — write_section, get_citations.
+   - DoD: Sections are properly formatted markdown with inline citations. get_citations returns valid BibTeX.
+
+9. **Pipeline tools** — request_approval, get_rules, track_cost, embed_text.
+   - DoD: request_approval blocks engine, shows TUI gate, writes file, resumes on user input. Budget tracked per call.
+
+### Prompts:
+10. **7 agent phase prompts** — Base prompt + per-phase prompt + rules injection.
+    - DoD: Each prompt tested with at least one model. Agents stay on-task within their phase.
+
+11. **Manager agent prompt** — Orchestrates full pipeline. Calls phases as subtasks. Handles critic rejection loop.
+    - DoD: Manager correctly sequences all 8 phases (including triage + deep read). Critic loop works up to 3 iterations.
+
+### UX:
+12. **TUI** — Fork OpenPlanter's tui.py. Restyle for ARA. Add approval gate widgets.
+    - DoD: Progress narration, approval gate cards, error display all work. Rich tables for paper/claim display.
+
+13. **CLI entry point** — `ara` command. Detects existing session or starts new. Conversational setup.
+    - DoD: `pip install -e .` then `ara` works. New session: asks questions. Existing session: resumes.
+
+### Validation:
+14. **End-to-end test** — Run full Research Article pipeline on a real topic.
+    - DoD: Complete paper.md output with proper citations. All 8 approval gates shown. Session resumable after interrupt.
+
+---
+
+## Phase 2: Output & Polish
+1. HTML output (paper.html + index.html self-contained preview)
+2. BibTeX generation from session DB
+3. Session history / replay from logs
+4. Additional paper types (Literature Review, Systematic Review, etc.)
+5. Offline embedding fallback (Ollama nomic-embed-text)
+6. `ara config` interactive setup command
+
+## Phase 3: Scale & Extras
+1. Multiple concurrent subtasks within phases
+2. Advanced TUI (scrollable tables, search within results)
+3. LaTeX + PDF export (via pandoc)
+4. Performance optimization (batch embeddings, response caching)
+5. If it works: web version (FastAPI wrapper + Next.js frontend + Supabase)

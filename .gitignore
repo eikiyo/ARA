@@ -11,3 +11,14 @@ e2e-results/
 .env
 .env.local
 .env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ARA runtime
+.ara/
