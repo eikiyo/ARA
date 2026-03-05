@@ -75,6 +75,43 @@ class BaseModel(Protocol):
 # Shared HTTP helpers
 # ---------------------------------------------------------------------------
 
+def _split_concatenated_json(s: str) -> list[dict[str, Any]]:
+    """Split concatenated JSON objects like '{"a":1}{"b":2}' into a list.
+
+    Gemini Flash sometimes jams multiple tool call arguments into one string
+    instead of separate tool_calls entries. This splits them back out.
+    """
+    s = s.strip()
+    if not s:
+        return [{}]
+    # Fast path: single valid JSON
+    try:
+        obj = json.loads(s)
+        return [obj if isinstance(obj, dict) else {}]
+    except json.JSONDecodeError:
+        pass
+    # Split on }{ boundary (handles concatenated JSON objects)
+    results: list[dict[str, Any]] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(s):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                chunk = s[start:i + 1]
+                try:
+                    obj = json.loads(chunk)
+                    if isinstance(obj, dict):
+                        results.append(obj)
+                except json.JSONDecodeError:
+                    pass
+    return results if results else [{}]
+
+
 def _extract_content(content: object) -> str:
     if isinstance(content, str):
         return content
@@ -380,14 +417,6 @@ class OpenAICompatibleModel:
         if effort and not is_local:
             payload["reasoning_effort"] = effort
         url = self.base_url.rstrip("/") + "/chat/completions"
-        # Dump payload for debugging Gemini 400 errors
-        if "generativelanguage" in self.base_url:
-            import pathlib as _pl
-            _dump_dir = _pl.Path.home() / ".ara" / "debug"
-            _dump_dir.mkdir(parents=True, exist_ok=True)
-            _seq = len(list(_dump_dir.glob("payload_*.json")))
-            (_dump_dir / f"payload_{_seq:03d}.json").write_text(
-                json.dumps(payload, indent=2, default=str), encoding="utf-8")
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -455,24 +484,40 @@ class OpenAICompatibleModel:
             for tc in raw_tc:
                 func = tc.get("function", {})
                 args_str = func.get("arguments", "{}")
-                try:
-                    args = json.loads(args_str)
-                except json.JSONDecodeError:
-                    args = {}
                 tc_name = func.get("name", "") or ""
                 if not tc_name:
-                    continue  # skip tool calls with empty names
+                    continue
+                # Gemini sometimes concatenates multiple JSON objects into one
+                # arguments string (e.g. '{"a":1}{"b":2}{"c":3}'). Split them.
+                parsed_args_list = _split_concatenated_json(args_str)
+                if not parsed_args_list:
+                    parsed_args_list = [{}]
+                # First parsed object becomes the original tool call
                 tool_calls.append(ToolCall(
                     id=tc.get("id", ""), name=tc_name,
-                    arguments=args if isinstance(args, dict) else {},
+                    arguments=parsed_args_list[0],
                 ))
+                # Extra concatenated objects become additional tool calls
+                for extra_idx, extra_args in enumerate(parsed_args_list[1:], 1):
+                    tool_calls.append(ToolCall(
+                        id=f"{tc.get('id', '')}_{extra_idx}", name=tc_name,
+                        arguments=extra_args,
+                    ))
         text_content = _extract_content(message.get("content", "")) or None
         if text_content is not None and not text_content.strip():
             text_content = None
+        # Rebuild raw_response with cleaned tool_calls so conversation stays valid
+        clean_message: dict[str, Any] = {"role": "assistant", "content": text_content}
+        if tool_calls:
+            clean_message["tool_calls"] = [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
+                for tc in tool_calls
+            ]
         usage_data = parsed.get("usage", {})
         return ModelTurn(
             tool_calls=tool_calls, text=text_content,
-            stop_reason=finish_reason, raw_response=message,
+            stop_reason=finish_reason, raw_response=clean_message,
             input_tokens=usage_data.get("prompt_tokens", 0) if isinstance(usage_data, dict) else 0,
             output_tokens=usage_data.get("completion_tokens", 0) if isinstance(usage_data, dict) else 0,
         )
