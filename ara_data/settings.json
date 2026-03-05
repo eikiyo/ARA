@@ -1,4 +1,0 @@
-{
-  "default_provider": "ollama",
-  "default_model_ollama": "qwen3-coder:480b-cloud"
-}

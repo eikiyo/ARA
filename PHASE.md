@@ -1,77 +1,47 @@
 # ARA - Current Phase
 
-## Phase: Design v2 Complete → Ready for Phase 1 Implementation
+## Phase 1: Core Pipeline — COMPLETE
 
-## Architecture Pivot (v1 → v2)
+All 14 tasks from the original plan are implemented and tested (67 tests passing).
 
-v1 was a web app (Next.js + n8n + Supabase + Cloudflare). v2 is a CLI tool built on OpenPlanter's recursive engine. v1 docs archived at `Support Docs/Product Design/archive-v1/`.
+### What's built:
+- Recursive LLM engine with subtask delegation, model routing, depth control
+- 9 academic search APIs (Semantic Scholar, arXiv, CrossRef, OpenAlex, PubMed, CORE, DBLP, Europe PMC, BASE)
+- Auto-storage of search results into SQLite with DOI/title dedup
+- Paper tools (fetch fulltext, read, similarity search)
+- Verification tools (retraction check, citation count, DOI validation)
+- Research tools (claim extraction, hypothesis scoring, branch search)
+- Writing tools (section writer, BibTeX citations, paper compiler)
+- Pipeline tools (approval gates, rules, cost tracking, embeddings via Ollama)
+- 8-phase manager orchestration (Scout → Triage → Deep Read → Verifier → Hypothesis → Brancher → Critic → Writer)
+- Rich TUI with phase progress bar, approval gate UI, working indicator
+- CLI with provider auto-detection, session resume, configurable gates
+- Multi-provider support (OpenAI, Anthropic, OpenRouter, Ollama)
+- Per-provider model persistence across sessions
 
-**Why:** Cheaper (no hosting), simpler (3 fewer services), better token efficiency (recursive model vs fixed 7-agent pipeline), and the primary user (Eikiyo) works from the terminal anyway.
-
----
-
-## Phase 1: Core Pipeline (end-to-end Research Article)
-
-### Engine Setup:
-1. **Copy OpenPlanter engine** — Copy engine.py, model.py, builder.py, runtime.py, tui.py into fresh `ara/` package. Strip investigation-specific code. Keep recursive loop, model abstraction, session persistence, TUI framework.
-   - DoD: `ara` command launches, engine loop runs, can call a model and execute tools.
-
-2. **SQLite + sqlite-vec database** — `db.py` with schema from design doc. Session, papers, claims, hypotheses, branches, gates, rules, events, cost_log tables.
-   - DoD: DB created on first run at `.ara/session.db`. All CRUD operations tested. Vector search works on paper embeddings.
-
-3. **Config system** — Global `~/.ara/config.yaml` + per-project `.ara/config.yaml` + env vars. Priority: CLI flags > env > per-project > global.
-   - DoD: `ara` reads config from all sources correctly. Provider/model/keys resolved.
-
-### Tools (all ~20):
-4. **Search tools (9)** — Semantic Scholar, arXiv, CrossRef, OpenAlex, PubMed, CORE, DBLP, Europe PMC, BASE.
-   - DoD: Each tool returns standardized paper objects. Rate limiting handled. Results stored in DB.
-
-5. **Paper tools** — fetch_fulltext (Unpaywall), read_paper, search_similar (sqlite-vec).
-   - DoD: Full text cached to `.ara/papers/`. Vector similarity returns relevant papers.
-
-6. **Verification tools** — check_retraction, get_citation_count, validate_doi.
-   - DoD: Each tool calls the correct API and returns structured results.
-
-7. **Research tools** — extract_claims, score_hypothesis, branch_search.
-   - DoD: Claims have full schema (text, type, confidence, quotes, contradictions). Hypotheses scored on 6+ dimensions.
-
-8. **Writing tools** — write_section, get_citations.
-   - DoD: Sections are properly formatted markdown with inline citations. get_citations returns valid BibTeX.
-
-9. **Pipeline tools** — request_approval, get_rules, track_cost, embed_text.
-   - DoD: request_approval blocks engine, shows TUI gate, writes file, resumes on user input. Budget tracked per call.
-
-### Prompts:
-10. **7 agent phase prompts** — Base prompt + per-phase prompt + rules injection.
-    - DoD: Each prompt tested with at least one model. Agents stay on-task within their phase.
-
-11. **Manager agent prompt** — Orchestrates full pipeline. Calls phases as subtasks. Handles critic rejection loop.
-    - DoD: Manager correctly sequences all 8 phases (including triage + deep read). Critic loop works up to 3 iterations.
-
-### UX:
-12. **TUI** — Fork OpenPlanter's tui.py. Restyle for ARA. Add approval gate widgets.
-    - DoD: Progress narration, approval gate cards, error display all work. Rich tables for paper/claim display.
-
-13. **CLI entry point** — `ara` command. Detects existing session or starts new. Conversational setup.
-    - DoD: `pip install -e .` then `ara` works. New session: asks questions. Existing session: resumes.
-
-### Validation:
-14. **End-to-end test** — Run full Research Article pipeline on a real topic.
-    - DoD: Complete paper.md output with proper citations. All 8 approval gates shown. Session resumable after interrupt.
+### API Keys (hardcoded for dev):
+- Semantic Scholar: 1 req/sec rate limiter (thread-safe)
+- CORE: Authenticated access
 
 ---
 
-## Phase 2: Output & Polish
-1. HTML output (paper.html + index.html self-contained preview)
-2. BibTeX generation from session DB
-3. Session history / replay from logs
-4. Additional paper types (Literature Review, Systematic Review, etc.)
-5. Offline embedding fallback (Ollama nomic-embed-text)
-6. `ara config` interactive setup command
+## Phase 2: Output & Polish — IN PROGRESS
+
+| Task | Status |
+|------|--------|
+| HTML output (paper.md + index.html preview) | Done |
+| BibTeX generation from session DB | Done |
+| Ollama embeddings (nomic-embed-text) | Done |
+| Session history / replay from logs | Not started |
+| Additional paper types (Lit Review, Systematic Review) | Not started |
+| `ara config` interactive setup command | Not started |
 
 ## Phase 3: Scale & Extras
-1. Multiple concurrent subtasks within phases
-2. Advanced TUI (scrollable tables, search within results)
-3. LaTeX + PDF export (via pandoc)
-4. Performance optimization (batch embeddings, response caching)
-5. If it works: web version (FastAPI wrapper + Next.js frontend + Supabase)
+
+| Task | Status |
+|------|--------|
+| Multiple concurrent subtasks within phases | Not started |
+| Advanced TUI (scrollable tables, search) | Not started |
+| LaTeX + PDF export (via pandoc) | Not started |
+| Performance optimization (batch embeddings, caching) | Not started |
+| Web version (FastAPI + Next.js + Supabase) | Not started |

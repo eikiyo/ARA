@@ -1,17 +1,3 @@
-node_modules/
-.next/
-.cache/
-.turbo/
-.wrangler/
-.vercel/
-e2e-results/
-*.log
-*.pack
-.DS_Store
-.env
-.env.local
-.env.production
-
 # Python
 __pycache__/
 *.py[cod]
@@ -19,6 +5,23 @@ __pycache__/
 dist/
 build/
 .eggs/
+.pytest_cache/
 
-# ARA runtime
+# ARA runtime data (session DBs, logs, outputs)
+ara_data/
 .ara/
+
+# Environment / secrets
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
