@@ -227,8 +227,9 @@ class RLMEngine:
                     seen_sigs.add(sig)
                     unique_calls.append(tc)
 
-            # Cap after dedup
+            # Cap after dedup — strictly 1 tool per turn (serial execution)
             capped_calls = unique_calls[:self.config.max_tool_calls_per_turn]
+            dropped = len(unique_calls) - len(capped_calls)
 
             # Append assistant turn (with only the capped calls)
             capped_turn = ModelTurn(text=turn.text, tool_calls=capped_calls, usage=turn.usage)
@@ -239,6 +240,14 @@ class RLMEngine:
                 capped_calls, context, depth, on_event, _result_cache,
             )
             self.model.append_tool_results(conversation, results)
+
+            # Tell model about dropped calls so it doesn't re-send them blindly
+            if dropped > 0:
+                self.model.append_user_message(
+                    conversation,
+                    f"[System] {dropped} extra tool call(s) were dropped. Execute ONE tool at a time. "
+                    "Wait for each result before calling the next tool.",
+                )
 
             # Loop detection across turns
             turn_sig = "|".join(sorted(tc.name for tc in capped_calls))

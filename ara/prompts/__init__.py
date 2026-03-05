@@ -34,8 +34,10 @@ _RECURSIVE_SECTION = """
 ## Delegation Tools
 
 You have two delegation tools:
-- **subtask(objective, acceptance_criteria, prompt, model)**: Delegate a sub-objective to a child agent with its own context window. Use for complex, multi-step work (e.g., each research phase). The child runs autonomously and returns results.
+- **subtask(objective, acceptance_criteria, prompt)**: Delegate a sub-objective to a child agent with its own context window. Use for complex, multi-step work (e.g., each research phase). The child runs autonomously and returns results.
 - **execute(objective)**: Run a quick sub-task without depth tracking. Use for simple lookups or summaries.
+
+**SERIAL EXECUTION**: Call exactly ONE tool per response. Wait for the result before calling the next. Never batch multiple tool calls.
 
 When delegating, be specific about:
 1. What to accomplish (objective)

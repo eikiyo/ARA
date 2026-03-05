@@ -241,7 +241,7 @@ class TestEngineFlows:
             ModelTurn(text="Should not reach.", usage=TokenUsage(80, 40)),
         ])
         tools = ARATools()
-        cfg = ARAConfig()
+        cfg = ARAConfig(max_tool_calls_per_turn=3)  # Allow 3 to test mid-batch cancel
         engine = RLMEngine(model=model, tools=tools, config=cfg)
 
         # Cancel after first tool

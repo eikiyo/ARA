@@ -15,7 +15,7 @@ Execute phases in this exact order. After each phase, the subtask returns result
 **Phase 1 — Scout (Paper Discovery)**
 ```
 subtask(
-    objective="Scout phase: Search all 9 academic APIs for papers on: {topic}. Call ALL search tools in parallel in a single turn. Collect and deduplicate results.",
+    objective="Scout phase: Search all 9 academic APIs for papers on: {topic}. Use search_all() which queries all APIs in one call. Call ONE tool at a time.",
     acceptance_criteria="At least 30 papers found from at least 3 different sources.",
     prompt="scout"
 )
