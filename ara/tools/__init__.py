@@ -20,7 +20,7 @@ from . import search, papers, verification, research, writing, pipeline, quality
 # "search_*" is a wildcard matching all search_ tools
 PHASE_TOOLS: dict[str, list[str]] = {
     "scout": ["search_*", "embed_text", "request_approval", "track_cost"],
-    "analyst_triage": ["read_paper", "search_similar", "embed_text", "request_approval", "track_cost"],
+    "analyst_triage": ["list_papers", "read_paper", "search_similar", "embed_text", "request_approval", "track_cost"],
     "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "search_similar", "request_approval", "track_cost"],
     "verifier": ["check_retraction", "get_citation_count", "validate_doi", "read_paper", "request_approval", "track_cost"],
     "hypothesis": ["read_paper", "search_similar", "score_hypothesis", "request_approval", "track_cost"],
@@ -54,6 +54,7 @@ TOOL_DISPATCH: dict[str, Any] = {
     # Paper tools
     "fetch_fulltext": papers.fetch_fulltext,
     "read_paper": papers.read_paper,
+    "list_papers": papers.list_papers,
     "search_similar": papers.search_similar,
     # Verification tools
     "check_retraction": verification.check_retraction,
@@ -93,7 +94,7 @@ class ARATools:
 
     def get_definitions(self, include_subtask: bool = True, depth: int = 0, phase: str = "") -> list[dict[str, Any]]:
         # At depth 0 (manager), only expose delegation + pipeline tools
-        _MANAGER_TOOLS = {"get_rules", "request_approval", "track_cost"}
+        _MANAGER_TOOLS = {"get_rules", "track_cost"}
         if depth == 0 and include_subtask:
             defs = [td for td in TOOL_DEFINITIONS if td["name"] in _MANAGER_TOOLS]
         elif phase and phase in PHASE_TOOLS:

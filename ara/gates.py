@@ -61,6 +61,7 @@ def run_approval_gate(
             panel_content,
             title=f"[bold]{phase.upper()} — Approval Gate[/bold]",
             border_style="cyan",
+            width=min(console.width, 100),
         ))
     except ImportError:
         print(f"\n{'='*60}")

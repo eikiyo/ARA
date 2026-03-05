@@ -140,6 +140,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
     # ── Paper tools ─────────────────────────────────────────────
     {
+        "name": "list_papers",
+        "description": "List ALL papers in the session with metadata (title, abstract snippet, authors, year, citations, source). Use this for triage/ranking instead of reading papers one-by-one.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max papers to return (default 200)"},
+                "offset": {"type": "integer", "description": "Skip first N papers (for pagination)"},
+            },
+        },
+    },
+    {
         "name": "fetch_fulltext",
         "description": "Fetch full text of a paper via Unpaywall (by DOI). Caches PDF locally.",
         "parameters": {

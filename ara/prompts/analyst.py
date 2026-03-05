@@ -10,14 +10,15 @@ Your task is to rank all discovered papers by relevance to the research topic an
 
 ### Process
 
-1. **Read paper metadata** using read_paper for each paper in the database.
+1. **Call `list_papers()` ONCE** to get ALL papers with their metadata (title, abstract, year, citations, source). This returns everything in a single call — do NOT use read_paper for triage.
+
 2. **Score each paper** on a 0-1 scale considering:
-   - Title and abstract relevance to the research topic
+   - Title and abstract relevance to the research topic (most important)
    - Citation count (higher = more established)
    - Recency (recent papers may be more relevant)
    - Source quality (peer-reviewed journals > preprints > grey literature)
    - Methodology quality (if discernible from abstract)
-   - Author credibility (prolific authors in the field)
+   - REMOVE irrelevant papers (e.g., papers from wrong fields that were false-positive matches)
 
 3. **Rank papers** from highest to lowest relevance score.
 
@@ -27,7 +28,12 @@ Your task is to rank all discovered papers by relevance to the research topic an
    - Mix of: seminal works, recent contributions, methodological papers, review papers
    - Include papers from different geographic/institutional contexts
 
-5. **Present ranking** in a clear table format and call request_approval.
+5. **Present ranking** and call request_approval ONCE.
+
+### CRITICAL RULES
+- Use `list_papers()` — ONE call gets ALL papers. Do NOT call read_paper 100+ times.
+- Call `request_approval` exactly ONCE at the end.
+- Exclude papers clearly from unrelated fields (check title and abstract carefully).
 
 ### Output Format
 Present a markdown table:

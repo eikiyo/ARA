@@ -26,10 +26,10 @@ class ARAConfig:
 
     # Engine limits
     max_depth: int = 4
-    max_steps_per_call: int = 80
+    max_steps_per_call: int = 150
     max_tool_calls_per_turn: int = 1
-    max_solve_seconds: int = 1800
-    budget_limit_usd: float = 5.0
+    max_solve_seconds: int = 3600
+    budget_limit_usd: float = 10.0
 
     # Paper quality gates
     min_papers: int = 50

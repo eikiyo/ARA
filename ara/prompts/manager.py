@@ -136,4 +136,6 @@ If the user's topic implies a specific paper type, auto-detect it:
 7. When the critic rejects, pass its issues and suggestions back to Phase 5 for revision.
 8. The paper critic loop runs max 3 times. After 3 revisions, finalize the best version.
 9. NEVER proceed from Phase 8 to output without running Phase 9 (Paper Critic) at least once.
+10. **DO NOT call request_approval yourself.** Each subtask's phase prompt handles its own approval gate. When the subtask returns, proceed directly to the next phase.
+11. **DO NOT re-run a phase that already completed.** If the user says "ok" or "continue", proceed to the NEXT phase, not back to Phase 1.
 """

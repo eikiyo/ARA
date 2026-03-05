@@ -180,6 +180,44 @@ def read_paper(args: dict[str, Any], ctx: dict) -> str:
     return json.dumps(paper, default=str)
 
 
+def list_papers(args: dict[str, Any], ctx: dict) -> str:
+    """List all papers in the session with metadata for triage/ranking. Returns compact summaries."""
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+
+    if not db or not session_id:
+        return json.dumps({"error": "Database or session not available"})
+
+    limit = args.get("limit", 200)
+    offset = args.get("offset", 0)
+
+    rows = db._conn.execute(
+        "SELECT paper_id, title, abstract, authors, year, doi, source, citation_count, relevance_score "
+        "FROM papers WHERE session_id = ? ORDER BY citation_count DESC LIMIT ? OFFSET ?",
+        (session_id, limit, offset),
+    ).fetchall()
+
+    papers = []
+    for row in rows:
+        d = dict(row)
+        # Truncate abstract for compact listing
+        abstract = d.get("abstract") or ""
+        if len(abstract) > 300:
+            abstract = abstract[:300] + "..."
+        d["abstract"] = abstract
+        d["authors"] = json.loads(d.get("authors") or "[]")
+        papers.append(d)
+
+    total = db.paper_count(session_id)
+
+    return json.dumps({
+        "papers": papers,
+        "total": total,
+        "returned": len(papers),
+        "offset": offset,
+    }, default=str)
+
+
 def search_similar(args: dict[str, Any], ctx: dict) -> str:
     text = args.get("text", "")
     limit = args.get("limit", 10)
