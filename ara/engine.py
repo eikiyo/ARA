@@ -131,10 +131,11 @@ class RLMEngine:
         last_text = ""
         steps = 0
         start_time = time.time()
-        _recent_tool_sigs: list[str] = []  # Track recent tool call signatures for loop detection
-        _tool_call_counts: dict[str, int] = {}  # Track total calls per tool name
-        _MAX_REPEAT = 3  # Break if same tool signature repeats this many times
-        _MAX_SINGLE_TOOL = 10  # Break if any single tool called more than this total
+        _result_cache: dict[str, str] = {}  # Cache: "name:args_json" → result
+        _recent_tool_sigs: list[str] = []
+        _tool_call_counts: dict[str, int] = {}
+        _MAX_REPEAT = 3
+        _MAX_SINGLE_TOOL = 10
 
         while steps < self.config.max_steps_per_call:
             if self.cancel_flag:
@@ -212,9 +213,9 @@ class RLMEngine:
             )
             self.model.append_assistant_turn(conversation, capped_turn)
 
-            # Execute tool calls
+            # Execute tool calls (with result caching — same call never runs twice)
             results = self._execute_tools(
-                capped_calls, context, depth, on_event,
+                capped_calls, context, depth, on_event, _result_cache,
             )
 
             # Append results
@@ -280,8 +281,10 @@ class RLMEngine:
         context: ExternalContext,
         depth: int,
         on_event: StepCallback | None,
+        result_cache: dict[str, str] | None = None,
     ) -> list[ToolResult]:
         results: list[ToolResult] = []
+        cache = result_cache if result_cache is not None else {}
 
         for tc in tool_calls:
             if self.cancel_flag:
@@ -292,6 +295,14 @@ class RLMEngine:
                 break
 
             if not tc.name:
+                continue
+
+            # Cache check — same tool+args already executed? Return cached result silently.
+            cache_key = f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)}"
+            if tc.name not in ("subtask", "execute") and cache_key in cache:
+                results.append(ToolResult(
+                    tool_call_id=tc.id, name=tc.name, content=cache[cache_key],
+                ))
                 continue
 
             if on_event:
@@ -322,6 +333,9 @@ class RLMEngine:
             except Exception as exc:
                 _log.exception("Tool dispatch failed: %s", tc.name)
                 result_text = json.dumps({"error": f"Tool '{tc.name}' failed: {exc}"})
+
+            # Cache the result
+            cache[cache_key] = result_text
 
             # Store observation
             obs = f"[{tc.name}] {result_text[:300]}"
