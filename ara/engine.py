@@ -154,7 +154,7 @@ class RLMEngine:
         _recent_tool_sigs: list[str] = []
         _tool_call_counts: dict[str, int] = {}
         _MAX_REPEAT = 3
-        _MAX_SINGLE_TOOL = 10
+        _MAX_SINGLE_TOOL = 30
 
         while steps < self.config.max_steps_per_call:
             if self.cancel_flag.is_set():
