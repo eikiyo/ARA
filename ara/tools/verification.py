@@ -10,6 +10,10 @@ import json
 
 import httpx
 
+from ..logging import get_logger
+
+_log = get_logger("verification")
+
 
 def check_retraction(doi: str) -> str:
     """Check if paper is retracted via CrossRef API.
@@ -65,11 +69,13 @@ def check_retraction(doi: str) -> str:
                 "retracted": False,
                 "details": "DOI not found in CrossRef"
             })
+        _log.warning("CrossRef retraction check error (status %d): %s (doi=%s)", e.response.status_code, e, doi)
         return json.dumps({
             "doi": doi,
             "error": f"CrossRef API error: {str(e)}"
         })
     except Exception as e:
+        _log.error("Retraction check error: %s (doi=%s)", e, doi, exc_info=True)
         return json.dumps({
             "doi": doi,
             "error": f"Retraction check error: {str(e)}"
@@ -107,11 +113,13 @@ def get_citation_count(doi: str) -> str:
                 "citation_count": 0,
                 "message": "Paper not found in Semantic Scholar"
             })
+        _log.warning("Semantic Scholar citation API error (status %d): %s (doi=%s)", e.response.status_code, e, doi)
         return json.dumps({
             "doi": doi,
             "error": f"Semantic Scholar API error: {str(e)}"
         })
     except Exception as e:
+        _log.error("Citation count error: %s (doi=%s)", e, doi, exc_info=True)
         return json.dumps({
             "doi": doi,
             "error": f"Citation count error: {str(e)}"
@@ -156,12 +164,14 @@ def validate_doi(doi: str) -> str:
                 "message": "DOI does not resolve"
             })
     except httpx.HTTPError as e:
+        _log.warning("DOI validation HTTP error: %s (doi=%s)", e, doi)
         return json.dumps({
             "doi": doi,
             "valid": False,
             "error": f"DOI validation error: {str(e)}"
         })
     except Exception as e:
+        _log.error("DOI validation error: %s (doi=%s)", e, doi, exc_info=True)
         return json.dumps({
             "doi": doi,
             "error": f"DOI validate error: {str(e)}"

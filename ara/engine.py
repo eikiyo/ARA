@@ -16,11 +16,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import ARAConfig
+from .logging import get_logger
 from .model import BaseModel, ModelError, ModelTurn, ToolCall, ToolResult
 from .prompts import build_system_prompt
 from .replay_log import ReplayLogger
 from .tools import ARATools
 from .tools.defs import get_tool_definitions
+
+_log = get_logger("engine")
 
 EventCallback = Callable[[str], None]
 StepCallback = Callable[[dict[str, Any]], None]
@@ -281,6 +284,7 @@ class RLMEngine:
             except ModelError as exc:
                 err_text = str(exc).lower()
                 if "invalid tool call" in err_text or "invalid_request_error" in err_text:
+                    _log.warning("Invalid tool call at d%d/s%d, retrying: %s", depth, step, exc)
                     self._emit(f"[d{depth}/s{step}] tool call error, retrying...", on_event)
                     # Ask model to respond without tool calls
                     retry_msg = ToolResult(
@@ -289,6 +293,7 @@ class RLMEngine:
                     )
                     model.append_tool_results(conversation, [retry_msg])
                     continue
+                _log.error("Model error at d%d/s%d: %s", depth, step, exc, exc_info=True)
                 self._emit(f"[d{depth}/s{step}] model error: {exc}", on_event)
                 return f"Model error at depth {depth}, step {step}: {exc}"
             finally:
@@ -456,6 +461,7 @@ class RLMEngine:
                 current_model=current_model, replay_logger=replay_logger, step=step,
             )
         except Exception as exc:
+            _log.error("Tool %s crashed at d%d/s%d: %s", tc.name, depth, step, exc, exc_info=True)
             observation = f"Tool {tc.name} crashed: {type(exc).__name__}: {exc}"
             is_final = False
         observation = self._clip_observation(observation)

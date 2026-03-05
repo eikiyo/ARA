@@ -12,6 +12,10 @@ from typing import Any
 
 import httpx
 
+from ..logging import get_logger
+
+_log = get_logger("search")
+
 
 def search_semantic_scholar(query: str, limit: int = 10) -> str:
     """Search Semantic Scholar for papers.
@@ -55,8 +59,10 @@ def search_semantic_scholar(query: str, limit: int = 10) -> str:
 
         return json.dumps(results)
     except httpx.HTTPError as e:
+        _log.warning("Semantic Scholar API error: %s (query=%r)", e, query)
         return json.dumps([{"error": f"Semantic Scholar API error: {str(e)}"}])
     except Exception as e:
+        _log.error("Semantic Scholar unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"Semantic Scholar error: {str(e)}"}])
 
 
@@ -125,8 +131,10 @@ def search_arxiv(query: str, limit: int = 10) -> str:
 
         return json.dumps(results)
     except httpx.HTTPError as e:
+        _log.warning("arXiv API error: %s (query=%r)", e, query)
         return json.dumps([{"error": f"arXiv API error: {str(e)}"}])
     except Exception as e:
+        _log.error("arXiv unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"arXiv error: {str(e)}"}])
 
 
@@ -181,8 +189,10 @@ def search_crossref(query: str, limit: int = 10) -> str:
 
         return json.dumps(results)
     except httpx.HTTPError as e:
+        _log.warning("CrossRef API error: %s (query=%r)", e, query)
         return json.dumps([{"error": f"Crossref API error: {str(e)}"}])
     except Exception as e:
+        _log.error("CrossRef unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"Crossref error: {str(e)}"}])
 
 
@@ -232,8 +242,10 @@ def search_openalex(query: str, limit: int = 10) -> str:
 
         return json.dumps(results)
     except httpx.HTTPError as e:
+        _log.warning("OpenAlex API error: %s (query=%r)", e, query)
         return json.dumps([{"error": f"OpenAlex API error: {str(e)}"}])
     except Exception as e:
+        _log.error("OpenAlex unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"OpenAlex error: {str(e)}"}])
 
 
@@ -307,8 +319,10 @@ def search_pubmed(query: str, limit: int = 10) -> str:
 
         return json.dumps(results)
     except httpx.HTTPError as e:
+        _log.warning("PubMed API error: %s (query=%r)", e, query)
         return json.dumps([{"error": f"PubMed API error: {str(e)}"}])
     except Exception as e:
+        _log.error("PubMed unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"PubMed error: {str(e)}"}])
 
 
@@ -393,8 +407,10 @@ def search_dblp(query: str, limit: int = 10) -> str:
 
         return json.dumps(results)
     except httpx.HTTPError as e:
+        _log.warning("DBLP API error: %s (query=%r)", e, query)
         return json.dumps([{"error": f"DBLP API error: {str(e)}"}])
     except Exception as e:
+        _log.error("DBLP unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"DBLP error: {str(e)}"}])
 
 
@@ -447,8 +463,10 @@ def search_europe_pmc(query: str, limit: int = 10) -> str:
 
         return json.dumps(results)
     except httpx.HTTPError as e:
+        _log.warning("Europe PMC API error: %s (query=%r)", e, query)
         return json.dumps([{"error": f"Europe PMC API error: {str(e)}"}])
     except Exception as e:
+        _log.error("Europe PMC unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"Europe PMC error: {str(e)}"}])
 
 
@@ -491,6 +509,8 @@ def search_base(query: str, limit: int = 10) -> str:
 
         return json.dumps(results)
     except httpx.HTTPError as e:
+        _log.warning("BASE API error: %s (query=%r)", e, query)
         return json.dumps([{"error": f"BASE API error: {str(e)}"}])
     except Exception as e:
+        _log.error("BASE unexpected error: %s", e, exc_info=True)
         return json.dumps([{"error": f"BASE error: {str(e)}"}])

@@ -49,6 +49,7 @@ from .pipeline import (
     embed_text as _embed_text_impl,
     score_branches as _score_branches_impl,
     prune_hypotheses as _prune_hypotheses_impl,
+    save_phase_output as _save_phase_output_impl,
 )
 
 if TYPE_CHECKING:
@@ -220,6 +221,12 @@ def _get_citations(tools: ARATools, args: dict[str, Any]) -> str:
     return _get_citations_impl(tools.session_id, tools.db)
 
 
+def _save_phase_output(tools: ARATools, args: dict[str, Any]) -> str:
+    phase = args.get("phase", "")
+    content = args.get("content", "")
+    return _save_phase_output_impl(phase, content, tools.workspace)
+
+
 def _request_approval(tools: ARATools, args: dict[str, Any]) -> str:
     phase = args.get("phase", "")
     summary = args.get("summary", "")
@@ -282,6 +289,7 @@ TOOL_DISPATCH: dict[str, Any] = {
     "branch_search": _branch_search,
     "score_branches": _score_branches,
     "prune_hypotheses": _prune_hypotheses,
+    "save_phase_output": _save_phase_output,
     "write_section": _write_section,
     "get_citations": _get_citations,
     "request_approval": _request_approval,

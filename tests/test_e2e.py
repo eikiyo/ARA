@@ -198,18 +198,18 @@ class TestToolDispatch:
 
 class TestToolDefinitions:
     def test_tool_count(self):
-        assert len(TOOL_DEFINITIONS) == 29
+        assert len(TOOL_DEFINITIONS) == 30
 
     def test_openai_format(self):
         openai_tools = to_openai_tools()
-        assert len(openai_tools) == 29
+        assert len(openai_tools) == 30
         for t in openai_tools:
             assert t["type"] == "function"
             assert "name" in t["function"]
 
     def test_anthropic_format(self):
         anthropic_tools = to_anthropic_tools()
-        assert len(anthropic_tools) == 29
+        assert len(anthropic_tools) == 30
         for t in anthropic_tools:
             assert "name" in t
             assert "input_schema" in t

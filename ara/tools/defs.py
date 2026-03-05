@@ -348,6 +348,21 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
     # === PIPELINE TOOLS ===
     {
+        "name": "save_phase_output",
+        "description": (
+            "Save the output of a completed phase to ara_data/phases/{phase}.md. "
+            "Call this at the end of every phase to persist results."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "phase": {"type": "string", "description": "Phase name (scout, triage, analyst, verifier, hypothesis, brancher, critic, writer)."},
+                "content": {"type": "string", "description": "Markdown content summarizing the phase output."},
+            },
+            "required": ["phase", "content"],
+        },
+    },
+    {
         "name": "request_approval",
         "description": (
             "Request user approval at a phase gate. Blocks until user responds. "

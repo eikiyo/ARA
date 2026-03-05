@@ -311,6 +311,17 @@ After subtask completes:
 - If revisions needed, return to Writer phase with specific sections
 - If approved, move to completion
 
+## Phase Output Persistence (MANDATORY)
+After EVERY phase completes (before requesting approval), you MUST call:
+```
+save_phase_output(
+  phase="<phase_name>",
+  content="<markdown summary of phase results>"
+)
+```
+This saves results to `ara_data/phases/{phase}.md` so the user can review outputs at any time.
+Include: key metrics, lists of papers/claims/hypotheses as applicable, and any issues found.
+
 ## Budget Tracking
 Monitor token usage throughout:
 - After each subtask, check remaining budget

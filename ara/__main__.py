@@ -12,6 +12,7 @@ import sys
 
 from .builder import build_engine, infer_provider_for_model
 from .config import ARAConfig
+from .logging import setup_logging
 from .credentials import (
     CredentialBundle,
     CredentialStore,
@@ -160,6 +161,9 @@ def main() -> None:
             cfg.model = _pick_ollama_model(cfg.model)
         if not args.reasoning_effort:
             cfg.reasoning_effort = None
+
+    # Initialize logging
+    setup_logging(cfg.workspace, cfg.session_root_dir)
 
     engine = build_engine(cfg)
     model_name = _get_model_display_name(engine)

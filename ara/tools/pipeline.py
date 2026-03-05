@@ -1,16 +1,20 @@
 # Location: ara/tools/pipeline.py
-# Purpose: Pipeline control (approval gates, rules, budget, embeddings)
-# Functions: request_approval, get_rules, track_cost, embed_text
+# Purpose: Pipeline control (approval gates, rules, budget, embeddings, phase output)
+# Functions: request_approval, get_rules, track_cost, embed_text, save_phase_output
 # Calls: ARADB, gates.py
-# Imports: json, pathlib, typing
+# Imports: json, pathlib, typing, datetime
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..gates import run_approval_gate
+from ..logging import get_logger
+
+_log = get_logger("pipeline")
 
 if TYPE_CHECKING:
     from ara.db import ARADB
@@ -108,6 +112,40 @@ def embed_text(text: str) -> str:
         })
     except Exception as e:
         return json.dumps({"error": f"Embed text error: {str(e)}"})
+
+
+def save_phase_output(
+    phase: str,
+    content: str,
+    workspace: Path | None = None,
+) -> str:
+    """Save phase output to ara_data/phases/{phase}.md for visibility."""
+    try:
+        ws = workspace or Path(".")
+        phases_dir = ws / "ara_data" / "phases"
+        phases_dir.mkdir(parents=True, exist_ok=True)
+
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        phase_slug = phase.lower().replace(" ", "_") or "output"
+        filename = f"{phase_slug}.md"
+        filepath = phases_dir / filename
+
+        # Add header with metadata
+        header = f"# Phase: {phase}\n"
+        header += f"Generated: {datetime.now(timezone.utc).isoformat()}\n\n---\n\n"
+
+        filepath.write_text(header + content, encoding="utf-8")
+        _log.info("Phase output saved: %s (%d bytes)", filepath, len(content))
+
+        return json.dumps({
+            "status": "saved",
+            "phase": phase,
+            "file_path": str(filepath),
+            "bytes_written": len(content),
+        })
+    except Exception as e:
+        _log.error("Failed to save phase output for %s: %s", phase, e)
+        return json.dumps({"error": f"Save phase output error: {str(e)}"})
 
 
 def score_branches(branches: list[dict[str, Any]], session_id: int, db: ARADB) -> str:
