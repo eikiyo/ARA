@@ -143,9 +143,13 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
                 else:
                     activity_lines.append(new_line)
             elif event.event_type == "text":
-                # Collapse rate-limit retry messages
+                # Collapse rate-limit retry messages into one updating line
                 if event.data.strip().startswith("[Rate limited"):
-                    activity_lines.append(f"  [yellow]{event.data.strip()}[/yellow]")
+                    msg = f"  [yellow]{event.data.strip()}[/yellow]"
+                    if activity_lines and "[Rate limited" in activity_lines[-1]:
+                        activity_lines[-1] = msg  # Replace, don't append
+                    else:
+                        activity_lines.append(msg)
                 # Don't spam text chunks to activity
             elif event.event_type == "tool_call":
                 activity_lines.append(f"  [yellow]tool:[/yellow] {event.tool_name}")

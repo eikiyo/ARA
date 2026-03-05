@@ -50,6 +50,11 @@ class ModelError(Exception):
     pass
 
 
+class RateLimitError(ModelError):
+    """Raised when all retries exhausted on rate limit. Should stop the entire pipeline."""
+    pass
+
+
 # ── Conversation ────────────────────────────────────────────────────────
 
 @dataclass
@@ -203,7 +208,7 @@ class GeminiModel:
                     continue
                 raise ModelError(f"Gemini API error: {exc}") from exc
 
-        raise ModelError(f"Rate limited after {_max_retries} retries: {last_exc}") from last_exc
+        raise RateLimitError(f"Rate limited after {_max_retries} retries. Your API quota is exhausted — wait a few minutes and try again.") from last_exc
 
     def append_user_message(self, conv: Conversation, text: str) -> None:
         conv._messages.append({"role": "user", "text": text})

@@ -15,7 +15,7 @@ from typing import Any, Callable
 from .config import ARAConfig
 from .model import (
     BaseModel, Conversation, ModelTurn, ToolCall, ToolResult,
-    ModelError, TokenUsage,
+    ModelError, RateLimitError, TokenUsage,
 )
 from .prompts import build_system_prompt, build_phase_system_prompt, PHASE_PROMPTS
 from .tools import ARATools
@@ -73,12 +73,15 @@ class RLMEngine:
         on_event: StepCallback | None = None,
     ) -> str:
         ctx = context or ExternalContext()
-        return self._solve_recursive(
-            objective=objective,
-            context=ctx,
-            depth=0,
-            on_event=on_event,
-        )
+        try:
+            return self._solve_recursive(
+                objective=objective,
+                context=ctx,
+                depth=0,
+                on_event=on_event,
+            )
+        except RateLimitError as exc:
+            return f"[Rate limit] API quota exhausted. Wait a few minutes and try again.\n({exc})"
 
     def _solve_recursive(
         self,
@@ -149,6 +152,12 @@ class RLMEngine:
                         on_event(StepEvent("text", data=text, depth=depth))
 
                 turn = self.model.generate(conversation, on_chunk=_on_chunk)
+            except RateLimitError as exc:
+                # Rate limit exhausted — propagate up to stop the entire pipeline
+                _log.error("Rate limit exhausted at depth %d: %s", depth, exc)
+                if on_event:
+                    on_event(StepEvent("error", data=str(exc), depth=depth))
+                raise  # Let it bubble up to the top-level solve()
             except ModelError as exc:
                 _log.error("Model error at depth %d: %s", depth, exc)
                 if on_event:
