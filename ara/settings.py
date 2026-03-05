@@ -33,6 +33,7 @@ class PersistentSettings:
     default_model: str | None = None
     default_reasoning_effort: str | None = None
     default_provider: str | None = None
+    default_model_google: str | None = None
     default_model_openai: str | None = None
     default_model_anthropic: str | None = None
     default_model_openrouter: str | None = None
@@ -40,6 +41,7 @@ class PersistentSettings:
 
     def default_model_for_provider(self, provider: str) -> str | None:
         per_provider = {
+            "google": self.default_model_google,
             "openai": self.default_model_openai,
             "anthropic": self.default_model_anthropic,
             "openrouter": self.default_model_openrouter,
@@ -52,6 +54,7 @@ class PersistentSettings:
             default_model=(self.default_model or "").strip() or None,
             default_reasoning_effort=normalize_reasoning_effort(self.default_reasoning_effort),
             default_provider=(self.default_provider or "").strip() or None,
+            default_model_google=(self.default_model_google or "").strip() or None,
             default_model_openai=(self.default_model_openai or "").strip() or None,
             default_model_anthropic=(self.default_model_anthropic or "").strip() or None,
             default_model_openrouter=(self.default_model_openrouter or "").strip() or None,
@@ -62,7 +65,7 @@ class PersistentSettings:
         payload: dict[str, str] = {}
         for attr in (
             "default_model", "default_reasoning_effort", "default_provider",
-            "default_model_openai", "default_model_anthropic",
+            "default_model_google", "default_model_openai", "default_model_anthropic",
             "default_model_openrouter", "default_model_ollama",
         ):
             val = getattr(self, attr)
@@ -78,6 +81,7 @@ class PersistentSettings:
             default_model=(str(payload.get("default_model", "")).strip() or None),
             default_reasoning_effort=(str(payload.get("default_reasoning_effort", "")).strip() or None),
             default_provider=(str(payload.get("default_provider", "")).strip() or None),
+            default_model_google=(str(payload.get("default_model_google", "")).strip() or None),
             default_model_openai=(str(payload.get("default_model_openai", "")).strip() or None),
             default_model_anthropic=(str(payload.get("default_model_anthropic", "")).strip() or None),
             default_model_openrouter=(str(payload.get("default_model_openrouter", "")).strip() or None),

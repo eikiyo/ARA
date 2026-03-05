@@ -20,24 +20,24 @@ class CredentialBundle:
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     openrouter_api_key: str | None = None
-    gemini_api_key: str | None = None
+    google_api_key: str | None = None
 
     def has_any(self) -> bool:
         return bool(
             (self.openai_api_key and self.openai_api_key.strip())
             or (self.anthropic_api_key and self.anthropic_api_key.strip())
             or (self.openrouter_api_key and self.openrouter_api_key.strip())
-            or (self.gemini_api_key and self.gemini_api_key.strip())
+            or (self.google_api_key and self.google_api_key.strip())
         )
 
     def merge_missing(self, other: CredentialBundle) -> None:
-        for attr in ("openai_api_key", "anthropic_api_key", "openrouter_api_key", "gemini_api_key"):
+        for attr in ("openai_api_key", "anthropic_api_key", "openrouter_api_key", "google_api_key"):
             if not getattr(self, attr) and getattr(other, attr):
                 setattr(self, attr, getattr(other, attr))
 
     def to_json(self) -> dict[str, str]:
         out: dict[str, str] = {}
-        for attr in ("openai_api_key", "anthropic_api_key", "openrouter_api_key", "gemini_api_key"):
+        for attr in ("openai_api_key", "anthropic_api_key", "openrouter_api_key", "google_api_key"):
             val = getattr(self, attr)
             if val:
                 out[attr] = val
@@ -51,7 +51,7 @@ class CredentialBundle:
             openai_api_key=(payload.get("openai_api_key") or "").strip() or None,
             anthropic_api_key=(payload.get("anthropic_api_key") or "").strip() or None,
             openrouter_api_key=(payload.get("openrouter_api_key") or "").strip() or None,
-            gemini_api_key=(payload.get("gemini_api_key") or "").strip() or None,
+            google_api_key=(payload.get("google_api_key") or "").strip() or None,
         )
 
 
@@ -60,7 +60,7 @@ def credentials_from_env() -> CredentialBundle:
         openai_api_key=(os.getenv("ARA_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip() or None,
         anthropic_api_key=(os.getenv("ARA_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or "").strip() or None,
         openrouter_api_key=(os.getenv("ARA_OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or "").strip() or None,
-        gemini_api_key=(os.getenv("ARA_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip() or None,
+        google_api_key=(os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip() or None,
     )
 
 
@@ -87,7 +87,7 @@ def parse_env_file(path: Path) -> CredentialBundle:
         openai_api_key=(env.get("OPENAI_API_KEY") or env.get("ARA_OPENAI_API_KEY") or "").strip() or None,
         anthropic_api_key=(env.get("ANTHROPIC_API_KEY") or env.get("ARA_ANTHROPIC_API_KEY") or "").strip() or None,
         openrouter_api_key=(env.get("OPENROUTER_API_KEY") or env.get("ARA_OPENROUTER_API_KEY") or "").strip() or None,
-        gemini_api_key=(env.get("GEMINI_API_KEY") or env.get("ARA_GEMINI_API_KEY") or "").strip() or None,
+        google_api_key=(env.get("GOOGLE_API_KEY") or env.get("ARA_GOOGLE_API_KEY") or "").strip() or None,
     )
 
 
@@ -126,7 +126,7 @@ def prompt_for_credentials(existing: CredentialBundle, force: bool = False) -> t
         openai_api_key=existing.openai_api_key,
         anthropic_api_key=existing.anthropic_api_key,
         openrouter_api_key=existing.openrouter_api_key,
-        gemini_api_key=existing.gemini_api_key,
+        google_api_key=existing.google_api_key,
     )
     should_prompt = force or not current.has_any()
     if not should_prompt or not sys.stdin.isatty():
@@ -151,7 +151,7 @@ def prompt_for_credentials(existing: CredentialBundle, force: bool = False) -> t
     current.openai_api_key = _ask("OpenAI", current.openai_api_key)
     current.anthropic_api_key = _ask("Anthropic", current.anthropic_api_key)
     current.openrouter_api_key = _ask("OpenRouter", current.openrouter_api_key)
-    current.gemini_api_key = _ask("Gemini", current.gemini_api_key)
+    current.google_api_key = _ask("Google AI Studio", current.google_api_key)
     if not force and current.has_any() and not existing.has_any():
         changed = True
     return current, changed

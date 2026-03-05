@@ -76,8 +76,10 @@ def _pick_ollama_model(current: str) -> str:
 
 def _resolve_provider(requested: str, creds: CredentialBundle) -> str:
     requested = requested.strip().lower()
-    if requested in {"openai", "anthropic", "openrouter", "ollama"}:
+    if requested in {"google", "openai", "anthropic", "openrouter", "ollama"}:
         return requested
+    if creds.google_api_key:
+        return "google"
     if creds.anthropic_api_key:
         return "anthropic"
     if creds.openai_api_key:
@@ -143,7 +145,7 @@ def main() -> None:
     cfg.openai_api_key = creds.openai_api_key
     cfg.anthropic_api_key = creds.anthropic_api_key
     cfg.openrouter_api_key = creds.openrouter_api_key
-    cfg.gemini_api_key = creds.gemini_api_key
+    cfg.google_api_key = creds.google_api_key
     if args.model:
         cfg.model = args.model
     elif not os.getenv("ARA_MODEL"):
@@ -159,7 +161,8 @@ def main() -> None:
     if model_check and cfg.provider != "openrouter":
         inferred = infer_provider_for_model(model_check)
         if inferred and inferred != cfg.provider:
-            key = {"openai": cfg.openai_api_key, "anthropic": cfg.anthropic_api_key,
+            key = {"google": cfg.google_api_key, "openai": cfg.openai_api_key,
+                   "anthropic": cfg.anthropic_api_key,
                    "openrouter": cfg.openrouter_api_key, "ollama": "ollama"}.get(inferred)
             if key:
                 cfg.provider = inferred

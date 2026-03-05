@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+    "google": "gemini-2.0-flash",
     "openai": "gpt-5.2",
     "anthropic": "claude-opus-4-6",
     "openrouter": "anthropic/claude-sonnet-4-5",
@@ -21,15 +22,17 @@ PROVIDER_DEFAULT_MODELS: dict[str, str] = {
 @dataclass(slots=True)
 class ARAConfig:
     workspace: Path
-    provider: str = "auto"
-    model: str = "claude-sonnet-4-6"
+    provider: str = "google"
+    model: str = "gemini-2.0-flash"
     reasoning_effort: str | None = "high"
     # Provider base URLs
     openai_base_url: str = "https://api.openai.com/v1"
     anthropic_base_url: str = "https://api.anthropic.com/v1"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     ollama_base_url: str = "http://localhost:11434/v1"
+    google_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     # API keys
+    google_api_key: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     openrouter_api_key: str | None = None
@@ -47,21 +50,21 @@ class ARAConfig:
     approval_gates: bool = True  # If False, auto-approve all phase gates
     session_root_dir: str = "ara_data"
     budget_limit_usd: float = 0.0
-    # Embedding
-    gemini_api_key: str | None = None
 
     @classmethod
     def from_env(cls, workspace: str | Path) -> ARAConfig:
         ws = Path(workspace).expanduser().resolve()
         return cls(
             workspace=ws,
-            provider=os.getenv("ARA_PROVIDER", "auto").strip().lower() or "auto",
-            model=os.getenv("ARA_MODEL", "claude-sonnet-4-6"),
+            provider=os.getenv("ARA_PROVIDER", "google").strip().lower() or "google",
+            model=os.getenv("ARA_MODEL", "gemini-2.0-flash"),
             reasoning_effort=(os.getenv("ARA_REASONING_EFFORT", "high").strip().lower() or None),
             openai_base_url=os.getenv("ARA_OPENAI_BASE_URL", "https://api.openai.com/v1"),
             anthropic_base_url=os.getenv("ARA_ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
             openrouter_base_url=os.getenv("ARA_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
             ollama_base_url=os.getenv("ARA_OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+            google_base_url=os.getenv("ARA_GOOGLE_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
+            google_api_key=os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY"),
             openai_api_key=os.getenv("ARA_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
             anthropic_api_key=os.getenv("ARA_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY"),
             openrouter_api_key=os.getenv("ARA_OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY"),
@@ -74,5 +77,4 @@ class ARAConfig:
             approval_gates=os.getenv("ARA_APPROVAL_GATES", "true").strip().lower() in ("1", "true", "yes"),
             session_root_dir=os.getenv("ARA_SESSION_DIR", "ara_data"),
             budget_limit_usd=float(os.getenv("ARA_BUDGET_LIMIT", "0")),
-            gemini_api_key=os.getenv("ARA_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY"),
         )

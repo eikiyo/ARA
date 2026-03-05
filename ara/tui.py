@@ -226,7 +226,9 @@ def dispatch_slash_command(
             settings = ctx.settings_store.load()
             settings.default_provider = ctx.cfg.provider
             provider = ctx.cfg.provider
-            if provider == "openai":
+            if provider == "google":
+                settings.default_model_google = new_model
+            elif provider == "openai":
                 settings.default_model_openai = new_model
             elif provider == "anthropic":
                 settings.default_model_anthropic = new_model
