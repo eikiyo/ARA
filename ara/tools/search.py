@@ -534,7 +534,11 @@ _ALL_SEARCH_FNS = [
 
 
 def search_all(args: dict[str, Any], ctx: dict) -> str:
-    """Search all 9 academic APIs in parallel with one call."""
+    """Search all 9 academic APIs in parallel with one call.
+
+    Returns a summary to the model (counts + top 10 papers) to save tokens.
+    Full results are auto-stored in the DB by the tool dispatch layer.
+    """
     query = args.get("query", "")
     limit = args.get("limit", 20)
 
@@ -566,9 +570,33 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
         per_source[name] = len(papers)
         all_papers.extend(papers)
 
+    # Sort by citation count (most cited first)
+    all_papers.sort(key=lambda p: p.get("citation_count", 0), reverse=True)
+
+    # Return compact summary to model (saves tokens), full data stays in DB
+    top_papers = [
+        {
+            "title": p.get("title", "")[:120],
+            "year": p.get("year"),
+            "citations": p.get("citation_count", 0),
+            "source": p.get("source", ""),
+            "doi": p.get("doi"),
+        }
+        for p in all_papers[:10]
+    ]
+
+    # Store full papers via _papers_for_storage (picked up by auto-store)
+    _search_all_full_results.clear()
+    _search_all_full_results.extend(all_papers)
+
     return json.dumps({
-        "papers": all_papers,
         "total": len(all_papers),
         "per_source": per_source,
+        "top_papers": top_papers,
         "errors": errors,
+        "note": f"All {len(all_papers)} papers stored in database. Top 10 shown by citation count.",
     })
+
+
+# Temp storage for search_all full results (consumed by auto-store in dispatch)
+_search_all_full_results: list[dict[str, Any]] = []

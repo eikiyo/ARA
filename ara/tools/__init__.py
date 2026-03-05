@@ -122,10 +122,25 @@ class ARATools:
         result_str = result if isinstance(result, str) else json.dumps(result, default=str)
 
         # Auto-store search results in DB
-        if tool_name.startswith("search_") and tool_name != "search_similar":
+        if tool_name == "search_all":
+            # search_all stores full papers in a buffer (summary goes to model)
+            from .search import _search_all_full_results
+            if _search_all_full_results:
+                self._store_papers_list(_search_all_full_results)
+                _search_all_full_results.clear()
+        elif tool_name.startswith("search_") and tool_name != "search_similar":
             self._store_search_results(result_str)
 
         return result_str
+
+    def _store_papers_list(self, papers: list[dict[str, Any]]) -> None:
+        if not self.db or not self.session_id or not papers:
+            return
+        try:
+            stored = self.db.store_papers(self.session_id, papers)
+            _log.info("Auto-stored %d/%d papers in DB", stored, len(papers))
+        except Exception as exc:
+            _log.error("Failed to store papers in DB: %s", exc)
 
     def _store_search_results(self, result_str: str) -> None:
         if not self.db or not self.session_id:
@@ -137,9 +152,4 @@ class ARATools:
             return
 
         papers = data.get("papers", [])
-        if papers:
-            try:
-                stored = self.db.store_papers(self.session_id, papers)
-                _log.info("Auto-stored %d/%d papers in DB", stored, len(papers))
-            except Exception as exc:
-                _log.error("Failed to store papers in DB: %s", exc)
+        self._store_papers_list(papers)
