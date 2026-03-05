@@ -70,33 +70,26 @@ def run_approval_gate(
         print(f"\nFull details: {gate_file}")
         print(f"{'='*60}")
 
-    # Prompt for decision
-    print("\n  [a] Approve  [r] Reject  [e] Edit")
+    # Prompt for decision via TUI input bridge (thread-safe)
     try:
-        # Use sys.stdin directly to avoid conflicts with prompt_toolkit
-        import sys
-        sys.stdout.write("  > ")
-        sys.stdout.flush()
-        choice = sys.stdin.readline().strip().lower()
+        from .tui import request_tui_input
+        choice = request_tui_input("[a] Approve  [r] Reject  [e] Edit > ").lower()
         if not choice:
             choice = "a"
-    except (EOFError, KeyboardInterrupt):
+    except (ImportError, Exception):
+        # Fallback for non-TUI usage
         choice = "a"
 
     if choice.startswith("r"):
         try:
-            sys.stdout.write("  Rejection reason: ")
-            sys.stdout.flush()
-            reason = sys.stdin.readline().strip()
-        except (EOFError, KeyboardInterrupt):
+            reason = request_tui_input("Rejection reason: ")
+        except Exception:
             reason = ""
         decision = f"rejected: {reason}" if reason else "rejected"
     elif choice.startswith("e"):
         try:
-            sys.stdout.write("  Describe changes: ")
-            sys.stdout.flush()
-            changes = sys.stdin.readline().strip()
-        except (EOFError, KeyboardInterrupt):
+            changes = request_tui_input("Describe changes: ")
+        except Exception:
             changes = ""
         decision = f"edited: {changes}" if changes else "approved"
     else:

@@ -18,6 +18,29 @@ from .runtime import SessionRuntime
 from .settings import SettingsStore
 
 
+# Thread-safe input bridge for approval gates
+# Background thread sets prompt + event; main thread reads input and posts response
+_input_request_prompt: str = ""
+_input_request_event = threading.Event()   # background thread waits on this
+_input_response: str = ""
+_input_response_event = threading.Event()  # main thread signals response ready
+_input_lock = threading.Lock()
+
+
+def request_tui_input(prompt: str) -> str:
+    """Called from background thread. Blocks until main thread collects input."""
+    global _input_request_prompt, _input_response
+    with _input_lock:
+        _input_request_prompt = prompt
+        _input_response = ""
+        _input_response_event.clear()
+    _input_request_event.set()       # signal main thread
+    _input_response_event.wait()     # block until main thread provides response
+    _input_request_event.clear()
+    with _input_lock:
+        return _input_response
+
+
 @dataclass
 class ChatContext:
     runtime: SessionRuntime
@@ -192,8 +215,7 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
             elif event.event_type == "error":
                 activity_lines.append(f"  [red]error:[/red] {event.data[:80]}")
 
-            if len(activity_lines) > 20:
-                del activity_lines[:len(activity_lines) - 20]
+            # No trimming — bounded by solve duration; printed_count tracks index
 
     while True:
         try:
@@ -230,15 +252,35 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
 
-        # Show activity while waiting
+        # Show activity while waiting — only print NEW lines
+        printed_count = 0
         try:
             while thread.is_alive():
+                # Check if background thread needs user input (approval gate)
+                if _input_request_event.is_set():
+                    # Flush any pending activity first
+                    with lock:
+                        new_lines = activity_lines[printed_count:]
+                        printed_count = len(activity_lines)
+                    for line in new_lines:
+                        console.print(line)
+                    # Collect input on main thread where stdin works
+                    with _input_lock:
+                        prompt_text = _input_request_prompt
+                    try:
+                        raw = session.prompt(prompt_text)
+                    except (EOFError, KeyboardInterrupt):
+                        raw = ""
+                    global _input_response
+                    with _input_lock:
+                        _input_response = raw.strip()
+                    _input_response_event.set()
+                    continue
+
                 with lock:
-                    if activity_lines:
-                        line = activity_lines[-1]
-                    else:
-                        line = None
-                if line:
+                    new_lines = activity_lines[printed_count:]
+                    printed_count = len(activity_lines)
+                for line in new_lines:
                     console.print(line)
                 time.sleep(0.5)
         except KeyboardInterrupt:
@@ -248,11 +290,11 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
 
         thread.join(timeout=30)
 
-        # Drain remaining activity
+        # Drain remaining activity (only lines not yet printed)
         with lock:
-            remaining = list(activity_lines)
+            remaining = activity_lines[printed_count:]
             activity_lines.clear()
-        for line in remaining[-3:]:
+        for line in remaining:
             console.print(line)
 
         if error_holder:
