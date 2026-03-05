@@ -32,7 +32,8 @@ Example: "socioeconomic determinants immigrant health outcomes longitudinal stud
 3. Execute Round 3 with broadened query. Review cumulative count.
 4. If still under 80 papers, execute Round 4 with narrowed query.
 5. **Maximum: 4 calls to search_all.**
-6. Call `request_approval` ONCE with your comprehensive summary.
+6. Call `batch_embed_papers()` to generate semantic embeddings for all discovered papers. This enables vector-based similarity search in later phases.
+7. Call `request_approval` ONCE with your comprehensive summary.
 
 ### Summary Format
 After searching, provide:

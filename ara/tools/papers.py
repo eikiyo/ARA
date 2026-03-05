@@ -2,12 +2,14 @@
 # Purpose: Paper management tools — fetch, read, similarity search
 # Functions: fetch_fulltext, read_paper, search_similar
 # Calls: httpx, db.py
-# Imports: json, re, httpx
+# Imports: json, math, os, re, httpx
 
 from __future__ import annotations
 
 import json
 import logging
+import math
+import os
 import re
 from typing import Any
 
@@ -218,7 +220,37 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
     }, default=str)
 
 
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _embed_query(text: str) -> list[float] | None:
+    """Embed a query string using Gemini text-embedding-004."""
+    api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        result = client.models.embed_content(
+            model="text-embedding-004",
+            contents=text,
+        )
+        if result.embeddings and len(result.embeddings) > 0:
+            return result.embeddings[0].values
+    except Exception as exc:
+        _log.warning("Query embedding failed: %s", exc)
+    return None
+
+
 def search_similar(args: dict[str, Any], ctx: dict) -> str:
+    """Search for similar papers using cosine similarity on embeddings, with keyword fallback."""
     text = args.get("text", "")
     limit = args.get("limit", 10)
 
@@ -230,5 +262,24 @@ def search_similar(args: dict[str, Any], ctx: dict) -> str:
     if not db or not session_id:
         return json.dumps({"error": "Database or session not available"})
 
+    # Try vector similarity first
+    papers_with_emb = db.get_papers_with_embeddings(session_id)
+    if papers_with_emb:
+        query_emb = _embed_query(text)
+        if query_emb:
+            scored = []
+            for p in papers_with_emb:
+                emb = p.pop("embedding")
+                sim = _cosine_similarity(query_emb, emb)
+                p["similarity"] = round(sim, 4)
+                scored.append(p)
+            scored.sort(key=lambda x: x["similarity"], reverse=True)
+            return json.dumps({
+                "papers": scored[:limit],
+                "method": "embedding_cosine",
+                "total_with_embeddings": len(papers_with_emb),
+            }, default=str)
+
+    # Fallback to keyword matching
     papers = db.search_papers_by_keyword(session_id=session_id, keyword=text, limit=limit)
-    return json.dumps({"papers": papers, "method": "keyword"}, default=str)
+    return json.dumps({"papers": papers, "method": "keyword_fallback"}, default=str)

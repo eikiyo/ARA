@@ -344,6 +344,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
 
+    # ── Embedding tools ─────────────────────────────────────────
+    {
+        "name": "batch_embed_papers",
+        "description": "Embed all un-embedded papers in the session using Gemini text-embedding-004. Call this after scout phase to enable semantic similarity search. Embeds title + abstract + authors for each paper.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+
     # ── Pipeline tools ──────────────────────────────────────────
     {
         "name": "request_approval",

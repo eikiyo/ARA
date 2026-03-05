@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS papers (
     selected_for_deep_read INTEGER DEFAULT 0,
     full_text TEXT,
     full_text_path TEXT,
+    embedding TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -218,6 +219,15 @@ class ARADB:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns that may not exist in older databases."""
+        cur = self._conn.execute("PRAGMA table_info(papers)")
+        existing = {row[1] for row in cur.fetchall()}
+        if "embedding" not in existing:
+            self._conn.execute("ALTER TABLE papers ADD COLUMN embedding TEXT")
+            self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()
@@ -377,6 +387,45 @@ class ARADB:
         for row in rows:
             d = dict(row)
             d["authors"] = json.loads(d.get("authors") or "[]")
+            results.append(d)
+        return results
+
+    # ── Embeddings ────────────────────────────────────────────────
+
+    def store_embedding(self, paper_id: int, embedding: list[float]) -> None:
+        emb_json = json.dumps(embedding)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE papers SET embedding = ? WHERE paper_id = ?",
+                (emb_json, paper_id),
+            )
+            self._conn.commit()
+
+    def get_unembedded_papers(self, session_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT paper_id, title, abstract, authors FROM papers "
+            "WHERE session_id = ? AND embedding IS NULL",
+            (session_id,),
+        ).fetchall()
+        results = []
+        for row in rows:
+            d = dict(row)
+            d["authors"] = json.loads(d.get("authors") or "[]")
+            results.append(d)
+        return results
+
+    def get_papers_with_embeddings(self, session_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT paper_id, title, abstract, authors, year, doi, source, "
+            "citation_count, embedding FROM papers "
+            "WHERE session_id = ? AND embedding IS NOT NULL",
+            (session_id,),
+        ).fetchall()
+        results = []
+        for row in rows:
+            d = dict(row)
+            d["authors"] = json.loads(d.get("authors") or "[]")
+            d["embedding"] = json.loads(d["embedding"])
             results.append(d)
         return results
 

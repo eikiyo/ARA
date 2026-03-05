@@ -1,6 +1,6 @@
 # Location: ara/tools/pipeline.py
 # Purpose: Pipeline tools — approval gates, rules, cost tracking, embeddings
-# Functions: request_approval, get_rules, track_cost, embed_text
+# Functions: request_approval, get_rules, track_cost, embed_text, batch_embed_papers
 # Calls: gates.py, db.py
 # Imports: json, os
 
@@ -98,3 +98,65 @@ def embed_text(args: dict[str, Any], ctx: dict) -> str:
     except Exception as exc:
         _log.warning("Embedding failed: %s", exc)
         return json.dumps({"error": f"Embedding failed: {exc}"})
+
+
+def _build_embed_text(paper: dict) -> str:
+    """Build the text to embed for a paper: title + abstract + authors."""
+    parts = []
+    if paper.get("title"):
+        parts.append(paper["title"])
+    if paper.get("abstract"):
+        parts.append(paper["abstract"])
+    authors = paper.get("authors", [])
+    if isinstance(authors, list) and authors:
+        parts.append("Authors: " + ", ".join(str(a) for a in authors))
+    return " ".join(parts)
+
+
+def batch_embed_papers(args: dict[str, Any], ctx: dict) -> str:
+    """Embed all un-embedded papers in the session using Gemini text-embedding-004."""
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+    if not db or not session_id:
+        return json.dumps({"error": "Database or session not available"})
+
+    api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return json.dumps({"error": "GOOGLE_API_KEY not set for embeddings"})
+
+    papers = db.get_unembedded_papers(session_id)
+    if not papers:
+        return json.dumps({"embedded": 0, "message": "All papers already have embeddings"})
+
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+    except Exception as exc:
+        return json.dumps({"error": f"Failed to init Gemini client: {exc}"})
+
+    embedded = 0
+    failed = 0
+    for paper in papers:
+        text = _build_embed_text(paper)
+        if not text.strip():
+            continue
+        try:
+            result = client.models.embed_content(
+                model="text-embedding-004",
+                contents=text,
+            )
+            if result.embeddings and len(result.embeddings) > 0:
+                db.store_embedding(paper["paper_id"], result.embeddings[0].values)
+                embedded += 1
+            else:
+                failed += 1
+        except Exception as exc:
+            _log.warning("Embedding failed for paper %d: %s", paper["paper_id"], exc)
+            failed += 1
+
+    return json.dumps({
+        "embedded": embedded,
+        "failed": failed,
+        "total_papers": len(papers),
+        "message": f"Embedded {embedded}/{len(papers)} papers",
+    })

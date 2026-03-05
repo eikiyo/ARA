@@ -15,8 +15,8 @@ Execute phases in this exact order. After each phase, the subtask returns result
 **Phase 1 — Scout (Comprehensive Paper Discovery)**
 ```
 subtask(
-    objective="Scout phase: Conduct exhaustive multi-round search across all 9 academic APIs for papers on: {topic}. Use search_all() with query reformulation across 4 rounds (primary, synonyms, broader, narrower). Target: 100+ unique papers from 4+ sources.",
-    acceptance_criteria="At least 50 papers found from at least 4 different sources. Top 10 papers listed by citation count.",
+    objective="Scout phase: Conduct exhaustive multi-round search across all 9 academic APIs for papers on: {topic}. Use search_all() with query reformulation across 4 rounds (primary, synonyms, broader, narrower). Target: 100+ unique papers from 4+ sources. After searching, call batch_embed_papers() to generate semantic embeddings for all papers.",
+    acceptance_criteria="At least 50 papers found from at least 4 different sources. Top 10 papers listed by citation count. All papers embedded for semantic search.",
     prompt="scout"
 )
 ```
