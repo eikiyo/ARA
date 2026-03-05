@@ -349,6 +349,28 @@ class RLMEngine:
 
             # Final answer: no tool calls + text
             if not turn.tool_calls and turn.text:
+                # At depth 0, check if this looks like a phase transition rather than
+                # a true final answer. If so, nudge the model to continue with tool calls.
+                if depth == 0 and step < self.config.max_steps_per_call - 5:
+                    lower = turn.text.lower()
+                    # Only match explicit phase-transition phrases, not generic words
+                    _PHASE_KEYWORDS = ("moving to:", "next phase:", "— initiated",
+                                       "proceeding to:", "— complete\n",
+                                       "moving to analyst", "moving to verifier",
+                                       "moving to hypothesis", "moving to brancher",
+                                       "moving to critic", "moving to writer")
+                    if any(kw in lower for kw in _PHASE_KEYWORDS):
+                        self._emit(f"[d{depth}/s{step}] nudging manager to continue (phase transition detected)", on_event)
+                        nudge = ToolResult(
+                            tool_call_id="system_nudge", name="system",
+                            content=(
+                                "You output text without a tool call. The engine will terminate if you don't "
+                                "call a tool. You MUST call the next phase's subtask() or save_phase_output() "
+                                "or request_approval() NOW. Do NOT output bare text between phases."
+                            ),
+                        )
+                        model.append_tool_results(conversation, [nudge])
+                        continue
                 self._emit(f"[d{depth}/s{step}] final answer ({len(turn.text)} chars)", on_event)
                 if on_step:
                     try:

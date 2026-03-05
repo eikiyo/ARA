@@ -44,6 +44,7 @@ class ARAConfig:
     recursive: bool = True
     acceptance_criteria: bool = True
     # ARA-specific
+    approval_gates: bool = True  # If False, auto-approve all phase gates
     session_root_dir: str = "ara_data"
     budget_limit_usd: float = 0.0
     # Embedding
@@ -70,6 +71,7 @@ class ARAConfig:
             max_solve_seconds=int(os.getenv("ARA_MAX_SOLVE_SECONDS", "0")),
             recursive=os.getenv("ARA_RECURSIVE", "true").strip().lower() in ("1", "true", "yes"),
             acceptance_criteria=os.getenv("ARA_ACCEPTANCE_CRITERIA", "true").strip().lower() in ("1", "true", "yes"),
+            approval_gates=os.getenv("ARA_APPROVAL_GATES", "true").strip().lower() in ("1", "true", "yes"),
             session_root_dir=os.getenv("ARA_SESSION_DIR", "ara_data"),
             budget_limit_usd=float(os.getenv("ARA_BUDGET_LIMIT", "0")),
             gemini_api_key=os.getenv("ARA_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY"),

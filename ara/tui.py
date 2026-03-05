@@ -20,12 +20,13 @@ from .model import EchoFallbackModel
 from .runtime import SessionRuntime
 from .settings import SettingsStore
 
-SLASH_COMMANDS: list[str] = ["/quit", "/exit", "/help", "/status", "/clear", "/model"]
+SLASH_COMMANDS: list[str] = ["/quit", "/exit", "/help", "/status", "/clear", "/model", "/gates"]
 
 HELP_LINES: list[str] = [
     "Commands:",
     "  /model              Show current model and provider",
     "  /model <name>       Switch model (e.g. /model opus, /model sonnet)",
+    "  /gates              Toggle approval gates on/off",
     "  /status             Show session status and token usage",
     "  /clear              Clear screen",
     "  /quit or /exit      Exit ARA",
@@ -183,6 +184,13 @@ def dispatch_slash_command(
         return "handled"
     if command == "/clear":
         return "clear"
+    if command == "/gates":
+        current = ctx.cfg.approval_gates
+        ctx.cfg.approval_gates = not current
+        ctx.runtime.engine.tools.approval_gates = ctx.cfg.approval_gates
+        state = "ON" if ctx.cfg.approval_gates else "OFF (auto-approve)"
+        emit(f"Approval gates: {state}")
+        return "handled"
     if command.startswith("/model"):
         args = command[len("/model"):].strip()
         if not args:

@@ -79,7 +79,7 @@ def build_model_factory(cfg: ARAConfig) -> ModelFactory | None:
 
 
 def build_engine(cfg: ARAConfig) -> RLMEngine:
-    tools = ARATools(workspace=cfg.workspace)
+    tools = ARATools(workspace=cfg.workspace, approval_gates=cfg.approval_gates)
     try:
         model_name = _resolve_model_name(cfg)
     except ModelError as exc:

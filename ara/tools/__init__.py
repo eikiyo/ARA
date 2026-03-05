@@ -62,6 +62,7 @@ class ARATools:
     workspace: Path
     db: ARADB | None = None
     session_id: int | None = None
+    approval_gates: bool = True
 
     def dispatch(self, name: str, args: dict[str, Any]) -> str:
         """Execute a tool by name. Returns observation string."""
@@ -231,6 +232,9 @@ def _request_approval(tools: ARATools, args: dict[str, Any]) -> str:
     phase = args.get("phase", "")
     summary = args.get("summary", "")
     data = args.get("data")
+    if not tools.approval_gates:
+        # Auto-approve: log it but don't block for user input
+        return json.dumps({"phase": phase, "decision": "approved", "auto": True})
     return _request_approval_impl(phase, summary, data, tools.session_id, tools.db, tools.workspace)
 
 

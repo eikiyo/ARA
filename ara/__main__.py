@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task", help="Single objective to run and exit.")
     parser.add_argument("--resume", action="store_true", help="Resume existing session.")
     parser.add_argument("--no-tui", action="store_true", help="Plain text mode.")
+    parser.add_argument("--no-gates", action="store_true", help="Auto-approve all phase gates.")
     return parser
 
 
@@ -134,6 +135,8 @@ def main() -> None:
         cfg.max_depth = args.max_depth
     if args.max_steps is not None:
         cfg.max_steps_per_call = args.max_steps
+    if args.no_gates:
+        cfg.approval_gates = False
     if args.provider:
         cfg.provider = args.provider
     cfg.provider = _resolve_provider(cfg.provider, creds)
