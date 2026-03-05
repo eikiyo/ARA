@@ -468,30 +468,21 @@ class RichREPL:
     def _on_event(self, msg: str) -> None:
         m = _RE_PREFIX.match(msg)
         body = msg[m.end():] if m else msg
-        step_label = ""
-        if m and m.group(2):
-            step_label = f"Step {m.group(2)}/{self.ctx.cfg.max_steps_per_call}"
         if _RE_CALLING.search(body):
             self._flush_step()
-            self._activity.start(mode="thinking", step_label=step_label)
             return
         if _RE_SUBTASK.search(body) or _RE_EXECUTE.search(body):
             self._flush_step()
-            self._activity.stop()
             label = re.sub(r">> (entering subtask|executing leaf):\s*", "", body).strip()
             self.console.rule(f"[dim]{label}[/dim]", style="dim")
             return
         if _RE_ERROR.search(body):
-            self._activity.stop()
             from rich.text import Text
             first_line = msg.split("\n", 1)[0]
             if len(first_line) > _EVENT_MAX_CHARS:
                 first_line = first_line[:_EVENT_MAX_CHARS] + "..."
             self.console.print(Text(first_line, style="bold red"))
             return
-        tm = _RE_TOOL_START.search(body)
-        if tm:
-            self._activity.set_tool(tm.group(1), key_arg=tm.group(2) or "", step_label=step_label)
 
     def _on_step(self, step_event: dict[str, Any]) -> None:
         action = step_event.get("action")
@@ -499,7 +490,6 @@ class RichREPL:
             return
         name = action.get("name", "")
         if name == "_model_turn":
-            self._activity.stop()
             self._current_step = _StepState(
                 depth=step_event.get("depth", 0),
                 step=step_event.get("step", 0),
@@ -525,7 +515,7 @@ class RichREPL:
             )
 
     def _on_content_delta(self, delta_type: str, text: str) -> None:
-        self._activity.feed(delta_type, text)
+        pass  # No live activity display — step headers show results after completion
 
     def _flush_step(self) -> None:
         step = self._current_step
@@ -586,7 +576,6 @@ class RichREPL:
                 pass
 
     def _present_result(self, answer: str) -> None:
-        self._activity.stop()
         self._flush_step()
         self.console.print()
         self.console.print(_LeftMarkdown(answer), justify="left")
