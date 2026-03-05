@@ -18,10 +18,11 @@ from .model import (
 from .tools import ARATools
 
 _ANTHROPIC_RE = re.compile(r"^claude", re.IGNORECASE)
-_OPENAI_RE = re.compile(r"^(gpt|o[1-4]-|o[1-4]$|chatgpt)", re.IGNORECASE)
+_OPENAI_RE = re.compile(r"^(gpt-[0-9]|o[1-4]-|o[1-4]$|chatgpt)", re.IGNORECASE)
 _OLLAMA_RE = re.compile(
     r"^(llama|mistral|gemma|phi|codellama|deepseek|vicuna|"
-    r"tinyllama|dolphin|wizardlm|orca|nous-hermes|qwen)",
+    r"tinyllama|dolphin|wizardlm|orca|nous-hermes|qwen|"
+    r"gpt-oss|minimax|glm|mxbai|nomic|all-minilm)",
     re.IGNORECASE,
 )
 
@@ -29,6 +30,10 @@ _OLLAMA_RE = re.compile(
 def infer_provider_for_model(model: str) -> str | None:
     if "/" in model:
         return "openrouter"
+    # Ollama models use "name:tag" format (e.g., qwen3-coder:30b, gpt-oss:120b-cloud)
+    # Check this BEFORE OpenAI regex to avoid false matches like "gpt-oss" → openai
+    if ":" in model:
+        return "ollama"
     if _ANTHROPIC_RE.search(model):
         return "anthropic"
     if _OPENAI_RE.search(model):
