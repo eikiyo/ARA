@@ -17,6 +17,7 @@ _log = logging.getLogger(__name__)
 def request_approval(args: dict[str, Any], ctx: dict) -> str:
     phase = args.get("phase", "unknown")
     summary = args.get("summary", "")
+    _log.info("APPROVAL GATE: phase=%s | summary=%d chars", phase, len(summary))
     data_json = args.get("data", "{}")
 
     approval_gates = ctx.get("approval_gates", True)

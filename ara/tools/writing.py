@@ -93,6 +93,7 @@ def _verify_citation_against_db(author_fragment: str, year: str, db: Any, sessio
 def write_section(args: dict[str, Any], ctx: dict) -> str:
     section = args.get("section", "")
     content = args.get("content", "") or args.get("content_guidance", "")
+    _log.info("WRITE_SECTION: section=%s | content_length=%d words", section, len(content.split()))
     citations_json = args.get("citations", "[]")
 
     if not section:

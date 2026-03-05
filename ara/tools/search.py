@@ -581,6 +581,7 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
 
     query = args.get("query", "")
     limit = args.get("limit", 20)
+    _log.info("SEARCH_ALL: query=%r limit=%d", query, limit)
 
     results: dict[str, Any] = {}
     errors: list[str] = []
@@ -617,6 +618,9 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
 
     # Sort by citation count (most cited first)
     all_papers.sort(key=lambda p: p.get("citation_count", 0), reverse=True)
+
+    _log.info("SEARCH_ALL DONE: %d total papers, %d unique after dedup | per_source=%s",
+               len(all_papers) + len(seen_dois), len(all_papers), per_source)
 
     # Return compact summary to model (saves tokens), full data stays in DB
     top_papers = [

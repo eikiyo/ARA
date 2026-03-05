@@ -79,14 +79,20 @@ class RLMEngine:
         from .tools.search import reset_search_all_state
         reset_search_all_state()
 
+        _log.info("=" * 60)
+        _log.info("SOLVE START — objective: %s", objective[:120])
+        _log.info("=" * 60)
+
         ctx = context or ExternalContext()
         try:
-            return self._solve_recursive(
+            result = self._solve_recursive(
                 objective=objective,
                 context=ctx,
                 depth=0,
                 on_event=on_event,
             )
+            _log.info("SOLVE END — result length: %d chars", len(result))
+            return result
         except RateLimitError as exc:
             return f"[Rate limit] API quota exhausted. Wait a few minutes and try again.\n({exc})"
 
@@ -100,10 +106,15 @@ class RLMEngine:
         phase: str = "",
     ) -> str:
         if depth > self.config.max_depth:
+            _log.warning("MAX DEPTH %d reached — returning error", self.config.max_depth)
             return json.dumps({"error": f"Max depth {self.config.max_depth} reached"})
 
         # Select active model based on phase
         active_model = self.writer_model if phase in ("writer", "paper_critic") else self.model
+        model_name = getattr(active_model, 'model', 'unknown')
+        _log.info("-" * 50)
+        _log.info("_solve_recursive START | depth=%d | phase=%s | model=%s", depth, phase or "manager", model_name)
+        _log.info("  objective: %s", objective[:150])
 
         # Build system prompt
         if system_prompt_override:
@@ -147,13 +158,17 @@ class RLMEngine:
 
         while steps < self.config.max_steps_per_call:
             if self.cancel_flag.is_set():
+                _log.info("  CANCELLED at step %d", steps)
                 return last_text or "[Cancelled]"
 
             elapsed = time.time() - start_time
             if elapsed > self.config.max_solve_seconds:
+                _log.warning("  TIMEOUT at step %d after %ds", steps, int(elapsed))
                 return last_text or json.dumps({"error": f"Timeout after {int(elapsed)}s"})
 
             steps += 1
+            _log.info("  step %d/%d | depth=%d | phase=%s | elapsed=%.0fs",
+                       steps, self.config.max_steps_per_call, depth, phase or "manager", elapsed)
 
             # Generate
             if on_event:
@@ -187,6 +202,7 @@ class RLMEngine:
 
             # No tool calls → done
             if not turn.tool_calls:
+                _log.info("  NO TOOL CALLS at step %d — ending loop | text=%d chars", steps, len(turn.text or ""))
                 if turn.text:
                     active_model.append_assistant_turn(conversation, turn)
                 break
@@ -235,6 +251,10 @@ class RLMEngine:
             # Cap after dedup — strictly 1 tool per turn (serial execution)
             capped_calls = unique_calls[:self.config.max_tool_calls_per_turn]
             dropped = len(unique_calls) - len(capped_calls)
+            for tc in capped_calls:
+                _log.info("  TOOL CALL: %s(%s)", tc.name, json.dumps(tc.arguments, default=str)[:120])
+            if dropped > 0:
+                _log.info("  DROPPED %d extra tool calls (serial mode)", dropped)
 
             # Append assistant turn (with only the capped calls)
             capped_turn = ModelTurn(text=turn.text, tool_calls=capped_calls, usage=turn.usage)
@@ -394,6 +414,9 @@ class RLMEngine:
     ) -> str:
         objective = tc.arguments.get("objective", "")
         phase = tc.arguments.get("prompt", "")
+        _log.info("=" * 40)
+        _log.info("SUBTASK START | depth=%d->%d | phase=%s", depth, depth + 1, phase or "inferred")
+        _log.info("  objective: %s", objective[:200])
 
         if on_event:
             on_event(StepEvent("subtask_start", data=objective[:200], depth=depth))
@@ -432,6 +455,7 @@ class RLMEngine:
         if result.startswith('{"error":'):
             _log.warning("Subtask returned error: %s", result[:200])
 
+        _log.info("SUBTASK END | depth=%d | phase=%s | result=%d chars", depth, phase or "inferred", len(result))
         if on_event:
             on_event(StepEvent("subtask_end", data=result[:200], depth=depth))
 

@@ -134,8 +134,10 @@ class ARATools:
         return defs
 
     def dispatch(self, tool_name: str, arguments: dict[str, Any]) -> str:
+        _log.info("DISPATCH: %s(%s)", tool_name, json.dumps(arguments, default=str)[:150])
         handler = TOOL_DISPATCH.get(tool_name)
         if handler is None:
+            _log.warning("DISPATCH: unknown tool %s", tool_name)
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
         # Validate required parameters before dispatch
@@ -157,10 +159,11 @@ class ARATools:
         try:
             result = handler(arguments, ctx)
         except Exception as exc:
-            _log.exception("Tool %s failed", tool_name)
+            _log.exception("DISPATCH FAIL: %s — %s", tool_name, exc)
             return json.dumps({"error": f"Tool '{tool_name}' failed: {exc}"})
 
         result_str = result if isinstance(result, str) else json.dumps(result, default=str)
+        _log.info("DISPATCH RESULT: %s → %d chars | preview: %s", tool_name, len(result_str), result_str[:120])
 
         # Auto-store search results in DB
         if tool_name == "search_all":

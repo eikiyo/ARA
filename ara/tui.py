@@ -135,7 +135,7 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import InMemoryHistory
 
-    console = Console()
+    console = Console(width=min(200, Console().width))
 
     # Banner
     try:
@@ -194,7 +194,7 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
                     activity_lines.append(line)
             elif event.event_type == "tool_result":
                 # Collapse duplicate results into count
-                snippet = event.data[:60]
+                snippet = event.data[:200]
                 line = f"  [green]result:[/green] {snippet}"
                 if activity_lines and activity_lines[-1].startswith("  [green]result:[/green]"):
                     prev = activity_lines[-1]
@@ -209,11 +209,11 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
                 else:
                     activity_lines.append(line)
             elif event.event_type == "subtask_start":
-                activity_lines.append(f"  [cyan]subtask:[/cyan] {event.data[:80]}")
+                activity_lines.append(f"  [cyan]subtask:[/cyan] {event.data[:200]}")
             elif event.event_type == "subtask_end":
                 activity_lines.append(f"  [cyan]subtask done[/cyan]")
             elif event.event_type == "error":
-                activity_lines.append(f"  [red]error:[/red] {event.data[:80]}")
+                activity_lines.append(f"  [red]error:[/red] {event.data[:200]}")
 
             # No trimming — bounded by solve duration; printed_count tracks index
 
