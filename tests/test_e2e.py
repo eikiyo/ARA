@@ -202,12 +202,13 @@ class TestEngineFlows:
         assert result == "Done with two calls."
 
     def test_tool_call_capping(self):
-        """Engine caps tool calls when exceeding max_tool_calls_per_turn."""
+        """Engine deduplicates identical calls, then caps remaining."""
         model = ScriptedModel([
             ModelTurn(
                 text="",
                 tool_calls=[
-                    ToolCall(id=f"c{i}", name="get_rules", arguments={})
+                    # 10 unique calls (different arguments) + 10 dupes = 20 total
+                    ToolCall(id=f"c{i}", name="get_rules", arguments={"q": i})
                     for i in range(20)
                 ],
                 usage=TokenUsage(50, 20),
@@ -221,7 +222,7 @@ class TestEngineFlows:
         events = []
         result = engine.solve("test", on_event=lambda e: events.append(e))
         assert result == "Capped."
-        # Should only see 3 tool_call events, not 20
+        # Should only see 3 tool_call events (deduped to 20 unique, capped to 3)
         tool_events = [e for e in events if e.event_type == "tool_call"]
         assert len(tool_events) == 3
 
@@ -231,9 +232,9 @@ class TestEngineFlows:
             ModelTurn(
                 text="",
                 tool_calls=[
-                    ToolCall(id="c1", name="get_rules", arguments={}),
-                    ToolCall(id="c2", name="get_rules", arguments={}),
-                    ToolCall(id="c3", name="get_rules", arguments={}),
+                    ToolCall(id="c1", name="get_rules", arguments={"q": 1}),
+                    ToolCall(id="c2", name="get_rules", arguments={"q": 2}),
+                    ToolCall(id="c3", name="get_rules", arguments={"q": 3}),
                 ],
                 usage=TokenUsage(50, 20),
             ),

@@ -23,7 +23,7 @@ class ARAConfig:
     # Engine limits
     max_depth: int = 4
     max_steps_per_call: int = 80
-    max_tool_calls_per_turn: int = 15
+    max_tool_calls_per_turn: int = 5
     max_solve_seconds: int = 1800
     budget_limit_usd: float = 5.0
 
@@ -40,7 +40,7 @@ class ARAConfig:
             google_api_key=os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY"),
             max_depth=int(os.getenv("ARA_MAX_DEPTH", "4")),
             max_steps_per_call=int(os.getenv("ARA_MAX_STEPS", "80")),
-            max_tool_calls_per_turn=int(os.getenv("ARA_MAX_TOOL_CALLS_PER_TURN", "15")),
+            max_tool_calls_per_turn=int(os.getenv("ARA_MAX_TOOL_CALLS_PER_TURN", "5")),
             max_solve_seconds=int(os.getenv("ARA_MAX_SOLVE_SECONDS", "1800")),
             budget_limit_usd=float(os.getenv("ARA_BUDGET_LIMIT", "5.0")),
         )

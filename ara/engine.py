@@ -169,12 +169,26 @@ class RLMEngine:
                     self.model.append_assistant_turn(conversation, turn)
                 break
 
-            # Cap tool calls per turn to prevent runaway behavior
-            capped_calls = turn.tool_calls[:self.config.max_tool_calls_per_turn]
-            if len(turn.tool_calls) > self.config.max_tool_calls_per_turn:
+            # Deduplicate tool calls: Gemini often generates 40+ identical calls
+            seen_sigs: dict[str, ToolCall] = {}
+            unique_calls: list[ToolCall] = []
+            for tc in turn.tool_calls:
+                sig = f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)}"
+                if sig not in seen_sigs:
+                    seen_sigs[sig] = tc
+                    unique_calls.append(tc)
+            if len(unique_calls) < len(turn.tool_calls):
+                _log.info(
+                    "Deduped tool calls from %d to %d unique",
+                    len(turn.tool_calls), len(unique_calls),
+                )
+
+            # Cap after dedup
+            capped_calls = unique_calls[:self.config.max_tool_calls_per_turn]
+            if len(unique_calls) > self.config.max_tool_calls_per_turn:
                 _log.warning(
                     "Capped tool calls from %d to %d",
-                    len(turn.tool_calls), self.config.max_tool_calls_per_turn,
+                    len(unique_calls), self.config.max_tool_calls_per_turn,
                 )
 
             # Append assistant turn (with only the capped calls)
