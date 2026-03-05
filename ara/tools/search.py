@@ -19,9 +19,9 @@ _log = get_logger("search")
 
 def _request_with_retry(url: str, params: dict, headers: dict | None = None,
                         max_retries: int = 3, timeout: int = 30) -> httpx.Response:
-    """HTTP GET with retry on 429/5xx. Backoff: 2s, 5s, 10s."""
+    """HTTP GET with retry on 429/5xx. Backoff: 3s, 8s, 15s."""
     import time as _time
-    delays = [2, 5, 10]
+    delays = [3, 8, 15]
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -63,14 +63,19 @@ def search_semantic_scholar(query: str, limit: int = 10) -> str:
         JSON string of standardized paper results
     """
     try:
+        import os as _os
         url = "https://api.semanticscholar.org/graph/v1/paper/search"
         params = {
             "query": query,
-            "limit": limit,
+            "limit": min(limit, 25),  # Cap to reduce rate-limit risk
             "fields": "title,abstract,authors,year,citationCount,externalIds,url"
         }
+        headers = {}
+        s2_key = _os.environ.get("S2_API_KEY") or _os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
+        if s2_key:
+            headers["x-api-key"] = s2_key
 
-        response = _request_with_retry(url, params=params)
+        response = _request_with_retry(url, params=params, headers=headers or None)
         data = response.json()
 
         results = []

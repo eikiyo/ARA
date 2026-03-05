@@ -253,7 +253,9 @@ class RLMEngine:
         if self.session_dir is not None:
             initial_msg_dict["session_dir"] = str(self.session_dir)
         if depth == 0 and turn_history:
-            initial_msg_dict["turn_history"] = [t.to_dict() for t in turn_history]
+            # Only include last 3 turns to avoid context bloat
+            recent = turn_history[-3:]
+            initial_msg_dict["turn_history"] = [t.to_dict() for t in recent]
         initial_message = json.dumps(initial_msg_dict, ensure_ascii=True)
         conversation = model.create_conversation(self.system_prompt, initial_message)
 
@@ -525,14 +527,17 @@ class RLMEngine:
             subtask_max_depth = args.get("max_depth")
             if subtask_max_depth is not None:
                 subtask_max_depth = int(subtask_max_depth)
-                if depth + 1 >= subtask_max_depth:
-                    return False, f"Max depth {subtask_max_depth} reached for this subtask."
+                # max_depth is *additional* levels allowed below current depth
+                # e.g. max_depth=1 means the subtask can run but cannot spawn sub-subtasks
+                effective_limit = depth + 1 + subtask_max_depth
+            else:
+                effective_limit = None
             self._emit(f"[d{depth}] >> entering subtask: {obj}", on_event)
             child_logger = replay_logger.child(depth, step) if replay_logger else None
             # Temporarily override max_depth if subtask specifies it
             original_max_depth = self.config.max_depth
-            if subtask_max_depth is not None:
-                self.config.max_depth = subtask_max_depth
+            if effective_limit is not None:
+                self.config.max_depth = effective_limit
             try:
                 result = self._solve_recursive(
                     objective=obj, depth=depth + 1, context=context,
@@ -540,7 +545,7 @@ class RLMEngine:
                     model_override=subtask_model, replay_logger=child_logger,
                 )
             finally:
-                if subtask_max_depth is not None:
+                if effective_limit is not None:
                     self.config.max_depth = original_max_depth
             observation = f"Subtask result for '{obj}':\n{result}"
             if criteria and self.config.acceptance_criteria:

@@ -575,6 +575,10 @@ class RichREPL:
             except Exception:
                 pass
 
+    def _pad_bottom(self) -> None:
+        """Print 8 blank lines to keep output away from terminal bottom."""
+        self.console.print("\n" * 7, end="")
+
     def _present_result(self, answer: str) -> None:
         self._flush_step()
         self.console.print()
@@ -584,6 +588,7 @@ class RichREPL:
             from rich.text import Text
             self.console.print(Text(f"  tokens: {token_str}", style="dim"))
         self.console.print()
+        self._pad_bottom()
 
     def run(self) -> None:
         from prompt_toolkit.patch_stdout import patch_stdout
@@ -605,6 +610,7 @@ class RichREPL:
             style="dim",
         )
         self.console.print()
+        self._pad_bottom()
         with patch_stdout(raw=True):
             while True:
                 if self._queued_input:
