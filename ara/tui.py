@@ -154,9 +154,31 @@ def run_rich_repl(ctx: ChatContext, startup_info: dict[str, str] | None = None) 
                     activity_lines.append(msg)
                 # Don't spam text chunks to activity
             elif event.event_type == "tool_call":
-                activity_lines.append(f"  [yellow]tool:[/yellow] {event.tool_name}")
+                # Collapse duplicate tool calls into one line with count
+                line = f"  [yellow]tool:[/yellow] {event.tool_name}"
+                if activity_lines and activity_lines[-1].startswith(f"  [yellow]tool:[/yellow] {event.tool_name}"):
+                    prev = activity_lines[-1]
+                    # Extract count if already there
+                    if " x" in prev:
+                        count = int(prev.split(" x")[-1]) + 1
+                    else:
+                        count = 2
+                    activity_lines[-1] = f"{line} x{count}"
+                else:
+                    activity_lines.append(line)
             elif event.event_type == "tool_result":
-                activity_lines.append(f"  [green]result:[/green] {event.data[:80]}")
+                # Collapse duplicate results into count
+                snippet = event.data[:60]
+                line = f"  [green]result:[/green] {snippet}"
+                if activity_lines and activity_lines[-1].startswith("  [green]result:[/green]"):
+                    prev = activity_lines[-1]
+                    if " x" in prev:
+                        count = int(prev.rsplit(" x", 1)[-1]) + 1
+                    else:
+                        count = 2
+                    activity_lines[-1] = f"  [green]result:[/green] {snippet} x{count}"
+                else:
+                    activity_lines.append(line)
             elif event.event_type == "subtask_start":
                 activity_lines.append(f"  [cyan]subtask:[/cyan] {event.data[:80]}")
             elif event.event_type == "subtask_end":

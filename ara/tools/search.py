@@ -534,6 +534,12 @@ _ALL_SEARCH_FNS = [
 
 
 _MIN_PAPERS = 30  # Skip searching if DB already has this many
+_search_all_done = False  # Set after first successful search
+
+
+def reset_search_all_state() -> None:
+    global _search_all_done
+    _search_all_done = False
 
 
 def search_all(args: dict[str, Any], ctx: dict) -> str:
@@ -541,21 +547,20 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
 
     Returns a summary to the model (counts + top 10 papers) to save tokens.
     Full results are auto-stored in the DB by the tool dispatch layer.
-    Skips entirely if DB already has enough papers.
+    Only runs ONCE per session — subsequent calls return cached count.
     """
+    global _search_all_done
+
     # Check DB — if we already have enough papers, skip
     db = ctx.get("db")
     session_id = ctx.get("session_id")
     if db and session_id:
         existing = db.paper_count(session_id)
-        if existing >= _MIN_PAPERS:
-            _log.info("search_all skipped: DB already has %d papers (min %d)", existing, _MIN_PAPERS)
+        if existing >= _MIN_PAPERS or _search_all_done:
             return json.dumps({
-                "total": existing,
-                "per_source": {},
-                "top_papers": [],
-                "errors": [],
-                "note": f"Already {existing} papers in database. No need to search again. Proceed to the next phase.",
+                "status": "done",
+                "total_in_db": existing,
+                "note": f"{existing} papers already in database. STOP searching. Proceed to next phase.",
             })
 
     query = args.get("query", "")
@@ -608,12 +613,16 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
     _search_all_full_results.clear()
     _search_all_full_results.extend(all_papers)
 
+    # Mark search as done — all subsequent calls will return cached count
+    _search_all_done = True
+
     return json.dumps({
+        "status": "done",
         "total": len(all_papers),
         "per_source": per_source,
         "top_papers": top_papers,
         "errors": errors,
-        "note": f"All {len(all_papers)} papers stored in database. Top 10 shown by citation count.",
+        "note": f"{len(all_papers)} papers stored in database. STOP searching. Proceed to next phase.",
     })
 
 
