@@ -249,6 +249,12 @@ class ARADB:
         d["authors"] = json.loads(d.get("authors") or "[]")
         return d
 
+    def paper_count(self, session_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM papers WHERE session_id = ?", (session_id,),
+        ).fetchone()
+        return row[0] if row else 0
+
     def get_papers(self, session_id: int, limit: int = 500) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM papers WHERE session_id = ? ORDER BY citation_count DESC LIMIT ?",

@@ -72,10 +72,6 @@ class RLMEngine:
         context: ExternalContext | None = None,
         on_event: StepCallback | None = None,
     ) -> str:
-        # Reset per-solve state
-        from .tools.search import reset_search_all_counter
-        reset_search_all_counter()
-
         ctx = context or ExternalContext()
         try:
             return self._solve_recursive(

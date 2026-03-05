@@ -533,13 +533,7 @@ _ALL_SEARCH_FNS = [
 ]
 
 
-_search_all_call_count: int = 0
-_SEARCH_ALL_MAX_CALLS: int = 2
-
-
-def reset_search_all_counter() -> None:
-    global _search_all_call_count
-    _search_all_call_count = 0
+_MIN_PAPERS = 30  # Skip searching if DB already has this many
 
 
 def search_all(args: dict[str, Any], ctx: dict) -> str:
@@ -547,15 +541,22 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
 
     Returns a summary to the model (counts + top 10 papers) to save tokens.
     Full results are auto-stored in the DB by the tool dispatch layer.
-    Hard-limited to 2 calls per session.
+    Skips entirely if DB already has enough papers.
     """
-    global _search_all_call_count
-    _search_all_call_count += 1
-    if _search_all_call_count > _SEARCH_ALL_MAX_CALLS:
-        return json.dumps({
-            "error": f"search_all already called {_SEARCH_ALL_MAX_CALLS} times. Papers are in the database. Move to the next phase.",
-            "total": 0,
-        })
+    # Check DB — if we already have enough papers, skip
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+    if db and session_id:
+        existing = db.paper_count(session_id)
+        if existing >= _MIN_PAPERS:
+            _log.info("search_all skipped: DB already has %d papers (min %d)", existing, _MIN_PAPERS)
+            return json.dumps({
+                "total": existing,
+                "per_source": {},
+                "top_papers": [],
+                "errors": [],
+                "note": f"Already {existing} papers in database. No need to search again. Proceed to the next phase.",
+            })
 
     query = args.get("query", "")
     limit = args.get("limit", 20)
