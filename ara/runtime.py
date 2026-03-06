@@ -42,6 +42,7 @@ class SessionRuntime:
         # Wire DB to tools
         engine.tools.db = db
         engine.tools.session_id = db_session_id
+        engine.tools.central_db = getattr(db, '_central', None)
 
     @classmethod
     def bootstrap(

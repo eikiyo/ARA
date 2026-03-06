@@ -101,12 +101,14 @@ def rate_limited_get(
     headers: dict[str, str] | None = None,
     params: dict[str, Any] | None = None,
     timeout: int = _TIMEOUT,
+    max_retries: int | None = None,
 ) -> httpx.Response:
     """HTTP GET with per-domain rate limiting and exponential backoff on 429."""
     domain = _extract_domain(url)
     client = _get_client()
+    retries = max_retries if max_retries is not None else _MAX_RETRIES
 
-    for attempt in range(_MAX_RETRIES):
+    for attempt in range(retries):
         _wait_for_slot(domain)
         try:
             resp = client.get(url, headers=headers, params=params, timeout=timeout)
@@ -121,7 +123,7 @@ def rate_limited_get(
                         wait = min(5 * (2 ** attempt), 30)
                 else:
                     wait = min(5 * (2 ** attempt), 30)
-                _log.warning("429 from %s, backing off %ds (attempt %d/%d)", domain, int(wait), attempt + 1, _MAX_RETRIES)
+                _log.warning("429 from %s, backing off %ds (attempt %d/%d)", domain, int(wait), attempt + 1, retries)
                 time.sleep(wait)
                 continue
 
@@ -139,13 +141,13 @@ def rate_limited_get(
             time.sleep(wait)
         except Exception as exc:
             _log.warning("HTTP error on %s (attempt %d): %s", domain, attempt + 1, exc)
-            if attempt < _MAX_RETRIES - 1:
+            if attempt < retries - 1:
                 time.sleep(3 * (attempt + 1))
             else:
                 raise
 
     # All retries exhausted — return a synthetic 429 response
-    _log.error("All %d retries exhausted for %s", _MAX_RETRIES, url[:100])
+    _log.error("All %d retries exhausted for %s", retries, url[:100])
     return httpx.Response(status_code=429, text="Rate limit retries exhausted")
 
 

@@ -29,10 +29,11 @@ _s2_lock = threading.Lock()
 def _request_with_retry(
     url: str, headers: dict | None = None,
     params: dict | None = None, timeout: int = _TIMEOUT,
+    max_retries: int | None = None,
 ) -> dict | str | None:
     """HTTP GET with per-domain rate limiting, backoff on 429, and retry."""
     try:
-        resp = rate_limited_get(url, headers=headers, params=params, timeout=timeout)
+        resp = rate_limited_get(url, headers=headers, params=params, timeout=timeout, max_retries=max_retries)
         if resp.status_code >= 400:
             _log.warning("HTTP %d from %s", resp.status_code, url[:80])
             return None
@@ -114,7 +115,7 @@ def search_semantic_scholar(args: dict[str, Any], ctx: dict) -> str:
 
     data = _request_with_retry(
         "https://api.semanticscholar.org/graph/v1/paper/search",
-        headers=headers, params=params,
+        headers=headers, params=params, max_retries=1,
     )
     if not isinstance(data, dict):
         return json.dumps({"papers": [], "error": "Semantic Scholar unavailable"})
