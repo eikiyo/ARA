@@ -681,7 +681,7 @@ class PeerReviewPipeline:
     def _apply_revisions(
         self, consensus: dict, sections_dir: Path, paper_md: str,
     ) -> None:
-        """Use Opus to make surgical edits to section .md files."""
+        """Use Opus to make surgical edits — one section at a time to avoid truncation."""
         if not sections_dir.exists():
             self._emit("  No sections directory found — cannot apply revisions")
             return
@@ -696,37 +696,71 @@ class PeerReviewPipeline:
             self._emit("  No section files found")
             return
 
-        prompt = _build_revision_prompt(paper_md, consensus, section_files)
-        response_text, usage = self._generate("claude_opus", prompt)
-        parsed = _extract_json(response_text)
-        edits = parsed.get("edits", [])
+        # Build feedback text once
+        feedback_text = ""
+        for attr, data in consensus.items():
+            score = data.get("score", 0)
+            feedback_text += f"\n### {attr} ({score}/100)\n"
+            feedback_text += f"Feedback: {data.get('feedback', '')}\n"
+            feedback_text += f"Improvement plan: {data.get('improvement_plan', '')}\n"
 
-        applied = 0
-        for edit in edits:
-            section = edit.get("section", "")
-            find_text = edit.get("find", "")
-            replace_text = edit.get("replace", "")
+        total_applied = 0
+        total_edits = 0
 
-            if not section or not find_text or find_text == replace_text:
+        # Process each section independently — keeps JSON responses small
+        for section_name, content in section_files.items():
+            if not self._check_budget():
+                self._emit(f"  Budget limit reached at section {section_name}")
+                break
+
+            # Skip synthesis_data, writing_brief, protocol — not paper sections
+            if section_name in ("synthesis_data", "writing_brief", "protocol"):
                 continue
 
-            if section not in section_files:
-                _log.warning("Revision targets unknown section: %s", section)
-                continue
+            prompt = (
+                f"You are the revision agent. Make SURGICAL EDITS to the '{section_name}' section "
+                f"to address peer review feedback.\n\n"
+                f"## Peer Review Consensus\n{feedback_text}\n\n"
+                f"## Current Section: {section_name}\n\n{content}\n\n"
+                f"## Instructions\n"
+                f"Output a JSON with edits for THIS section only:\n"
+                f'{{"edits": [{{"find": "<exact text to find>", "replace": "<replacement text>"}}, ...]}}\n\n'
+                f"Rules:\n"
+                f"- Only address feedback relevant to this section\n"
+                f"- Keep edits minimal and precise — do not rewrite full paragraphs unless necessary\n"
+                f"- Maintain citation accuracy — do not add phantom citations\n"
+                f"- Each 'find' string must be an EXACT substring of the current section content\n"
+                f"- If no changes needed for this section, return {{\"edits\": []}}"
+            )
 
-            content = section_files[section]
-            if find_text in content:
-                content = content.replace(find_text, replace_text, 1)
-                section_files[section] = content
-                applied += 1
-            else:
-                _log.warning("Revision 'find' text not found in section %s: %s...", section, find_text[:80])
+            response_text, usage = self._generate("claude_opus", prompt)
+            parsed = _extract_json(response_text)
+            edits = parsed.get("edits", [])
 
-        # Write back edited sections
-        for name, content in section_files.items():
-            (sections_dir / f"{name}.md").write_text(content, encoding="utf-8")
+            section_applied = 0
+            for edit in edits:
+                find_text = edit.get("find", "")
+                replace_text = edit.get("replace", "")
 
-        self._emit(f"  Applied {applied}/{len(edits)} surgical edits")
+                if not find_text or find_text == replace_text:
+                    continue
+
+                if find_text in content:
+                    content = content.replace(find_text, replace_text, 1)
+                    section_applied += 1
+                else:
+                    _log.warning("Revision 'find' text not found in section %s: %s...", section_name, find_text[:80])
+
+            if section_applied > 0:
+                (sections_dir / f"{section_name}.md").write_text(content, encoding="utf-8")
+                section_files[section_name] = content
+
+            total_applied += section_applied
+            total_edits += len(edits)
+            if edits:
+                _log.info("PEER_REVIEW: Section %s — applied %d/%d edits", section_name, section_applied, len(edits))
+
+        self._emit(f"  Applied {total_applied}/{total_edits} surgical edits across sections")
 
     def _regenerate_output(self, topic: str, paper_type: str) -> None:
         """Regenerate paper.md, paper.html, index.html from revised sections."""
