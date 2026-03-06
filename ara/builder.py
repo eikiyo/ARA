@@ -56,7 +56,7 @@ def build_engine(cfg: ARAConfig) -> RLMEngine:
     tools = ARATools(workspace=cfg.workspace, approval_gates=cfg.approval_gates, config=cfg)
 
     model_name = (cfg.model or "gemini-3.1-pro-preview").strip()
-    writer_model_name = (cfg.writer_model or "gemini-2.5-pro").strip()
+    writer_model_name = (cfg.writer_model or "gemini-3.1-pro-preview").strip()
 
     if cfg.google_api_key:
         try:
