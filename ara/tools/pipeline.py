@@ -113,8 +113,35 @@ def _get_api_key() -> str | None:
         return None
 
 
+def _extract_section(full_text: str, section_names: list[str], max_words: int = 300) -> str:
+    """Extract a section from full text by matching heading patterns.
+    Returns up to max_words from the first matching section."""
+    import re
+    text_lower = full_text.lower()
+    for name in section_names:
+        # Match common heading patterns: "# Introduction", "1. Introduction", "INTRODUCTION", "Introduction\n"
+        patterns = [
+            rf'(?:^|\n)#+\s*{name}\b',           # Markdown headings
+            rf'(?:^|\n)\d+\.?\s*{name}\b',        # Numbered headings
+            rf'(?:^|\n){name.upper()}\s*\n',       # ALL CAPS headings
+            rf'(?:^|\n){name}\s*\n',               # Plain headings
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                start = match.end()
+                # Extract text until next heading or max_words
+                remaining = full_text[start:]
+                next_heading = re.search(r'\n(?:#+\s|\d+\.?\s+[A-Z]|[A-Z]{4,}\s*\n)', remaining)
+                if next_heading:
+                    remaining = remaining[:next_heading.start()]
+                words = remaining.split()[:max_words]
+                return " ".join(words)
+    return ""
+
+
 def _build_embed_text(paper: dict) -> str:
-    """Build the text to embed for a paper: title + abstract + authors."""
+    """Build the text to embed for a paper: title + abstract + authors + key sections from full text."""
     parts = []
     if paper.get("title"):
         parts.append(paper["title"])
@@ -123,7 +150,26 @@ def _build_embed_text(paper: dict) -> str:
     authors = paper.get("authors", [])
     if isinstance(authors, list) and authors:
         parts.append("Authors: " + ", ".join(str(a) for a in authors))
-    return " ".join(parts)
+
+    # Extract key sections from full text if available
+    full_text = paper.get("full_text")
+    if full_text and len(full_text) > 200:
+        intro = _extract_section(full_text, ["introduction", "background"], max_words=250)
+        if intro:
+            parts.append("Introduction: " + intro)
+        methods = _extract_section(full_text, ["method", "methods", "methodology", "research design"], max_words=200)
+        if methods:
+            parts.append("Methods: " + methods)
+        conclusion = _extract_section(full_text, ["conclusion", "conclusions", "concluding remarks"], max_words=200)
+        if conclusion:
+            parts.append("Conclusion: " + conclusion)
+
+    # Gemini embedding-001 has ~2048 token limit; cap at ~1800 words to stay safe
+    combined = " ".join(parts)
+    words = combined.split()
+    if len(words) > 1800:
+        combined = " ".join(words[:1800])
+    return combined
 
 
 def batch_embed_papers(args: dict[str, Any], ctx: dict) -> str:

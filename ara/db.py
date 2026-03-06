@@ -539,7 +539,7 @@ class ARADB:
 
     def get_unembedded_papers(self, session_id: int) -> list[dict[str, Any]]:
         rows = self._conn.execute(
-            "SELECT paper_id, title, abstract, authors FROM papers "
+            "SELECT paper_id, title, abstract, authors, full_text FROM papers "
             "WHERE session_id = ? AND embedding IS NULL",
             (session_id,),
         ).fetchall()
