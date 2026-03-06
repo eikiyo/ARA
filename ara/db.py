@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS grade_evidence (
 CREATE INDEX IF NOT EXISTS idx_papers_session ON papers(session_id);
 CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers(doi);
 CREATE INDEX IF NOT EXISTS idx_claims_session ON claims(session_id);
+CREATE INDEX IF NOT EXISTS idx_claims_paper ON claims(paper_id);
 CREATE INDEX IF NOT EXISTS idx_hypotheses_session ON hypotheses(session_id);
 CREATE INDEX IF NOT EXISTS idx_prisma_session ON prisma_stats(session_id);
 CREATE INDEX IF NOT EXISTS idx_audit_session ON quality_audit(session_id);
@@ -690,10 +691,21 @@ class ARADB:
     def store_prisma_stat(self, session_id: int, stage: str, count: int, details: str | None = None) -> None:
         now = _now()
         with self._lock:
-            self._conn.execute(
-                "INSERT INTO prisma_stats (session_id, stage, count, details, created_at) VALUES (?, ?, ?, ?, ?)",
-                (session_id, stage, count, details, now),
-            )
+            # UPSERT: update if stage already exists for this session, insert otherwise
+            existing = self._conn.execute(
+                "SELECT stat_id FROM prisma_stats WHERE session_id = ? AND stage = ?",
+                (session_id, stage),
+            ).fetchone()
+            if existing:
+                self._conn.execute(
+                    "UPDATE prisma_stats SET count = ?, details = ?, created_at = ? WHERE stat_id = ?",
+                    (count, details, now, existing[0]),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO prisma_stats (session_id, stage, count, details, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (session_id, stage, count, details, now),
+                )
             self._conn.commit()
 
     def get_prisma_stats(self, session_id: int) -> list[dict[str, Any]]:

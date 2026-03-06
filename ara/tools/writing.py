@@ -15,7 +15,9 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 # Track per-section rejection count so we don't loop forever
+# Keyed by "session_id:section_key" — auto-cleans stale entries on access
 _section_rejection_counts: dict[str, int] = {}
+_section_rejection_session: int | None = None  # Track which session owns the counts
 _MAX_SECTION_REJECTIONS = 3  # After this many citation rejections, save anyway
 
 # Fallback minimums — overridden by config at runtime via ctx
@@ -134,12 +136,9 @@ def _verify_citation_against_db(author_fragment: str, year: str, db: Any, sessio
                     if val:
                         paper_tokens.update(_normalize_author(val))
 
-        # Also check title words for edge cases (some APIs store first-author in title)
-        title_lower = (row["title"] or "").lower()
-
-        # Match: ANY cite token appears in paper author tokens
+        # Match: ANY cite token appears in paper author tokens (authors only, not titles)
         for ct in cite_tokens:
-            if ct in paper_tokens or ct in title_lower:
+            if ct in paper_tokens:
                 return {"verified": True, "paper_id": row["paper_id"], "title": row["title"]}
 
     return {"verified": False, "reason": "not_found_in_db"}
@@ -233,7 +232,13 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
 
     # If critical errors, check retry budget before rejecting
     if errors:
-        rejection_key = f"{ctx.get('session_id', 0)}:{section_key}"
+        global _section_rejection_session
+        current_session = ctx.get('session_id', 0)
+        # Clear stale counts from previous sessions
+        if _section_rejection_session != current_session:
+            _section_rejection_counts.clear()
+            _section_rejection_session = current_session
+        rejection_key = f"{current_session}:{section_key}"
         _section_rejection_counts[rejection_key] = _section_rejection_counts.get(rejection_key, 0) + 1
         rejections = _section_rejection_counts[rejection_key]
         _log.warning("WRITE_SECTION REJECTED: section=%s | attempt=%d/%d | %s",

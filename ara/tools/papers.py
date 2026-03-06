@@ -395,22 +395,48 @@ def list_claims(args: dict[str, Any], ctx: dict) -> str:
 
     # Cap output to prevent context flooding
     output = json.dumps({"claims": enriched, "total": len(enriched)}, default=str)
-    if len(output) > 100_000:
-        # Truncate to top claims by confidence
-        enriched.sort(key=lambda x: x.get("confidence") or 0, reverse=True)
-        enriched = enriched[:200]
-        output = json.dumps({"claims": enriched, "total": len(claims), "truncated_to": 200}, default=str)
+    if len(output) > 120_000:
+        # Keep top claims by confidence, but ensure paper diversity:
+        # take at most 5 claims per paper, then sort by confidence
+        by_paper: dict[int, list[dict]] = {}
+        for c in enriched:
+            pid = c.get("paper_id", 0)
+            by_paper.setdefault(pid, []).append(c)
+        diverse: list[dict] = []
+        for pid, pc in by_paper.items():
+            pc.sort(key=lambda x: x.get("confidence") or 0, reverse=True)
+            diverse.extend(pc[:5])
+        diverse.sort(key=lambda x: x.get("confidence") or 0, reverse=True)
+        diverse = diverse[:300]
+        output = json.dumps({"claims": diverse, "total": len(claims), "truncated_to": len(diverse)}, default=str)
     return output
 
 
-def _enrich_with_claims(papers: list[dict], db: Any, session_id: int) -> list[dict]:
-    """Add top claims to each paper in the list."""
+_claims_cache: dict[int, dict[int, list[dict]]] = {}  # session_id -> {paper_id -> [claims]}
+
+def _get_claims_by_paper(db: Any, session_id: int) -> dict[int, list[dict]]:
+    """Get claims grouped by paper_id, cached per session."""
+    if session_id in _claims_cache:
+        return _claims_cache[session_id]
     all_claims = db.get_claims(session_id)
-    claims_by_paper: dict[int, list[dict]] = {}
+    by_paper: dict[int, list[dict]] = {}
     for c in all_claims:
         pid = c.get("paper_id")
         if pid:
-            claims_by_paper.setdefault(pid, []).append(c)
+            by_paper.setdefault(pid, []).append(c)
+    _claims_cache[session_id] = by_paper
+    return by_paper
+
+def invalidate_claims_cache(session_id: int | None = None) -> None:
+    """Clear claims cache (call after storing new claims)."""
+    if session_id:
+        _claims_cache.pop(session_id, None)
+    else:
+        _claims_cache.clear()
+
+def _enrich_with_claims(papers: list[dict], db: Any, session_id: int) -> list[dict]:
+    """Add top claims to each paper in the list."""
+    claims_by_paper = _get_claims_by_paper(db, session_id)
 
     for p in papers:
         pid = p.get("id") or p.get("paper_id")
@@ -452,10 +478,11 @@ def search_similar(args: dict[str, Any], ctx: dict) -> str:
         if query_emb:
             scored = []
             for p in papers_with_emb:
-                emb = p.pop("embedding")
+                emb = p.get("embedding")
                 sim = _cosine_similarity(query_emb, emb)
-                p["similarity"] = round(sim, 4)
-                scored.append(p)
+                p_copy = {k: v for k, v in p.items() if k != "embedding"}
+                p_copy["similarity"] = round(sim, 4)
+                scored.append(p_copy)
             scored.sort(key=lambda x: x["similarity"], reverse=True)
             top_papers = scored[:limit]
             top_papers = _enrich_with_claims(top_papers, db, session_id)

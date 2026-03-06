@@ -438,7 +438,7 @@ class RLMEngine:
                 f"Write a structured abstract ({c.words_abstract}+ words). Include: Purpose, "
                 "Design/Approach, Findings (framework + key propositions), Originality/Value. "
                 "Be PRECISE about contribution — do not overclaim. Acknowledge that prior work "
-                "(e.g., subsidiary mandate literature, KBV) has addressed related questions. "
+                "has addressed related questions. "
                 "State what THIS paper adds: the integrative framework connecting them. "
                 "Use (Author, Year) citations. Call list_papers first."
             )),
@@ -447,15 +447,14 @@ class RLMEngine:
                 f"the theoretical puzzle, explicit gap statement, framework preview, "
                 f"contribution statement (theory + practice), {c.cites_introduction}+ citations. "
                 f"Be PRECISE about contribution claims — acknowledge related prior work "
-                f"(subsidiary mandates, KBV, ambidexterity) before stating what THIS paper adds."
+                f"before stating what THIS paper adds."
             )),
             ("theoretical_background", (
                 f"Write the theoretical background ({c.words_theoretical_background}+ words). "
                 f"Cover 3+ theoretical streams as subsections. For each: foundational works, "
                 f"key developments, current state, AND limitations. "
                 f"Show where streams converge and conflict. {c.cites_literature_review}+ citations. "
-                f"MUST include foundational subsidiary innovation works if available in the database "
-                f"(e.g., Dellestrand, Kappen, Blomkvist, Birkinshaw — search list_papers for these). "
+                f"Search list_papers for foundational authors in the field. "
                 f"End with transition to framework development."
             )),
             ("framework", (
@@ -466,8 +465,7 @@ class RLMEngine:
                 "(b) Process model showing stages/mechanisms with text-based diagram, "
                 "(c) Multi-level framework overview (antecedents → mechanisms → outcomes) explaining "
                 "the logic of each level and how they connect. "
-                "Use FINTECH-SPECIFIC examples throughout (mobile payments, digital lending, "
-                "blockchain-based remittances, AI credit scoring, regulatory sandboxes). "
+                "Use domain-specific examples throughout. "
                 "Ground every element in the theoretical background. 15+ citations."
             )),
             ("propositions", (
@@ -477,15 +475,9 @@ class RLMEngine:
                 "Present 5-8 formal propositions. For EACH: "
                 "formal statement ('Proposition N: ...'), 2-3 paragraphs of theoretical justification, "
                 "supporting evidence from literature, boundary conditions. "
-                "SPECIAL: The RE-CONTEXTUALIZATION proposition (how subsidiaries abstract local "
-                "innovations for global use) is the paper's most novel contribution — "
-                "give it its OWN subsection, operationalize the construct precisely with "
-                "fintech examples (e.g., abstracting M-Pesa's mobile money rails into "
-                "a general micropayments API), and make it the centerpiece. "
-                "At least 2 counter-intuitive propositions that challenge conventional wisdom "
-                "(e.g., moderate uncertainty HELPS innovation, autonomy can REDUCE performance). "
-                "Use fintech-specific operationalizations (e.g., mobile money adoption rates, "
-                "API-driven architecture diffusion, digital identity penetration). "
+                "Identify the most novel proposition and give it its OWN subsection — "
+                "operationalize the construct precisely with domain-specific examples. "
+                "At least 2 counter-intuitive propositions that challenge conventional wisdom. "
                 "End with a summary table of all propositions. 3+ citations per proposition."
             )),
             ("discussion", (
@@ -1052,12 +1044,20 @@ class RLMEngine:
             if long_uncited > 0:
                 issues.append(f"{long_uncited} paragraph(s) over 300 words with no citations")
 
-        # 5. Duplication check — compare with other sections (>40% overlap = problem)
+        # 5. Duplication check — compare with other sections (>60% overlap = problem)
+        _COMMON_ACADEMIC_WORDS = {
+            "the", "and", "of", "to", "in", "a", "is", "that", "for", "was", "on", "are", "with",
+            "as", "this", "by", "from", "be", "have", "an", "has", "their", "been", "were", "or",
+            "which", "not", "its", "also", "it", "more", "between", "these", "than", "other",
+            "study", "studies", "research", "findings", "results", "evidence", "paper", "review",
+            "analysis", "data", "based", "found", "literature", "may", "can", "however", "al",
+            "et", "significant", "associated", "effect", "effects", "participants", "reported",
+        }
         if sections_dir.exists():
-            content_words = set(content.lower().split())
+            content_words = set(content.lower().split()) - _COMMON_ACADEMIC_WORDS
             for other_file in sections_dir.iterdir():
                 if other_file.suffix == ".md" and other_file.stem != section_name and other_file.stat().st_size > 200:
-                    other_words = set(other_file.read_text(encoding="utf-8").lower().split())
+                    other_words = set(other_file.read_text(encoding="utf-8").lower().split()) - _COMMON_ACADEMIC_WORDS
                     if content_words and other_words:
                         overlap = len(content_words & other_words) / min(len(content_words), len(other_words))
                         if overlap > 0.6:
@@ -1194,8 +1194,8 @@ class RLMEngine:
                     f"{self.config.min_paper_words}+ words, "
                     "all sections present, 5+ propositions, 3+ theoretical streams, "
                     "3+ framework comparisons, 5+ future research studies, boundary conditions). "
-                    "ALSO CHECK: (1) fintech specificity — every section must use fintech examples, "
-                    "not generic IB examples, (2) NO PRISMA diagram or systematic review methodology, "
+                    "ALSO CHECK: (1) domain specificity — every section must use topic-relevant examples, "
+                    "not generic examples, (2) NO PRISMA diagram or systematic review methodology, "
                     "(3) framework and propositions sections have DISTINCT content — no duplication, "
                     "(4) at least 2 counter-intuitive propositions. "
                     "If revision needed, specify exactly which sections and what to fix."
@@ -1339,7 +1339,7 @@ class RLMEngine:
             return json.dumps({"error": f"Max depth {self.config.max_depth} reached"})
 
         # Select active model based on phase
-        active_model = self.writer_model if phase in ("writer", "paper_critic", "synthesis", "protocol") else self.model
+        active_model = self.writer_model if phase in ("writer", "paper_critic", "synthesis") else self.model
         model_name = getattr(active_model, 'model', 'unknown')
         _log.info("-" * 50)
         _log.info("_solve_recursive START | depth=%d | phase=%s | model=%s", depth, phase or "manager", model_name)
@@ -1752,7 +1752,11 @@ class RLMEngine:
 
     def _condense(self, conversation: Conversation, context: ExternalContext, result_cache: dict[str, str] | None = None, active_model: BaseModel | None = None) -> None:
         _log.info("Condensing conversation (estimated tokens exceeds 75%% of context window)")
+        # Preserve cache keys (tool signatures already called) but clear cached results
+        # so re-execution uses fresh data. The keys tell us what NOT to re-call.
+        called_tools: list[str] = []
         if result_cache is not None:
+            called_tools = [k.split(":")[0] for k in result_cache.keys()]
             result_cache.clear()
         summary_parts = []
 
@@ -1771,6 +1775,14 @@ class RLMEngine:
             summary_parts.append("Key observations:\n" + "\n".join(
                 f"- {o}" for o in context.observations[-30:]
             ))
+
+        # Tell the model which tools were already called to prevent re-calling
+        if called_tools:
+            tool_counts: dict[str, int] = {}
+            for t in called_tools:
+                tool_counts[t] = tool_counts.get(t, 0) + 1
+            tools_summary = ", ".join(f"{name}(×{count})" for name, count in tool_counts.items())
+            summary_parts.append(f"Tools already called (do NOT re-call unless needed): {tools_summary}")
 
         summary = "\n\n".join(summary_parts) if summary_parts else "Previous context condensed — continue from current state."
         model.condense_conversation(conversation, summary)

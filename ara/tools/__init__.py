@@ -176,7 +176,27 @@ class ARATools:
             ctx["config"] = self.config
 
         try:
-            result = handler(arguments, ctx)
+            import signal
+            import platform
+
+            _TOOL_TIMEOUT = 120  # 2 minute max per tool call
+
+            if platform.system() != "Windows":
+                def _timeout_handler(signum, frame):
+                    raise TimeoutError(f"Tool '{tool_name}' timed out after {_TOOL_TIMEOUT}s")
+
+                old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(_TOOL_TIMEOUT)
+                try:
+                    result = handler(arguments, ctx)
+                finally:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+            else:
+                result = handler(arguments, ctx)
+        except TimeoutError as exc:
+            _log.error("DISPATCH TIMEOUT: %s — %s", tool_name, exc)
+            return json.dumps({"error": f"Tool '{tool_name}' timed out after 120s"})
         except Exception as exc:
             _log.exception("DISPATCH FAIL: %s — %s", tool_name, exc)
             return json.dumps({"error": f"Tool '{tool_name}' failed: {exc}"})

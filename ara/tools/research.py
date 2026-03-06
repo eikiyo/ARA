@@ -47,6 +47,9 @@ def extract_claims(args: dict[str, Any], ctx: dict) -> str:
                 year_range=c.get("year_range", ""),
             )
             stored += 1
+        # Invalidate claims cache so search_similar picks up new claims
+        from .papers import invalidate_claims_cache
+        invalidate_claims_cache(session_id)
         return json.dumps({"stored": stored, "paper_id": paper_id})
 
     # Otherwise return paper content for LLM to extract claims from
@@ -55,8 +58,8 @@ def extract_claims(args: dict[str, Any], ctx: dict) -> str:
         return json.dumps({"error": f"Paper {paper_id} not found"})
 
     full_text = paper.get("full_text", "") or ""
-    if len(full_text) > 5000:
-        full_text = full_text[:5000] + "... [truncated]"
+    if len(full_text) > 25000:
+        full_text = full_text[:25000] + "... [truncated]"
 
     return json.dumps({
         "paper_id": paper_id,
