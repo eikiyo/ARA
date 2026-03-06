@@ -90,7 +90,7 @@ class ARAConfig:
     search_start_year: int = 2014
     search_end_year: int | None = None  # None = current year
 
-    # Paper type: "review" (systematic lit review) or "conceptual" (theoretical/framework paper)
+    # Paper type: "review" (SLR), "scoping" (scoping review), or "conceptual" (theoretical/framework)
     paper_type: str = "review"
 
     # Conceptual paper section word minimums (used when paper_type="conceptual")

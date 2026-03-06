@@ -19,6 +19,7 @@ from .model import (
     BaseModel, Conversation, ModelTurn, ToolCall, ToolResult,
     ModelError, RateLimitError, TokenUsage,
 )
+from .paper_config import get_paper_config, is_phase_enabled, get_phase_mode
 from .prompts import build_system_prompt, build_phase_system_prompt, PHASE_PROMPTS
 from .tools import ARATools, PHASE_TOOLS, _tool_matches_phase
 
@@ -124,6 +125,9 @@ class RLMEngine:
         """Return pipeline phase definitions — branches on paper_type."""
         if self.config.paper_type == "conceptual":
             return self._pipeline_phases_conceptual()
+        # Both "review" and "scoping" use the same phase structure;
+        # scoping differences are handled by phase enablement (paper_config)
+        # and prompt template variables.
         return self._pipeline_phases_review()
 
     @staticmethod
@@ -576,6 +580,16 @@ class RLMEngine:
                     on_event(StepEvent("text", data=f"Skipping {name} (already completed)", depth=0))
                 continue
 
+            # Skip phases disabled for this paper type
+            if not is_phase_enabled(paper_type, name):
+                _log.info("PIPELINE: Skipping %s (disabled for paper_type=%s)", name, paper_type)
+                if on_event:
+                    on_event(StepEvent("text", data=f"Skipping {name} (not required for {paper_type})", depth=0))
+                if db and session_id:
+                    db.save_phase_checkpoint(session_id, name)
+                completed.add(name)
+                continue
+
             _log.info("=" * 40)
             _log.info("PIPELINE PHASE: %s", name)
             _log.info("=" * 40)
@@ -722,7 +736,8 @@ class RLMEngine:
                 # Deduplicate claims
                 self._deduplicate_claims(db, session_id)
 
-                if paper_type != "conceptual":
+                paper_cfg = get_paper_config(paper_type)
+                if paper_cfg.requires_prisma:
                     self._finalize_prisma_exclusions(db, session_id)
 
                 # Wait for brancher if it was started in parallel

@@ -32,8 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true", help="Resume existing session.")
     parser.add_argument("--no-tui", action="store_true", help="Plain text mode.")
     parser.add_argument("--no-gates", action="store_true", help="Auto-approve all phase gates.")
-    parser.add_argument("--paper-type", choices=["review", "conceptual"], default=None,
-                        help="Paper type: 'review' (systematic lit review) or 'conceptual' (theoretical framework).")
+    parser.add_argument("--paper-type", choices=["review", "scoping", "conceptual"], default=None,
+                        help="Paper type: 'review' (SLR), 'scoping' (scoping review), or 'conceptual' (theoretical framework).")
     parser.add_argument("--central-db-stats", action="store_true",
                         help="Show persistent central database statistics and exit.")
     parser.add_argument("--import-session-db", metavar="PATH",
