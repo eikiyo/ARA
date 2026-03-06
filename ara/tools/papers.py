@@ -1,6 +1,6 @@
 # Location: ara/tools/papers.py
-# Purpose: Paper management tools — fetch, read, similarity search
-# Functions: fetch_fulltext, read_paper, search_similar
+# Purpose: Paper management tools — fetch, read, similarity search, claims
+# Functions: fetch_fulltext, read_paper, search_similar, list_claims
 # Calls: httpx, db.py
 # Imports: json, math, os, re, httpx
 
@@ -353,6 +353,54 @@ def _embed_query(text: str) -> list[float] | None:
     except Exception as exc:
         _log.warning("Query embedding failed: %s", exc)
     return None
+
+
+def list_claims(args: dict[str, Any], ctx: dict) -> str:
+    """List all extracted claims with paper metadata. Use to ground writing in actual evidence."""
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+    if not db or not session_id:
+        return json.dumps({"error": "Database or session not available"})
+
+    claims = db.get_claims(session_id)
+    if not claims:
+        return json.dumps({"claims": [], "total": 0, "message": "No claims extracted yet"})
+
+    # Enrich with paper title/author for citation grounding
+    paper_cache: dict[int, dict] = {}
+    enriched = []
+    for c in claims:
+        pid = c.get("paper_id")
+        if pid and pid not in paper_cache:
+            p = db.get_paper(pid)
+            paper_cache[pid] = {"title": p.get("title", ""), "authors": p.get("authors", ""), "year": p.get("year", "")} if p else {}
+        paper_info = paper_cache.get(pid, {})
+        enriched.append({
+            "claim_id": c.get("claim_id"),
+            "paper_id": pid,
+            "paper_title": paper_info.get("title", ""),
+            "authors": paper_info.get("authors", ""),
+            "year": paper_info.get("year", ""),
+            "claim_text": c.get("claim_text", ""),
+            "claim_type": c.get("claim_type", ""),
+            "confidence": c.get("confidence"),
+            "effect_size": c.get("effect_size"),
+            "p_value": c.get("p_value"),
+            "confidence_interval": c.get("confidence_interval"),
+            "sample_size": c.get("sample_size"),
+            "study_design": c.get("study_design"),
+            "population": c.get("population"),
+            "country": c.get("country"),
+        })
+
+    # Cap output to prevent context flooding
+    output = json.dumps({"claims": enriched, "total": len(enriched)}, default=str)
+    if len(output) > 100_000:
+        # Truncate to top claims by confidence
+        enriched.sort(key=lambda x: x.get("confidence") or 0, reverse=True)
+        enriched = enriched[:200]
+        output = json.dumps({"claims": enriched, "total": len(claims), "truncated_to": 200}, default=str)
+    return output
 
 
 def search_similar(args: dict[str, Any], ctx: dict) -> str:

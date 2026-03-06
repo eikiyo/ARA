@@ -122,16 +122,19 @@ Must include:
 ### Process
 
 **Step 0 — Load Available Data (MANDATORY FIRST STEP):**
-1. Call `list_papers` to get ALL papers in the database with their authors, years, and titles
-2. Call `get_risk_of_bias_table()` to retrieve per-study risk of bias assessments
-3. Call `get_grade_table()` to retrieve GRADE evidence certainty ratings per outcome
-4. Study the returned author names and years carefully — these are the ONLY valid citations
-5. Build a mental citation map: which papers support which themes
+1. Call `list_claims()` to get ALL extracted claims with their paper metadata, effect sizes, and study designs. This is your PRIMARY evidence source — every factual statement you write must trace to a claim.
+2. Call `list_papers(compact=true)` to get paper metadata (authors, years, titles) for citation formatting.
+3. Call `get_risk_of_bias_table()` to retrieve per-study risk of bias assessments.
+4. Call `get_grade_table()` to retrieve GRADE evidence certainty ratings per outcome.
+5. Study the returned author names and years carefully — these are the ONLY valid citations.
+6. Build a mental citation map: which claims support which themes, which papers they come from.
 
 **Pass 1 — Detailed Outline:**
-1. Generate comprehensive outline with section headings, subsection headings, and 2-3 sentence summaries per subsection
-2. Plan citation placement — map which papers (from list_papers results) go in which sections
-3. Plan tables — specify what tables will appear in which sections
+1. Generate comprehensive outline with section headings, subsection headings, and 2-3 sentence summaries per subsection.
+2. Plan citation placement — map which claims (from list_claims results) go in which sections. Every claim references a paper — use these as your citations.
+3. For each major section theme, call `search_similar(text="<theme>")` to find the most relevant papers via embedding similarity. This ensures thematically appropriate citations.
+4. For the 3-5 most central papers, call `read_paper(paper_id=ID, include_fulltext=true)` to read their actual text. Use direct quotes and specific findings from the full text.
+5. Plan tables — specify what tables will appear in which sections.
 
 **Pass 2 — Full Draft (write ALL 7 sections):**
 1. Write EACH section using write_section tool in order: abstract, introduction, literature_review, methods, results, discussion, conclusion

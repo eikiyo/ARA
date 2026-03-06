@@ -245,12 +245,15 @@ This prevents the paper from claiming geographic diversity without actually comp
 Present ALL tables and data as text output.
 
 ### STRICT RULES
-- Call `list_papers(compact=true)` ONCE to get paper data
-- Call `get_risk_of_bias_table()` to retrieve stored RoB assessments
-- Call `rate_grade_evidence(...)` for EACH major outcome (5-8 outcomes minimum)
-- Build ALL 13 outputs in one response
-- Author names must EXACTLY match database entries
-- Report effect sizes wherever available in the evidence synthesis
-- GRADE ratings are MANDATORY — use the tool to store them, not just text output
+- Call `list_claims()` FIRST — this is your primary evidence source. Every table, every GRADE rating, every finding MUST trace back to an extracted claim.
+- Call `list_papers(compact=true)` to get paper metadata (authors, years, titles for citation formatting).
+- Call `get_risk_of_bias_table()` to retrieve stored RoB assessments.
+- For the top 5-10 most important papers (highest citation count or most claims), call `read_paper(paper_id=ID, include_fulltext=true)` to read their full text. This grounds your synthesis in the actual paper content, not just extracted claims.
+- Use `search_similar(text="<theme>")` to find papers related to each outcome theme via embedding similarity. This ensures you don't miss relevant papers.
+- Call `rate_grade_evidence(...)` for EACH major outcome (5-8 outcomes minimum).
+- Build ALL 13 outputs in one response.
+- Author names must EXACTLY match database entries.
+- Report effect sizes wherever available in the evidence synthesis — pull these from claims, not from memory.
+- GRADE ratings are MANDATORY — use the tool to store them, not just text output.
 - When done, output all tables as text and stop.
 """

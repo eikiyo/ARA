@@ -176,6 +176,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "list_claims",
+        "description": "List all extracted claims with paper metadata (author, year, title). Returns claim_text, claim_type, effect_size, p_value, sample_size, study_design, population. Use to ground writing in actual extracted evidence.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
         "name": "search_similar",
         "description": "Search for similar papers in the current session by keyword matching.",
         "parameters": {
@@ -446,7 +454,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     # ── Embedding tools ─────────────────────────────────────────
     {
         "name": "batch_embed_papers",
-        "description": "Embed all un-embedded papers in the session using Gemini text-embedding-004. Call this after scout phase to enable semantic similarity search. Embeds title + abstract + authors for each paper.",
+        "description": "Embed all un-embedded papers in the session using Gemini embedding-001. Embeds title + abstract + authors + introduction + methods + conclusion from full text. Enables semantic similarity search via search_similar.",
         "parameters": {
             "type": "object",
             "properties": {},

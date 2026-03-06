@@ -26,10 +26,10 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "hypothesis": ["read_paper", "search_similar", "score_hypothesis"],
     "brancher": ["search_*", "search_similar"],
     "critic": ["read_paper", "search_similar", "list_papers", "get_risk_of_bias_table", "get_grade_table"],
-    "synthesis": ["list_papers", "read_paper", "search_similar", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table"],
+    "synthesis": ["list_papers", "list_claims", "read_paper", "search_similar", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table"],
     "protocol": ["list_papers", "write_section"],
-    "writer": ["list_papers", "read_paper", "search_similar", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table"],
-    "paper_critic": ["read_paper", "search_similar", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
+    "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table"],
+    "paper_critic": ["read_paper", "search_similar", "list_claims", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
 }
 
 
@@ -59,6 +59,7 @@ TOOL_DISPATCH: dict[str, Any] = {
     "read_paper": papers.read_paper,
     "list_papers": papers.list_papers,
     "search_similar": papers.search_similar,
+    "list_claims": papers.list_claims,
     "rate_papers": papers.rate_papers,
     # Verification tools
     "check_retraction": verification.check_retraction,
