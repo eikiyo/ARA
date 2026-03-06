@@ -451,6 +451,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
 
+    # ── Fulltext tools ───────────────────────────────────────────
+    {
+        "name": "batch_fetch_fulltext",
+        "description": "Batch fetch full text from 6 sources in parallel: Semantic Scholar (500/batch), CORE (10/batch), OpenAlex (50/batch), Europe PMC (20/batch), PubMed Central (20/batch), Unpaywall (1/call). Stores results in DB.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+
     # ── Embedding tools ─────────────────────────────────────────
     {
         "name": "batch_embed_papers",

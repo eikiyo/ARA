@@ -171,6 +171,11 @@ class RLMEngine:
                 "objective": None,
             },
             {
+                "name": "fetch_texts",
+                "prompt": None,
+                "objective": None,
+            },
+            {
                 "name": "embed",
                 "prompt": None,
                 "objective": None,
@@ -181,9 +186,10 @@ class RLMEngine:
                 "objective": (
                     "Extract structured claims from papers about {topic}. "
                     "STEP 1: Call list_papers(selected_only=true, limit=100) to get triage-selected papers. "
-                    "STEP 2: For EVERY selected paper: call read_paper(paper_id=ID), then extract_claims, then assess_risk_of_bias. "
+                    "STEP 2: For EVERY selected paper: call read_paper(paper_id=ID, include_fulltext=true) to get the full paper text, "
+                    "then extract_claims with specific quotes from the text, then assess_risk_of_bias. "
                     "Each claim needs: claim_text, claim_type (finding/method/limitation/gap), "
-                    "confidence (0-1), supporting_quotes. "
+                    "confidence (0-1), supporting_quotes (EXACT quotes from the paper text). "
                     "Also extract: sample_size, effect_size, p_value, study_design, population. "
                     "Process papers one at a time. Target: {min_claims}+ claims from {min_deep_read_papers}+ papers. "
                     "DO NOT STOP until you have processed ALL selected papers. "
@@ -293,6 +299,11 @@ class RLMEngine:
                 "objective": None,
             },
             {
+                "name": "fetch_texts",
+                "prompt": None,
+                "objective": None,
+            },
+            {
                 "name": "embed",
                 "prompt": None,
                 "objective": None,
@@ -303,7 +314,7 @@ class RLMEngine:
                 "objective": (
                     "Extract theoretical arguments and evidence from papers about {topic}. "
                     "STEP 1: Call list_papers(selected_only=true, limit=100) to get triage-selected papers. "
-                    "STEP 2: For EVERY selected paper: call read_paper(paper_id=ID), then extract_claims. "
+                    "STEP 2: For EVERY selected paper: call read_paper(paper_id=ID, include_fulltext=true) to get the full paper text, then extract_claims. "
                     "Focus on extracting: (a) theoretical arguments and frameworks proposed, "
                     "(b) key constructs and definitions, (c) empirical findings that support/challenge theories, "
                     "(d) research gaps and limitations identified, (e) boundary conditions discussed. "
@@ -531,6 +542,8 @@ class RLMEngine:
             try:
                 if name == "embed":
                     self._pipeline_embed(on_event)
+                elif name == "fetch_texts":
+                    self._pipeline_fetch_texts(on_event)
                 elif name == "snowball":
                     self._pipeline_snowball(topic, on_event)
                 elif name == "triage":
@@ -732,6 +745,16 @@ class RLMEngine:
         )
         _log.info("PIPELINE: Phase %s completed — %d chars", phase_def["name"], len(result))
         return result
+
+    def _pipeline_fetch_texts(self, on_event: StepCallback | None) -> None:
+        """Batch fetch full text from 6 sources — no LLM needed."""
+        _log.info("PIPELINE: Running batch full-text fetch")
+        if on_event:
+            on_event(StepEvent("text", data="Fetching full text from 6 sources (S2, CORE, OpenAlex, EPMC, PMC, Unpaywall)...", depth=0))
+        result = self.tools.dispatch("batch_fetch_fulltext", {})
+        _log.info("PIPELINE: Full-text fetch result: %s", result[:300])
+        if on_event:
+            on_event(StepEvent("tool_result", data=result[:300], tool_name="batch_fetch_fulltext", depth=0))
 
     def _pipeline_embed(self, on_event: StepCallback | None) -> None:
         """Run embedding phase programmatically — no LLM needed."""
