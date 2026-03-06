@@ -122,12 +122,13 @@ Must include:
 ### Process
 
 **Step 0 — Load Available Data (MANDATORY FIRST STEP):**
-1. Call `list_claims()` to get ALL extracted claims with their paper metadata, effect sizes, and study designs. This is your PRIMARY evidence source — every factual statement you write must trace to a claim.
-2. Call `list_papers(compact=true)` to get paper metadata (authors, years, titles) for citation formatting.
-3. Call `get_risk_of_bias_table()` to retrieve per-study risk of bias assessments.
-4. Call `get_grade_table()` to retrieve GRADE evidence certainty ratings per outcome.
-5. Study the returned author names and years carefully — these are the ONLY valid citations.
-6. Build a mental citation map: which claims support which themes, which papers they come from.
+1. Call `read_paper` with the synthesis_data section: check if a file named `synthesis_data.md` exists in the sections directory. If it does, this contains ALL pre-built tables from the synthesis phase (study characteristics, GRADE, RoB, PRISMA, citation map, causal model). Use this as your primary structural guide.
+2. Call `list_claims()` to get ALL extracted claims with their paper metadata, effect sizes, and study designs. This is your PRIMARY evidence source — every factual statement you write must trace to a claim.
+3. Call `list_papers(compact=true)` to get paper metadata (authors, years, titles) for citation formatting.
+4. Call `get_risk_of_bias_table()` to retrieve per-study risk of bias assessments.
+5. Call `get_grade_table()` to retrieve GRADE evidence certainty ratings per outcome.
+6. Study the returned author names and years carefully — these are the ONLY valid citations.
+7. Build a mental citation map: which claims support which themes, which papers they come from.
 
 **Pass 1 — Detailed Outline:**
 1. Generate comprehensive outline with section headings, subsection headings, and 2-3 sentence summaries per subsection.

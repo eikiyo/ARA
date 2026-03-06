@@ -83,7 +83,7 @@ def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     try:
         resp = rate_limited_get(
             f"https://api.unpaywall.org/v2/{doi}",
-            params={"email": "ara-research@example.com"},
+            params={"email": "syedmosayebalam@gmail.com"},
             timeout=15,
         )
         if resp.status_code == 200:
@@ -403,6 +403,35 @@ def list_claims(args: dict[str, Any], ctx: dict) -> str:
     return output
 
 
+def _enrich_with_claims(papers: list[dict], db: Any, session_id: int) -> list[dict]:
+    """Add top claims to each paper in the list."""
+    all_claims = db.get_claims(session_id)
+    claims_by_paper: dict[int, list[dict]] = {}
+    for c in all_claims:
+        pid = c.get("paper_id")
+        if pid:
+            claims_by_paper.setdefault(pid, []).append(c)
+
+    for p in papers:
+        pid = p.get("id") or p.get("paper_id")
+        if pid and pid in claims_by_paper:
+            paper_claims = claims_by_paper[pid]
+            # Include up to 5 claims per paper, keep it concise
+            p["claims"] = [
+                {
+                    "text": c.get("claim_text", "")[:300],
+                    "confidence": c.get("confidence"),
+                    "effect_size": c.get("effect_size"),
+                    "p_value": c.get("p_value"),
+                    "study_design": c.get("study_design"),
+                }
+                for c in paper_claims[:5]
+            ]
+        else:
+            p["claims"] = []
+    return papers
+
+
 def search_similar(args: dict[str, Any], ctx: dict) -> str:
     """Search for similar papers using cosine similarity on embeddings, with keyword fallback."""
     text = args.get("text", "")
@@ -428,12 +457,15 @@ def search_similar(args: dict[str, Any], ctx: dict) -> str:
                 p["similarity"] = round(sim, 4)
                 scored.append(p)
             scored.sort(key=lambda x: x["similarity"], reverse=True)
+            top_papers = scored[:limit]
+            top_papers = _enrich_with_claims(top_papers, db, session_id)
             return json.dumps({
-                "papers": scored[:limit],
+                "papers": top_papers,
                 "method": "embedding_cosine",
                 "total_with_embeddings": len(papers_with_emb),
             }, default=str)
 
     # Fallback to keyword matching
     papers = db.search_papers_by_keyword(session_id=session_id, keyword=text, limit=limit)
+    papers = _enrich_with_claims(papers, db, session_id)
     return json.dumps({"papers": papers, "method": "keyword_fallback"}, default=str)

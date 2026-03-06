@@ -255,5 +255,6 @@ Present ALL tables and data as text output.
 - Author names must EXACTLY match database entries.
 - Report effect sizes wherever available in the evidence synthesis — pull these from claims, not from memory.
 - GRADE ratings are MANDATORY — use the tool to store them, not just text output.
-- When done, output all tables as text and stop.
+- When ALL tables are built, call `write_section(section='synthesis_data', content=ALL_TABLES_TEXT)` to persist them. The writer will load this data. This is MANDATORY — if you don't save, the writer starts blind.
+- When done, stop.
 """

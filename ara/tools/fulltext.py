@@ -27,66 +27,97 @@ _MAX_DOWNLOAD_BYTES = 10_000_000
 
 # ── Source: Unpaywall (batch via individual DOI lookups, 30 rpm) ──────
 
+_UNPAYWALL_EMAILS = ["syedmosayebalam@gmail.com", "eikiyo.netflix@gmail.com"]
+
 def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
-    """Fetch full text URLs from Unpaywall for a batch of DOIs. Returns {doi: text}."""
+    """Fetch full text URLs from Unpaywall for a batch of DOIs. Returns {doi: text}.
+    Rotates to backup email on 429 rate limits."""
     results: dict[str, str] = {}
+    current_email = email
     for doi in dois:
-        try:
-            resp = rate_limited_get(
-                f"https://api.unpaywall.org/v2/{doi}",
-                params={"email": email},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-            best_oa = data.get("best_oa_location") or {}
-            url = best_oa.get("url_for_pdf") or best_oa.get("url")
-            if url:
-                text = _download_and_extract(url)
-                if text:
-                    results[doi] = text
-        except Exception as exc:
-            _log.debug("Unpaywall failed for %s: %s", doi, exc)
+        for attempt in range(2):  # Try up to 2 emails
+            try:
+                resp = rate_limited_get(
+                    f"https://api.unpaywall.org/v2/{doi}",
+                    params={"email": current_email},
+                    timeout=15,
+                )
+                if resp.status_code == 429:
+                    # Rotate to next email
+                    idx = _UNPAYWALL_EMAILS.index(current_email) if current_email in _UNPAYWALL_EMAILS else -1
+                    next_idx = (idx + 1) % len(_UNPAYWALL_EMAILS)
+                    if _UNPAYWALL_EMAILS[next_idx] != current_email:
+                        _log.info("Unpaywall 429 — rotating email to %s", _UNPAYWALL_EMAILS[next_idx])
+                        current_email = _UNPAYWALL_EMAILS[next_idx]
+                        time.sleep(2)
+                        continue
+                    break
+                if resp.status_code == 422:
+                    _log.warning("Unpaywall 422 for email %s — rotating", current_email)
+                    idx = _UNPAYWALL_EMAILS.index(current_email) if current_email in _UNPAYWALL_EMAILS else -1
+                    next_idx = (idx + 1) % len(_UNPAYWALL_EMAILS)
+                    current_email = _UNPAYWALL_EMAILS[next_idx]
+                    continue
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                best_oa = data.get("best_oa_location") or {}
+                url = best_oa.get("url_for_pdf") or best_oa.get("url")
+                if url:
+                    text = _download_and_extract(url)
+                    if text:
+                        results[doi] = text
+                break
+            except Exception as exc:
+                _log.debug("Unpaywall failed for %s: %s", doi, exc)
+                break
     return results
 
 
 # ── Source: CORE API v3 (batch via OR-query, 10 DOIs per call) ────────
 
 def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
-    """Fetch full text from CORE API using OR-query batching."""
+    """Fetch full text from CORE API using OR-query batching. Retries on 429."""
     results: dict[str, str] = {}
     batch_size = 10  # CORE supports OR queries
 
     for i in range(0, len(dois), batch_size):
         batch = dois[i:i + batch_size]
         query = " OR ".join(f'doi:"{d}"' for d in batch)
-        try:
-            resp = rate_limited_get(
-                "https://api.core.ac.uk/v3/search/works",
-                headers={"Authorization": f"Bearer {api_key}"},
-                params={"q": query, "limit": batch_size},
-                timeout=30,
-            )
-            if resp.status_code != 200:
-                _log.debug("CORE batch returned %d", resp.status_code)
-                continue
-            data = resp.json()
-            for item in data.get("results", []):
-                item_doi = item.get("doi", "")
-                if not item_doi:
+        for attempt in range(3):
+            try:
+                resp = rate_limited_get(
+                    "https://api.core.ac.uk/v3/search/works",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    params={"q": query, "limit": batch_size},
+                    timeout=30,
+                )
+                if resp.status_code == 429:
+                    wait = 5 * (attempt + 1)
+                    _log.info("CORE 429 — retrying in %ds (attempt %d/3)", wait, attempt + 1)
+                    time.sleep(wait)
                     continue
-                # Normalize DOI for matching
-                item_doi = _normalize_doi(item_doi)
-                full_text = item.get("fullText", "")
-                if full_text and len(full_text) > 200:
-                    results[item_doi] = full_text[:_MAX_FULLTEXT_CHARS]
-                elif item.get("downloadUrl"):
-                    text = _download_and_extract(item["downloadUrl"])
-                    if text:
-                        results[item_doi] = text
-        except Exception as exc:
-            _log.debug("CORE batch failed: %s", exc)
+                if resp.status_code != 200:
+                    _log.debug("CORE batch returned %d", resp.status_code)
+                    break
+                data = resp.json()
+                for item in data.get("results", []):
+                    item_doi = item.get("doi", "")
+                    if not item_doi:
+                        continue
+                    item_doi = _normalize_doi(item_doi)
+                    full_text = item.get("fullText", "")
+                    if full_text and len(full_text) > 200:
+                        results[item_doi] = full_text[:_MAX_FULLTEXT_CHARS]
+                    elif item.get("downloadUrl"):
+                        text = _download_and_extract(item["downloadUrl"])
+                        if text:
+                            results[item_doi] = text
+                break
+            except Exception as exc:
+                _log.debug("CORE batch failed (attempt %d): %s", attempt + 1, exc)
+                if attempt < 2:
+                    time.sleep(3 * (attempt + 1))
         time.sleep(3)  # CORE rate limit recovery
 
     return results
@@ -106,33 +137,42 @@ def _fetch_s2_batch(dois: list[str]) -> dict[str, str]:
     for i in range(0, len(dois), batch_size):
         batch = dois[i:i + batch_size]
         paper_ids = [f"DOI:{d}" for d in batch]
-        try:
-            client = httpx.Client(timeout=60, follow_redirects=True)
-            resp = client.post(
-                "https://api.semanticscholar.org/graph/v1/paper/batch",
-                json={"ids": paper_ids},
-                params={"fields": "externalIds,openAccessPdf"},
-                headers=headers,
-            )
-            client.close()
-            if resp.status_code != 200:
-                _log.debug("S2 batch returned %d", resp.status_code)
-                continue
-            for paper in resp.json():
-                if not paper or not isinstance(paper, dict):
+        for attempt in range(3):
+            try:
+                client = httpx.Client(timeout=60, follow_redirects=True)
+                resp = client.post(
+                    "https://api.semanticscholar.org/graph/v1/paper/batch",
+                    json={"ids": paper_ids},
+                    params={"fields": "externalIds,openAccessPdf"},
+                    headers=headers,
+                )
+                client.close()
+                if resp.status_code == 429:
+                    wait = 5 * (attempt + 1)
+                    _log.info("S2 429 — retrying in %ds (attempt %d/3)", wait, attempt + 1)
+                    time.sleep(wait)
                     continue
-                oa_pdf = paper.get("openAccessPdf") or {}
-                pdf_url = oa_pdf.get("url")
-                if not pdf_url:
-                    continue
-                ext_ids = paper.get("externalIds") or {}
-                paper_doi = ext_ids.get("DOI", "")
-                if paper_doi:
-                    text = _download_and_extract(pdf_url)
-                    if text:
-                        results[paper_doi.lower()] = text
-        except Exception as exc:
-            _log.debug("S2 batch failed: %s", exc)
+                if resp.status_code != 200:
+                    _log.debug("S2 batch returned %d", resp.status_code)
+                    break
+                for paper in resp.json():
+                    if not paper or not isinstance(paper, dict):
+                        continue
+                    oa_pdf = paper.get("openAccessPdf") or {}
+                    pdf_url = oa_pdf.get("url")
+                    if not pdf_url:
+                        continue
+                    ext_ids = paper.get("externalIds") or {}
+                    paper_doi = ext_ids.get("DOI", "")
+                    if paper_doi:
+                        text = _download_and_extract(pdf_url)
+                        if text:
+                            results[paper_doi.lower()] = text
+                break
+            except Exception as exc:
+                _log.debug("S2 batch failed (attempt %d): %s", attempt + 1, exc)
+                if attempt < 2:
+                    time.sleep(3 * (attempt + 1))
         time.sleep(3)
 
     return results
@@ -155,7 +195,7 @@ def _fetch_openalex_batch(dois: list[str]) -> dict[str, str]:
                     "filter": f"doi:{doi_filter}",
                     "per_page": batch_size,
                     "select": "doi,open_access,best_oa_location",
-                    "mailto": "ara-research@proton.me",
+                    "mailto": "syedmosayebalam@gmail.com",
                 },
                 timeout=30,
             )
@@ -385,7 +425,8 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
             core_key = creds.get("core_api_key", "")
         except Exception:
             pass
-    unpaywall_email = "ara-research@proton.me"
+    _EMAILS = ["syedmosayebalam@gmail.com", "eikiyo.netflix@gmail.com"]
+    unpaywall_email = _EMAILS[0]
 
     # Run sources in parallel threads
     all_results: dict[str, str] = {}

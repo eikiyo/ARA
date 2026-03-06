@@ -101,6 +101,10 @@ class ARAConfig:
     # Narrow mode reduces targets for focused reviews on specific subtopics
     scope_mode: str = "broad"
 
+    # Special instructions (topic-specific, passed to scout/writer)
+    special_instructions: str = ""
+    special_authors: str = ""  # Comma-separated foundational authors to search for
+
     # Behavior
     approval_gates: bool = True
 
@@ -172,6 +176,8 @@ class ARAConfig:
             words_theoretical_background=_safe_int("ARA_WORDS_THEORETICAL_BACKGROUND", 1500),
             words_framework=_safe_int("ARA_WORDS_FRAMEWORK", 2000),
             words_propositions=_safe_int("ARA_WORDS_PROPOSITIONS", 1500),
+            special_instructions=os.getenv("ARA_SPECIAL_INSTRUCTIONS", ""),
+            special_authors=os.getenv("ARA_SPECIAL_AUTHORS", ""),
         )
 
     def apply_narrow_scope(self) -> None:

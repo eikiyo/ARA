@@ -223,9 +223,10 @@ class RLMEngine:
                 "name": "critic",
                 "prompt": "critic",
                 "objective": (
-                    "FIRST: Call list_papers(compact=true) to review the evidence base. "
+                    "FIRST: Call list_claims() to load all extracted evidence. "
                     "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
-                    "Read 3-5 key papers using read_paper() to ground your evaluation. "
+                    "Use search_similar() to find the most relevant papers for the hypothesis. "
+                    "Read 3-5 key papers using read_paper(paper_id=ID, include_fulltext=true) to ground your evaluation. "
                     "THEN evaluate the top hypothesis across 8 dimensions. "
                     "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
                     "Apply the meta-test: would an expert believe something different? "
@@ -237,12 +238,17 @@ class RLMEngine:
                 "prompt": "synthesis",
                 "objective": (
                     "Prepare structured data for the writer. You have {claim_count} claims from "
-                    "{papers_with_claims} deeply-read papers. Build these outputs: "
+                    "{papers_with_claims} deeply-read papers. "
+                    "FIRST: Call list_claims() to load all extracted evidence. "
+                    "Call list_papers(compact=true) to get exact author names. "
+                    "Use search_similar() per theme to find relevant papers via embeddings. "
+                    "For top 5-10 papers, call read_paper(paper_id=ID, include_fulltext=true). "
+                    "Build these outputs: "
                     "(1) Study characteristics table with author names, (2) Evidence synthesis "
                     "table with GRADE ratings, (3) Risk of bias assessment, "
                     "(4) PRISMA flow numbers, (5) Citation map by theme with (Author, Year), "
                     "(6) Structural causal model notes, (7) Inclusion/exclusion criteria table. "
-                    "Call list_papers(compact=true) to get exact author names."
+                    "Save ALL tables using write_section(section='synthesis_data', content=...) so the writer can load them."
                 ),
             },
         ]
@@ -260,8 +266,7 @@ class RLMEngine:
                     "Target: {min_papers}+ unique papers. Date range: {search_start_year} to present. "
                     "Focus on: (a) core theoretical papers, (b) empirical studies providing evidence "
                     "for framework building, (c) competing frameworks and models. "
-                    "ALSO search specifically for foundational authors in this area: "
-                    "Dellestrand, Kappen, Blomkvist, Birkinshaw, Govindarajan, Mudambi, Ciabuschi. "
+                    "{special_authors_instruction}"
                     "When the database reports target reached, stop searching."
                 ),
             },
@@ -352,9 +357,10 @@ class RLMEngine:
                 "name": "critic",
                 "prompt": "critic",
                 "objective": (
-                    "FIRST: Call list_papers(compact=true) to review the theoretical evidence base. "
+                    "FIRST: Call list_claims() to load all extracted evidence. "
                     "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
-                    "Read 3-5 key theoretical papers using read_paper() to ground your evaluation. "
+                    "Use search_similar() to find the most relevant papers for the framework. "
+                    "Read 3-5 key theoretical papers using read_paper(paper_id=ID, include_fulltext=true) to ground your evaluation. "
                     "THEN evaluate the top framework across 8 dimensions. "
                     "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
                     "Apply the meta-test: would a management scholar believe something different? "
@@ -367,6 +373,10 @@ class RLMEngine:
                 "objective": (
                     "Prepare structured theoretical data for the writer. "
                     "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
+                    "FIRST: Call list_claims() to load all extracted evidence. "
+                    "Call list_papers(compact=true) to get exact author names. "
+                    "Use search_similar() per theme to find relevant papers via embeddings. "
+                    "For top 5-10 papers, call read_paper(paper_id=ID, include_fulltext=true). "
                     "Build these outputs: "
                     "(1) Theoretical streams table with author names and core arguments, "
                     "(2) Theoretical tension map showing conflicts/gaps between streams, "
@@ -374,7 +384,7 @@ class RLMEngine:
                     "(5) Citation map by section with (Author, Year), "
                     "(6) Boundary conditions analysis, (7) Competing frameworks comparison table, "
                     "(8) Novel contribution statement. "
-                    "Call list_papers(compact=true) to get exact author names."
+                    "Save ALL tables using write_section(section='synthesis_data', content=...) so the writer can load them."
                 ),
             },
         ]
@@ -630,8 +640,9 @@ class RLMEngine:
                         f"You have {len(claims)} claims from {papers_with_claims} papers so far. "
                         f"Target: {self.config.min_claims}+ claims from {self.config.min_deep_read_papers}+ papers. "
                         f"Call list_papers(selected_only=true) to see ALL selected papers. "
-                        f"Skip papers you already processed. Process the NEXT {_BATCH_SIZE} unprocessed papers. "
-                        f"For each: read_paper → extract_claims → assess_risk_of_bias. "
+                        f"Skip papers you already processed (call list_claims() to see which paper_ids have claims). "
+                        f"Process the NEXT {_BATCH_SIZE} unprocessed papers. "
+                        f"For each: read_paper(paper_id=ID, include_fulltext=true) → extract_claims with EXACT quotes → assess_risk_of_bias. "
                         f"Stop after processing {_BATCH_SIZE} papers — another batch will follow."
                     )
                     batch_phase = {
@@ -668,6 +679,15 @@ class RLMEngine:
                 # Store claim/paper counts in context for downstream phases
                 context.claim_count = len(claims)
                 context.papers_with_claims = papers_with_claims
+
+                # Re-embed: papers may have gained full text during deep_read
+                _log.info("PIPELINE: Re-embedding papers after deep_read (full text may have changed)")
+                if on_event:
+                    on_event(StepEvent("text", data="Re-embedding papers with updated full text...", depth=0))
+                self._pipeline_embed(on_event)
+
+                # Deduplicate claims
+                self._deduplicate_claims(db, session_id)
 
                 if paper_type != "conceptual":
                     self._finalize_prisma_exclusions(db, session_id)
@@ -709,6 +729,13 @@ class RLMEngine:
     ) -> str:
         """Run a single LLM-driven pipeline phase."""
         prompt_name = phase_def["prompt"]
+        # Build special author instruction from config
+        special_authors = self.config.special_authors
+        if special_authors:
+            special_authors_instruction = f"ALSO search specifically for foundational authors: {special_authors}. "
+        else:
+            special_authors_instruction = ""
+
         objective = phase_def["objective"].format(
             topic=topic, paper_type=paper_type,
             min_claims=self.config.min_claims,
@@ -717,6 +744,8 @@ class RLMEngine:
             search_start_year=self.config.search_start_year,
             claim_count=context.claim_count,
             papers_with_claims=context.papers_with_claims,
+            special_authors_instruction=special_authors_instruction,
+            special_instructions=self.config.special_instructions,
         )
 
         # Reset search state for search phases
@@ -755,6 +784,24 @@ class RLMEngine:
         _log.info("PIPELINE: Full-text fetch result: %s", result[:300])
         if on_event:
             on_event(StepEvent("tool_result", data=result[:300], tool_name="batch_fetch_fulltext", depth=0))
+
+        # Check coverage and warn
+        try:
+            import json as _json
+            data = _json.loads(result)
+            fetched = data.get("fetched", 0)
+            total = data.get("total_needed", 0)
+            coverage_pct = (fetched / total * 100) if total > 0 else 0
+            if coverage_pct < 20:
+                _log.warning("PIPELINE: LOW FULLTEXT COVERAGE (%.1f%%) — %d/%d papers. "
+                             "Deep read will rely heavily on abstracts. Paper quality may be reduced.",
+                             coverage_pct, fetched, total)
+                if on_event:
+                    on_event(StepEvent("error", data=f"WARNING: Low full-text coverage ({coverage_pct:.0f}%). "
+                                                     f"Only {fetched}/{total} papers have full text. "
+                                                     f"Deep read will rely on abstracts for remaining papers.", depth=0))
+        except Exception:
+            pass
 
     def _pipeline_embed(self, on_event: StepCallback | None) -> None:
         """Run embedding phase programmatically — no LLM needed."""
@@ -895,9 +942,12 @@ class RLMEngine:
             objective = (
                 f"Write the '{section_name}' section for the research paper on: {topic}. "
                 f"{instruction} "
+                f"MANDATORY FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
+                f"Use search_similar(text='<section theme>') to find the most relevant papers for this section. "
+                f"For the 2-3 most important papers in this section, call read_paper(paper_id=ID, include_fulltext=true). "
                 f"Use write_section(section='{section_name}', content=YOUR_TEXT) to save. "
                 f"Do NOT use markdown headers at the start — the system adds them. "
-                f"Only cite papers from the database — call list_papers first if needed."
+                f"Every factual statement must cite a paper verified via list_claims or list_papers."
             )
 
             result = self._solve_recursive(
@@ -920,9 +970,10 @@ class RLMEngine:
                 rewrite_objective = (
                     f"REWRITE the '{section_name}' section. The following issues were found:\n"
                     + "\n".join(f"- {issue}" for issue in section_issues) + "\n\n"
+                    f"FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
+                    f"Use search_similar(text='<section theme>') to find relevant papers. "
                     f"Read the current version, fix ALL issues, and save using "
                     f"write_section(section='{section_name}', content=YOUR_TEXT). "
-                    f"Call list_papers first to find correct (Author, Year) citations. "
                     f"Do NOT shorten the section — only expand and fix."
                 )
                 self._solve_recursive(
@@ -1082,9 +1133,9 @@ class RLMEngine:
             rewrite_objective = (
                 f"REWRITE the '{section_name}' section to fix these issues found by automated checks:\n"
                 + "\n".join(f"- {issue}" for issue in issues) + "\n\n"
-                f"Read the current version with list_papers, fix ALL issues, and save using "
-                f"write_section(section='{section_name}', content=YOUR_TEXT). "
-                f"Call list_papers first to find correct (Author, Year) citations. "
+                f"FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
+                f"Use search_similar(text='<section theme>') to find relevant papers. "
+                f"Fix ALL issues and save using write_section(section='{section_name}', content=YOUR_TEXT). "
                 f"Do NOT shorten the section — only expand and fix."
             )
             self._solve_recursive(
@@ -1190,6 +1241,7 @@ class RLMEngine:
                 f"Revise the paper based on critic feedback below. Follow the exact_fixes VERBATIM — "
                 f"the critic has written specific replacement text and citations for you.\n\n"
                 f"CRITIC FEEDBACK:\n{result[:5000]}\n\n"
+                f"FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
                 f"INSTRUCTIONS: For each section in sections_needing_revision, read the exact_fixes "
                 f"and apply them. Use write_section to save each revised section. "
                 f"Do NOT shorten sections. Add the specific citations and text the critic requested."
@@ -1203,31 +1255,59 @@ class RLMEngine:
                 phase="writer",
             )
 
+    def _deduplicate_claims(self, db: Any, session_id: int) -> None:
+        """Remove duplicate claims (same paper_id + near-identical claim_text)."""
+        try:
+            claims = db.get_claims(session_id)
+            seen: dict[tuple[int, str], int] = {}  # (paper_id, normalized_text) -> claim_id
+            duplicates: list[int] = []
+            for c in claims:
+                # Normalize: lowercase, strip whitespace, first 100 chars
+                key = (c["paper_id"], c["claim_text"].lower().strip()[:100])
+                if key in seen:
+                    duplicates.append(c["claim_id"])
+                else:
+                    seen[key] = c["claim_id"]
+            if duplicates:
+                with db._lock:
+                    db._conn.execute(
+                        f"DELETE FROM claims WHERE claim_id IN ({','.join('?' * len(duplicates))})",
+                        duplicates,
+                    )
+                    db._conn.commit()
+                _log.info("PIPELINE: Removed %d duplicate claims", len(duplicates))
+        except Exception as exc:
+            _log.warning("Claim deduplication failed: %s", exc)
+
     def _finalize_prisma_exclusions(self, db: Any, session_id: int) -> None:
-        """After deep_read: compute full-text exclusions from papers selected but yielding 0 claims."""
+        """After deep_read: compute full-text exclusions with honest breakdown."""
         try:
             selected_count = db._conn.execute(
                 "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
                 (session_id,),
             ).fetchone()[0]
+            # Papers with full text available
+            selected_with_fulltext = db._conn.execute(
+                "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1 AND full_text IS NOT NULL",
+                (session_id,),
+            ).fetchone()[0]
+            # Papers that were actually read and yielded claims
             papers_with_claims = db._conn.execute(
                 "SELECT COUNT(DISTINCT paper_id) FROM claims WHERE session_id = ?",
                 (session_id,),
             ).fetchone()[0]
-            excluded_fulltext = selected_count - papers_with_claims
-            if excluded_fulltext < 0:
-                excluded_fulltext = 0
-            # Ensure at least some exclusions for credibility (minimum 5% or 3, whichever is larger)
-            min_exclusions = max(3, int(selected_count * 0.05))
-            if excluded_fulltext < min_exclusions:
-                excluded_fulltext = min_exclusions
-                papers_with_claims = selected_count - excluded_fulltext
 
-            db.store_prisma_stat(session_id, "excluded_fulltext", excluded_fulltext,
-                                "Excluded after full-text review: no extractable claims, irrelevant on deeper reading, or insufficient methodological detail")
+            # Honest breakdown
+            no_fulltext_access = selected_count - selected_with_fulltext
+            read_but_excluded = max(0, selected_with_fulltext - papers_with_claims)
+
+            db.store_prisma_stat(session_id, "fulltext_not_accessible", no_fulltext_access,
+                                "Full text not retrievable from any source (behind paywall or no OA version)")
+            db.store_prisma_stat(session_id, "excluded_fulltext", read_but_excluded,
+                                "Excluded after full-text review: no extractable claims or irrelevant on deeper reading")
             db.store_prisma_stat(session_id, "included_final", papers_with_claims)
-            _log.info("PRISMA FINALIZED: selected=%d, excluded_fulltext=%d, included=%d",
-                       selected_count, excluded_fulltext, papers_with_claims)
+            _log.info("PRISMA FINALIZED: selected=%d, no_fulltext=%d, read_excluded=%d, included=%d",
+                       selected_count, no_fulltext_access, read_but_excluded, papers_with_claims)
         except Exception as exc:
             _log.error("PRISMA finalization failed: %s", exc)
 

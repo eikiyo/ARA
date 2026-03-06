@@ -218,10 +218,18 @@ def generate_prisma_diagram(args: dict[str, Any], ctx: dict) -> str:
     screened = prisma.get("screened", identified - duplicates)
     excluded_screen = prisma.get("excluded_screening", screened - fulltext_default if screened > fulltext_default else 0)
     fulltext = prisma.get("fulltext_assessed", fulltext_default)
-    excluded_ft = prisma.get("excluded_fulltext", fulltext - included_count if fulltext > included_count else 0)
+    no_access = prisma.get("fulltext_not_accessible", 0)
+    excluded_ft = prisma.get("excluded_fulltext", fulltext - included_count - no_access if fulltext > included_count + no_access else 0)
     included = prisma.get("included_final", included_count)
 
+    # Reconcile: ensure numbers add up (screened = excluded_screen + fulltext)
+    if screened < excluded_screen + fulltext:
+        screened = excluded_screen + fulltext
+    if fulltext < no_access + excluded_ft + included:
+        fulltext = no_access + excluded_ft + included
+
     # ASCII PRISMA diagram for markdown
+    ft_excluded_detail = f"No access: {no_access}, Read & excluded: {excluded_ft}" if no_access > 0 else f"n = {excluded_ft}"
     ascii_diagram = f"""
 ```
 PRISMA Flow Diagram
@@ -250,9 +258,9 @@ PRISMA Flow Diagram
                        v
     +-----------------------------------------+
     | Full-text articles      | Full-text articles |
-    | assessed for            | excluded with      |
-    | eligibility             | reasons            |
-    | (n = {fulltext:<6})              | (n = {excluded_ft:<6})          |
+    | assessed for            | excluded:          |
+    | eligibility             | {ft_excluded_detail:<19}|
+    | (n = {fulltext:<6})              | Total: {no_access + excluded_ft:<12}|
     +-----------------------------------------+
                        |
         Included       |
@@ -327,9 +335,11 @@ PRISMA Flow Diagram
 
   <!-- Excluded fulltext -->
   <line class="arrow" x1="350" y1="430" x2="400" y2="430"/>
-  <rect class="box-excluded" x="400" y="400" width="170" height="60"/>
-  <text x="485" y="420" text-anchor="middle" class="label">Full-text excluded</text>
-  <text x="485" y="445" text-anchor="middle" class="count">n = {excluded_ft}</text>
+  <rect class="box-excluded" x="400" y="390" width="185" height="80"/>
+  <text x="492" y="410" text-anchor="middle" class="label">Full-text excluded</text>
+  <text x="492" y="430" text-anchor="middle" class="count">n = {no_access + excluded_ft}</text>
+  <text x="492" y="448" text-anchor="middle" style="fill:#888;font-size:10px;">No access: {no_access}</text>
+  <text x="492" y="462" text-anchor="middle" style="fill:#888;font-size:10px;">Read &amp; excluded: {excluded_ft}</text>
 
   <!-- Arrow -->
   <line class="arrow" x1="250" y1="460" x2="250" y2="560"/>
@@ -358,6 +368,7 @@ PRISMA Flow Diagram
             "records_screened": screened,
             "excluded_screening": excluded_screen,
             "fulltext_assessed": fulltext,
+            "fulltext_not_accessible": no_access,
             "excluded_fulltext": excluded_ft,
             "included_final": included,
         },

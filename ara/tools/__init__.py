@@ -26,7 +26,7 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "hypothesis": ["read_paper", "search_similar", "list_claims", "list_papers", "score_hypothesis"],
     "brancher": ["search_*", "search_similar", "list_claims"],
     "critic": ["read_paper", "search_similar", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table"],
-    "synthesis": ["list_papers", "list_claims", "read_paper", "search_similar", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table"],
+    "synthesis": ["list_papers", "list_claims", "read_paper", "search_similar", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section"],
     "protocol": ["list_papers", "write_section"],
     "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table"],
     "paper_critic": ["read_paper", "search_similar", "list_claims", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
