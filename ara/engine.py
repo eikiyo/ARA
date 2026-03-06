@@ -770,13 +770,10 @@ class RLMEngine:
             if db and session_id:
                 db.save_phase_checkpoint(session_id, "writer")
 
-        # Pre-critic programmatic validation — fix obvious failures before LLM critic
+        # Programmatic quality gate — fast checks + auto-rewrite before output assembly
+        # (LLM-based critic removed — peer review handles qualitative evaluation post-output)
         if "paper_critic" not in completed and not self.cancel_flag.is_set():
             self._pre_critic_validation(topic, paper_type, context, on_event)
-
-        # Paper critic
-        if "paper_critic" not in completed and not self.cancel_flag.is_set():
-            self._pipeline_paper_critic(topic, paper_type, context, on_event)
             if db and session_id:
                 db.save_phase_checkpoint(session_id, "paper_critic")
 
@@ -1509,7 +1506,7 @@ class RLMEngine:
         self, topic: str, paper_type: str,
         context: ExternalContext, on_event: StepCallback | None,
     ) -> None:
-        """Programmatic pre-critic scan — fix obvious failures before wasting an LLM critic call."""
+        """Programmatic quality gate — fix mechanical failures (word count, citations, structure) before output assembly."""
         from pathlib import Path
         ws = self.config.workspace
         sections_dir = ws / self.config.session_root_dir / "output" / "sections"
@@ -1551,7 +1548,7 @@ class RLMEngine:
                    total_words, len(total_citations), len(failing_sections), len(expected))
 
         if not failing_sections:
-            _log.info("PRE-CRITIC: All sections pass programmatic checks — proceeding to LLM critic")
+            _log.info("PRE-CRITIC: All sections pass programmatic checks — proceeding to output assembly")
             return
 
         # Auto-rewrite failing sections (max 3 to avoid infinite loop)
@@ -1589,136 +1586,8 @@ class RLMEngine:
             if on_event:
                 on_event(StepEvent("subtask_end", data=f"Pre-critic fix done: {section_name}", depth=0))
 
-    def _pipeline_paper_critic(
-        self, topic: str, paper_type: str,
-        context: ExternalContext, on_event: StepCallback | None,
-    ) -> None:
-        """Run paper critic with revision loop (max 3 cycles)."""
-        system_prompt = build_phase_system_prompt(
-            phase="paper_critic", topic=topic, rules=context.rules,
-            paper_type=paper_type,
-        )
-
-        # Pre-check: count actually available citable papers and set dynamic threshold
-        db = self.tools.db
-        session_id = self.tools.session_id
-        available_citations = 0
-        if db and session_id:
-            try:
-                # Count papers with claims (these are the ones the writer can actually cite)
-                available_citations = db._conn.execute(
-                    "SELECT COUNT(DISTINCT paper_id) FROM claims WHERE session_id = ?",
-                    (session_id,),
-                ).fetchone()[0]
-            except Exception:
-                pass
-        # Dynamic threshold: 60% of available papers, but at least 15 and at most the configured max
-        dynamic_citation_min = max(15, min(self.config.min_quality_citations, int(available_citations * 0.6)))
-        _log.info("PIPELINE CRITIC: available_citations=%d, dynamic_threshold=%d (config=%d)",
-                   available_citations, dynamic_citation_min, self.config.min_quality_citations)
-
-        for cycle in range(self.config.paper_critic_max_revisions + 1):
-            if self.cancel_flag.is_set():
-                break
-
-            _log.info("PIPELINE CRITIC: Cycle %d/%d", cycle + 1, self.config.paper_critic_max_revisions + 1)
-            if on_event:
-                on_event(StepEvent("subtask_start", data=f"Paper critic cycle {cycle + 1}", depth=0))
-
-            _ignore_sections_note = (
-                "IMPORTANT: Ignore internal working sections (protocol, synthesis_data, writing_brief, "
-                "advisory_report, evaluation). These are pipeline artifacts, NOT part of the paper. "
-                "Do NOT ask the writer to delete or modify them. "
-                "Only evaluate actual paper sections. "
-            )
-
-            if paper_type == "conceptual":
-                objective = (
-                    "Evaluate the complete conceptual paper draft against AMJ/JIBS/SMJ standards. "
-                    "Call generate_quality_audit to get the scorecard. Score 12 dimensions. "
-                    f"The database has {available_citations} citable papers with extracted claims. "
-                    f"Check ALL minimum thresholds ({dynamic_citation_min}+ unique citations, "
-                    f"{self.config.min_paper_words}+ words, "
-                    "all sections present, 5+ propositions, 3+ theoretical streams, "
-                    "3+ framework comparisons, 5+ future research studies, boundary conditions). "
-                    "ALSO CHECK: (1) domain specificity — every section must use topic-relevant examples, "
-                    "not generic examples, (2) NO PRISMA diagram or systematic review methodology "
-                    "in the paper sections (ignore internal pipeline files), "
-                    "(3) framework and propositions sections have DISTINCT content — no duplication, "
-                    "(4) at least 2 counter-intuitive propositions. "
-                    + _ignore_sections_note +
-                    "If revision needed, specify exactly which sections and what to fix."
-                )
-            else:
-                objective = (
-                    "Evaluate the complete paper draft against Nature/Lancet systematic review standards. "
-                    "Call generate_quality_audit to get the scorecard. Score 10 dimensions. "
-                    f"The database has {available_citations} citable papers with extracted claims. "
-                    f"Check ALL minimum thresholds ({dynamic_citation_min}+ unique citations, "
-                    f"{self.config.min_paper_words}+ words, {self.config.min_quality_tables}+ tables, "
-                    "all sections present, structured abstract, PRISMA in methods, limitations, "
-                    "3+ review comparisons, 3+ future questions). "
-                    + _ignore_sections_note +
-                    "If revision needed, specify exactly which sections and what to fix."
-                )
-
-            result = self._solve_recursive(
-                objective=objective,
-                context=context,
-                depth=self.config.max_depth,
-                on_event=on_event,
-                system_prompt_override=system_prompt,
-                phase="paper_critic",
-            )
-            if on_event:
-                on_event(StepEvent("subtask_end", data=f"Critic cycle {cycle + 1} done", depth=0))
-
-            # Check if revision needed (look for REVISE in result)
-            if "APPROVE" in result.upper() or cycle >= self.config.paper_critic_max_revisions:
-                _log.info("PIPELINE CRITIC: Paper approved (or max cycles reached)")
-                break
-
-            # Run revision pass
-            _log.info("PIPELINE CRITIC: Revision needed — running writer revision")
-            if on_event:
-                on_event(StepEvent("text", data="Paper needs revision — rewriting flagged sections", depth=0))
-
-            writer_prompt = build_phase_system_prompt(
-                phase="writer", topic=topic, rules=context.rules,
-                paper_type=paper_type,
-            )
-            # Extract section names from critic feedback to scope the revision
-            import re as _re
-            _revision_sections = _re.findall(
-                r'"section"\s*:\s*"([^"]+)"', result[:5000]
-            )
-            if _revision_sections:
-                _scope_note = (
-                    f"SCOPE: Only revise these sections: {', '.join(_revision_sections)}. "
-                    f"Do NOT touch or rewrite any other sections. "
-                )
-            else:
-                _scope_note = ""
-
-            revision_objective = (
-                f"Revise the paper based on critic feedback below. Follow the exact_fixes VERBATIM — "
-                f"the critic has written specific replacement text and citations for you.\n\n"
-                f"CRITIC FEEDBACK:\n{result[:5000]}\n\n"
-                f"{_scope_note}"
-                f"FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
-                f"INSTRUCTIONS: For each section in sections_needing_revision, read the current version "
-                f"with read_section, apply the exact_fixes, and save using write_section. "
-                f"Do NOT shorten sections. Do NOT rewrite sections that are not listed. "
-                f"Add the specific citations and text the critic requested."
-            )
-            self._solve_recursive(
-                objective=revision_objective,
-                context=context,
-                depth=self.config.max_depth,
-                on_event=on_event,
-                system_prompt_override=writer_prompt,
-                phase="writer",
-            )
+    # NOTE: LLM paper_critic removed — peer review handles qualitative evaluation post-output.
+    # The programmatic quality gate (_pre_critic_validation) catches mechanical issues.
 
     def _deduplicate_claims(self, db: Any, session_id: int) -> None:
         """Remove duplicate claims (same paper_id + near-identical claim_text)."""
@@ -1810,7 +1679,7 @@ class RLMEngine:
         # Hypothesis: Opus/GPT-5.4 load-balanced for gap identification
         if phase in ("hypothesis", "critic"):
             active_model = self.hypothesis_model
-        elif phase in ("writer", "paper_critic", "synthesis", "advisory_board"):
+        elif phase in ("writer", "synthesis", "advisory_board"):
             active_model = self.writer_model
         elif phase in ("analyst_deep_read", "brancher"):
             active_model = self.model
