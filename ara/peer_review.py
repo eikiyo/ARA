@@ -260,7 +260,7 @@ def _build_revision_prompt(
 
 
 def _extract_json(text: str) -> dict:
-    """Extract JSON from model response, handling markdown code blocks."""
+    """Extract JSON from model response, handling markdown code blocks and truncation."""
     text = text.strip()
     # Strip markdown code fences
     if "```json" in text:
@@ -269,16 +269,71 @@ def _extract_json(text: str) -> dict:
     elif "```" in text:
         text = text.split("```", 1)[1]
         text = text.split("```", 1)[0]
+
     # Try to find JSON object
     start = text.find("{")
-    end = text.rfind("}") + 1
-    if start >= 0 and end > start:
-        text = text[start:end]
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        _log.warning("Failed to parse JSON from model response: %s...", text[:200])
+    if start < 0:
+        _log.warning("No JSON object found in model response: %s...", text[:200])
         return {}
+
+    # Try parsing from start — use bracket counting to find the right end
+    candidate = text[start:]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    # Try rfind approach
+    end = text.rfind("}") + 1
+    if end > start:
+        try:
+            return json.loads(text[start:end])
+        except json.JSONDecodeError:
+            pass
+
+    # Truncated JSON — try to repair by closing open brackets/braces
+    depth_brace = 0
+    depth_bracket = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(candidate):
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth_brace += 1
+        elif ch == '}':
+            depth_brace -= 1
+        elif ch == '[':
+            depth_bracket += 1
+        elif ch == ']':
+            depth_bracket -= 1
+
+    # Close any unclosed structures
+    if depth_brace > 0 or depth_bracket > 0:
+        repair = candidate.rstrip().rstrip(',')
+        # Close any open string
+        if in_string:
+            repair += '..."'
+        repair += ']' * depth_bracket + '}' * depth_brace
+        try:
+            result = json.loads(repair)
+            _log.info("Repaired truncated JSON (%d unclosed braces, %d unclosed brackets)",
+                       depth_brace, depth_bracket)
+            return result
+        except json.JSONDecodeError:
+            pass
+
+    _log.warning("Failed to parse JSON from model response (%d chars): %s...", len(candidate), candidate[:200])
+    return {}
 
 
 class PeerReviewPipeline:
