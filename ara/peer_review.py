@@ -144,15 +144,13 @@ def _build_review_prompt(
         f"Read the paper below carefully and score it on ALL 15 attributes (1-100 each).\n"
         f"For each attribute, provide:\n"
         f"- A numeric score (1-100)\n"
-        f"- Feedback explaining the score (2-4 sentences MAX per attribute)\n"
-        f"- One specific, actionable improvement suggestion (1-2 sentences MAX)\n\n"
-        f"**CRITICAL: Keep your entire response under 4000 words. Be concise — "
-        f"score justifications should be sharp and specific, not exhaustive. "
-        f"The JSON must be valid and parseable.**\n\n"
+        f"- A specific, actionable improvement instruction (2-3 sentences MAX) — what EXACTLY should be changed, added, or removed to reach 95+\n\n"
+        f"**CRITICAL: Keep your entire response under 2000 words. Be prescriptive, not descriptive — "
+        f"say WHAT TO FIX, not what's wrong. The JSON must be valid and parseable.**\n\n"
         f"## Scoring Attributes\n{attrs_text}\n\n"
         f"## Output Format\n"
         f"Return your review as valid JSON with this exact structure:\n"
-        f'{{"scores": {{"Methodological Rigor": {{"score": <int>, "feedback": "<2-4 sentences>", "improvement": "<1-2 sentences>"}}, ...}}}}\n\n'
+        f'{{"scores": {{"Methodological Rigor": {{"score": <int>, "improvement": "<2-3 sentences>"}}, ...}}}}\n\n'
         f"## Paper to Review\n\n{paper_md}"
     )
 
@@ -166,7 +164,7 @@ def _build_rebuttal_prompt(
             continue
         others_text += f"\n### {r['reviewer']}\n"
         for attr, data in r["scores"].items():
-            others_text += f"- {attr}: {data.get('score', 50)}/100 — {str(data.get('feedback', ''))[:150]}...\n"
+            others_text += f"- {attr}: {data.get('score', 50)}/100 — {str(data.get('improvement', ''))[:150]}\n"
 
     return (
         f"You previously reviewed a paper. Now review the other reviewers' assessments.\n\n"
@@ -210,34 +208,33 @@ def _build_consensus_prompt(
         f"## Round 1 Scores\n{reviews_text}\n\n"
         f"## Round 2 Rebuttals\n{rebuttals_text}\n\n"
         f"## Instructions\n"
-        f"Synthesize all reviewer feedback into final consensus scores.\n"
+        f"Synthesize all reviewer improvements into a final consensus.\n"
         f"For each attribute provide:\n"
         f"- Final consensus score (1-100) — weighted by reviewer expertise\n"
-        f"- Unified feedback (2-3 sentences MAX)\n"
-        f"- Specific improvement plan (1-2 sentences MAX)\n\n"
-        f"**Keep total response under 3000 words. Be decisive — consensus means picking a score, not hedging.**\n\n"
+        f"- Unified improvement plan (2-3 sentences MAX) — the single best action to reach 95+\n\n"
+        f"**Keep total response under 1500 words. Be decisive — pick a score, state the fix.**\n\n"
         f"Return as JSON:\n"
-        f'{{"consensus": {{"Methodological Rigor": {{"score": <int>, "feedback": "<2-3 sentences>", '
-        f'"improvement_plan": "<1-2 sentences>"}}, ...}}}}'
+        f'{{"consensus": {{"Methodological Rigor": {{"score": <int>, '
+        f'"improvement_plan": "<2-3 sentences>"}}, ...}}}}'
     )
 
 
 def _build_revision_prompt(
     paper_md: str, consensus: dict, section_files: dict[str, str],
 ) -> str:
-    feedback_text = ""
+    improvements_text = ""
     for attr, data in consensus.items():
         score = data.get("score", 0)
-        feedback_text += f"\n### {attr} ({score}/100)\n"
-        feedback_text += f"Feedback: {data.get('feedback', '')}\n"
-        feedback_text += f"Improvement plan: {data.get('improvement_plan', '')}\n"
+        plan = data.get("improvement_plan", "")
+        if plan:
+            improvements_text += f"- **{attr}** ({score}/100): {plan}\n"
 
     sections_list = "\n".join(f"- {name}" for name in section_files.keys())
 
     return (
         f"You are the revision agent. Your job is to make SURGICAL EDITS to the paper sections "
-        f"to address peer review feedback. Do NOT rewrite entire sections — make targeted, precise fixes.\n\n"
-        f"## Peer Review Consensus\n{feedback_text}\n\n"
+        f"to address peer review improvements. Do NOT rewrite entire sections — make targeted, precise fixes.\n\n"
+        f"## Required Improvements\n{improvements_text}\n\n"
         f"## Available Sections\n{sections_list}\n\n"
         f"## Instructions\n"
         f"For each section that needs changes, output the section name and the EXACT edits.\n"
@@ -565,9 +562,9 @@ class PeerReviewPipeline:
             # Validate and fill missing attributes
             for attr in REVIEW_ATTRIBUTES:
                 if attr not in scores:
-                    scores[attr] = {"score": 50, "feedback": "Not evaluated", "improvement": ""}
+                    scores[attr] = {"score": 50, "improvement": ""}
                 elif not isinstance(scores[attr], dict):
-                    scores[attr] = {"score": int(scores[attr]) if scores[attr] else 50, "feedback": "", "improvement": ""}
+                    scores[attr] = {"score": int(scores[attr]) if scores[attr] else 50, "improvement": ""}
 
             review = {
                 "reviewer": persona_info["name"],
@@ -583,7 +580,7 @@ class PeerReviewPipeline:
                         session_id=self.session_id, cycle=cycle, round_num=1,
                         reviewer=persona_info["name"], attribute=attr,
                         score=data.get("score", 50),
-                        feedback=data.get("feedback", ""),
+                        feedback=data.get("improvement", ""),
                     )
 
         if not reviews:
@@ -653,7 +650,6 @@ class PeerReviewPipeline:
                 avg = sum(scores) // len(scores) if scores else 50
                 consensus[attr] = {
                     "score": avg,
-                    "feedback": "Averaged from individual reviews",
                     "improvement_plan": "",
                 }
 
@@ -664,7 +660,7 @@ class PeerReviewPipeline:
                     session_id=self.session_id, cycle=cycle,
                     attribute=attr,
                     score=data.get("score", 50),
-                    feedback=data.get("feedback", ""),
+                    feedback=data.get("improvement_plan", ""),
                     improvement_plan=data.get("improvement_plan", ""),
                 )
 
@@ -691,13 +687,13 @@ class PeerReviewPipeline:
             self._emit("  No section files found")
             return
 
-        # Build feedback text once
-        feedback_text = ""
+        # Build improvements text once
+        improvements_text = ""
         for attr, data in consensus.items():
             score = data.get("score", 0)
-            feedback_text += f"\n### {attr} ({score}/100)\n"
-            feedback_text += f"Feedback: {data.get('feedback', '')}\n"
-            feedback_text += f"Improvement plan: {data.get('improvement_plan', '')}\n"
+            plan = data.get("improvement_plan", "")
+            if plan:
+                improvements_text += f"- **{attr}** ({score}/100): {plan}\n"
 
         total_applied = 0
         total_edits = 0
@@ -714,14 +710,14 @@ class PeerReviewPipeline:
 
             prompt = (
                 f"You are the revision agent. Make SURGICAL EDITS to the '{section_name}' section "
-                f"to address peer review feedback.\n\n"
-                f"## Peer Review Consensus\n{feedback_text}\n\n"
+                f"to address peer review improvements.\n\n"
+                f"## Required Improvements\n{improvements_text}\n\n"
                 f"## Current Section: {section_name}\n\n{content}\n\n"
                 f"## Instructions\n"
                 f"Output a JSON with edits for THIS section only:\n"
                 f'{{"edits": [{{"find": "<exact text to find>", "replace": "<replacement text>"}}, ...]}}\n\n'
                 f"Rules:\n"
-                f"- Only address feedback relevant to this section\n"
+                f"- Only address improvements relevant to this section\n"
                 f"- Keep edits minimal and precise — do not rewrite full paragraphs unless necessary\n"
                 f"- Maintain citation accuracy — do not add phantom citations\n"
                 f"- Each 'find' string must be an EXACT substring of the current section content\n"
@@ -879,14 +875,14 @@ class PeerReviewPipeline:
             f"**Result**: {'IMPROVED' if improved else 'NOT IMPROVED'}\n",
             f"**Cost**: ${self._cost_usd:.2f}\n\n",
             "## Cycle 1 Consensus Scores\n",
-            "| Attribute | Score | Feedback |",
-            "|-----------|-------|----------|",
+            "| Attribute | Score | Improvement |",
+            "|-----------|-------|-------------|",
         ]
         for attr in REVIEW_ATTRIBUTES:
             data = cycle1.get(attr, {})
             score = data.get("score", "N/A")
-            feedback = data.get("feedback", "")[:100]
-            parts.append(f"| {attr} | {score}/100 | {feedback} |")
+            improvement = data.get("improvement_plan", data.get("improvement", ""))[:100]
+            parts.append(f"| {attr} | {score}/100 | {improvement} |")
 
         c1_avg = sum(d.get("score", 0) for d in cycle1.values()) / len(cycle1) if cycle1 else 0
         parts.append(f"\n**Average**: {c1_avg:.1f}/100\n")
