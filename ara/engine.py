@@ -993,18 +993,6 @@ class RLMEngine:
 
     _ADVISOR_PERSONAS = [
         {
-            "id": "methodologist",
-            "name": "Methodologist",
-            "focus": (
-                "You are a senior research methodologist. Your focus is on: "
-                "how to present the methodology convincingly, PRISMA compliance, "
-                "which quality assessment tools to emphasize (JBI, GRADE), "
-                "how to address methodological limitations proactively, "
-                "what statistical/analytical approaches to highlight, "
-                "and how to make the methods section reproducible."
-            ),
-        },
-        {
             "id": "domain_expert",
             "name": "Domain Expert",
             "focus": (
@@ -1013,19 +1001,9 @@ class RLMEngine:
                 "how to position the contribution relative to existing work, "
                 "which debates and tensions to engage with, "
                 "what the key narrative arc should be, "
-                "and how to make the paper compelling to the target audience."
-            ),
-        },
-        {
-            "id": "evidence_synthesizer",
-            "name": "Evidence Synthesizer",
-            "focus": (
-                "You are an evidence synthesis specialist. Your focus is on: "
                 "which findings to highlight vs. de-emphasize based on evidence quality, "
-                "how to organize thematic results for maximum clarity, "
-                "which cross-cutting patterns deserve attention, "
                 "how to handle conflicting evidence, "
-                "and what the strongest evidence-based conclusions are."
+                "and how to make the paper compelling to the target audience."
             ),
         },
         {
@@ -1157,7 +1135,7 @@ class RLMEngine:
             f"You are the Senior Editor synthesizing the advisory board's recommendations "
             f"for a research paper on: {topic}.\n"
             f"TARGET JOURNAL: {journal}\n\n"
-            f"Four advisors have analyzed the evidence and produced recommendations:\n"
+            f"Two advisors have analyzed the evidence and produced recommendations:\n"
             f"{advisor_summaries}\n\n"
             f"IMPORTANT: The Journal Reviewer's input is CRITICAL — they know what {journal} "
             f"accepts and rejects. Prioritize their framing and scope advice.\n\n"
