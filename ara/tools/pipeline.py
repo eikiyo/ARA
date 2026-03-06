@@ -188,6 +188,29 @@ def batch_embed_papers(args: dict[str, Any], ctx: dict) -> str:
     if not papers:
         return json.dumps({"embedded": 0, "message": "All papers already have embeddings"})
 
+    # LOCAL-FIRST: Check central DB for cached embeddings before calling Gemini
+    from_central = 0
+    central_db = ctx.get("central_db")
+    if central_db:
+        for paper in list(papers):
+            doi = paper.get("doi")
+            if not doi:
+                continue
+            cp = central_db.get_paper_by_doi(doi)
+            if cp and cp.get("embedding"):
+                try:
+                    emb = cp["embedding"] if isinstance(cp["embedding"], list) else json.loads(cp["embedding"])
+                    db.store_embedding(paper["paper_id"], emb)
+                    from_central += 1
+                except Exception:
+                    pass
+        if from_central:
+            _log.info("EMBED BATCH: %d/%d embeddings found in central DB", from_central, len(papers))
+            papers = db.get_unembedded_papers(session_id)
+            if not papers:
+                return json.dumps({"embedded": from_central, "from_central_db": from_central,
+                                   "message": "All embeddings found in central DB"})
+
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
@@ -215,7 +238,9 @@ def batch_embed_papers(args: dict[str, Any], ctx: dict) -> str:
             failed += 1
 
     return json.dumps({
-        "embedded": embedded,
+        "embedded": embedded + from_central,
+        "from_central_db": from_central,
+        "from_api": embedded,
         "failed": failed,
         "total_papers": len(papers),
         "message": f"Embedded {embedded}/{len(papers)} papers",

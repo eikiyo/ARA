@@ -599,6 +599,11 @@ class RLMEngine:
 
             try:
                 if name == "fetch_texts" and "embed" not in completed:
+                    # Pre-load claims from central DB so deep_read skips already-extracted papers
+                    central_db = self.tools.central_db
+                    if central_db and db and session_id:
+                        self._preload_claims_from_central(central_db, db, session_id)
+
                     # Run fetch_texts + embed + deep_read in parallel
                     # fetch gets full text; embed creates vectors; deep_read starts on available papers
                     deep_read_def = next(
@@ -1588,6 +1593,53 @@ class RLMEngine:
 
     # NOTE: LLM paper_critic removed — peer review handles qualitative evaluation post-output.
     # The programmatic quality gate (_pre_critic_validation) catches mechanical issues.
+
+    def _preload_claims_from_central(self, central_db: Any, db: Any, session_id: int) -> None:
+        """Pre-load claims from central DB into session DB so deep_read skips already-extracted papers."""
+        papers = db._conn.execute(
+            "SELECT paper_id, doi FROM papers WHERE session_id = ? AND doi IS NOT NULL AND selected_for_deep_read = 1",
+            (session_id,),
+        ).fetchall()
+        if not papers:
+            return
+
+        # Check which papers already have claims in session DB
+        papers_with_claims = set()
+        for row in db._conn.execute(
+            "SELECT DISTINCT paper_id FROM claims WHERE session_id = ?", (session_id,),
+        ).fetchall():
+            papers_with_claims.add(row["paper_id"])
+
+        loaded = 0
+        for paper in papers:
+            if paper["paper_id"] in papers_with_claims:
+                continue
+            doi = paper["doi"].strip().lower()
+            central_claims = central_db.get_claims_for_paper(doi)
+            if not central_claims:
+                continue
+            for c in central_claims:
+                db.store_claim(
+                    session_id=session_id,
+                    paper_id=paper["paper_id"],
+                    claim_text=c.get("claim_text", ""),
+                    claim_type=c.get("claim_type", "finding"),
+                    confidence=c.get("confidence", 0.5),
+                    supporting_quotes=c.get("supporting_quotes", "[]"),
+                    section=c.get("section", ""),
+                    sample_size=c.get("sample_size", ""),
+                    effect_size=c.get("effect_size", ""),
+                    p_value=c.get("p_value", ""),
+                    confidence_interval=c.get("confidence_interval", ""),
+                    study_design=c.get("study_design", ""),
+                    population=c.get("population", ""),
+                    country=c.get("country", ""),
+                    year_range=c.get("year_range", ""),
+                )
+            loaded += 1
+
+        if loaded:
+            _log.info("PIPELINE: Pre-loaded claims for %d papers from central DB (skipping LLM deep read for those)", loaded)
 
     def _deduplicate_claims(self, db: Any, session_id: int) -> None:
         """Remove duplicate claims (same paper_id + near-identical claim_text)."""

@@ -431,6 +431,39 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
 
     _log.info("FULLTEXT BATCH: %d papers need full text", len(dois))
 
+    # LOCAL-FIRST: Check central DB for cached full texts before hitting APIs
+    central_found = 0
+    central_db = ctx.get("central_db")
+    if central_db:
+        for doi in list(dois):
+            cp = central_db.get_paper_by_doi(doi)
+            if cp:
+                text = central_db.get_fulltext(cp["paper_id"])
+                if text:
+                    try:
+                        db.store_fulltext_content(doi=doi, text=text[:_MAX_FULLTEXT_CHARS])
+                        central_found += 1
+                    except Exception:
+                        pass
+        if central_found:
+            _log.info("FULLTEXT BATCH: %d/%d texts found in central DB — skipping those", central_found, len(dois))
+            # Re-query to get updated list of papers still needing full text
+            rows = db._conn.execute(
+                "SELECT paper_id, doi FROM papers "
+                "WHERE session_id = ? AND doi IS NOT NULL AND full_text IS NULL",
+                (session_id,),
+            ).fetchall()
+            doi_to_pid = {}
+            dois = []
+            for r in rows:
+                d = r["doi"].strip().lower()
+                doi_to_pid[d] = r["paper_id"]
+                dois.append(d)
+            _log.info("FULLTEXT BATCH: %d papers still need full text after central DB", len(dois))
+            if not dois:
+                return json.dumps({"fetched": central_found, "from_central_db": central_found,
+                                   "message": "All full texts found in central DB"})
+
     # Load credentials
     core_key = os.getenv("CORE_API_KEY", "")
     if not core_key:
@@ -561,11 +594,15 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     # Final count (all already committed individually above)
     stored = len(all_results)
 
+    total_fetched = stored + central_found
+    total_needed_original = len(dois) + central_found
     summary = {
-        "total_needed": len(dois),
-        "fetched": stored,
+        "total_needed": total_needed_original,
+        "fetched": total_fetched,
+        "from_central_db": central_found,
+        "from_apis": stored,
         "remaining": len(remaining),
-        "coverage": f"{stored / len(dois) * 100:.1f}%" if dois else "0%",
+        "coverage": f"{total_fetched / total_needed_original * 100:.1f}%" if total_needed_original else "0%",
         "sources": source_stats,
     }
     _log.info("FULLTEXT BATCH COMPLETE: %s", json.dumps(summary))
