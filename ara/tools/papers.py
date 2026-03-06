@@ -239,15 +239,21 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
             continue
 
         authors_raw = json.loads(d.get("authors") or "[]")
-        # Normalize author names to strings for easy reading
+        # Normalize author names to citation format (Surname only for inline citations)
         author_names = []
         for a in authors_raw:
             if isinstance(a, str):
-                author_names.append(a)
+                # If string contains comma, it's "Family, Given" — extract family
+                if "," in a:
+                    author_names.append(a.split(",")[0].strip())
+                else:
+                    # If multiple words, last word is likely surname
+                    parts = a.strip().split()
+                    author_names.append(parts[-1] if parts else a)
             elif isinstance(a, dict):
-                name = a.get("name") or a.get("family", "")
-                if a.get("given"):
-                    name = f"{a['given']} {name}"
+                name = a.get("family") or a.get("name", "")
+                if not name and a.get("given"):
+                    name = a["given"]  # Fallback if only given name
                 author_names.append(name)
         d["authors"] = author_names
         # In compact mode, skip abstracts to save tokens
