@@ -60,9 +60,11 @@ class RLMEngine:
         tools: ARATools,
         config: ARAConfig,
         writer_model: BaseModel | None = None,
+        hypothesis_model: BaseModel | None = None,
     ):
         self.model = model
         self.writer_model = writer_model or model
+        self.hypothesis_model = hypothesis_model or model
         self.tools = tools
         self.config = config
         self.cancel_flag = threading.Event()
@@ -1723,7 +1725,12 @@ class RLMEngine:
             return json.dumps({"error": f"Max depth {self.config.max_depth} reached"})
 
         # Select active model based on phase
-        active_model = self.writer_model if phase in ("writer", "paper_critic", "synthesis") else self.model
+        if phase in ("hypothesis", "critic"):
+            active_model = self.hypothesis_model
+        elif phase in ("writer", "paper_critic", "synthesis"):
+            active_model = self.writer_model
+        else:
+            active_model = self.model
         model_name = getattr(active_model, 'model', 'unknown')
         _log.info("-" * 50)
         _log.info("_solve_recursive START | depth=%d | phase=%s | model=%s", depth, phase or "manager", model_name)

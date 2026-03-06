@@ -1,13 +1,14 @@
 # Location: ara/model.py
-# Purpose: LLM abstraction — Gemini native SDK only
-# Functions: GeminiModel, EchoFallbackModel, BaseModel protocol
-# Calls: google-genai SDK
-# Imports: dataclasses, typing, json, logging
+# Purpose: LLM abstraction — Gemini, Anthropic, OpenAI, LoadBalanced
+# Functions: GeminiModel, AnthropicModel, OpenAIModel, LoadBalancedModel, EchoFallbackModel
+# Calls: google-genai SDK, anthropic SDK, openai SDK
+# Imports: dataclasses, typing, json, logging, random
 
 from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -121,9 +122,9 @@ def _tool_defs_to_gemini(tool_defs: list[dict[str, Any]]) -> list[Any]:
 
 # Fallback chains: when primary model is rate limited, try these in order
 _GEMINI_FALLBACK_CHAIN: dict[str, list[str]] = {
+    "gemini-3.1-pro-preview": ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"],
+    "gemini-3-flash-preview": ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-preview-05-20"],
     "gemini-3.1-flash-lite-preview": ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash-lite"],
-    "gemini-3-flash-preview": ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash-lite"],
-    "gemini-3.1-pro-preview": ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash-lite"],
     "gemini-2.5-flash-preview-05-20": ["gemini-2.0-flash-lite"],
 }
 
@@ -197,7 +198,7 @@ class GeminiModel:
     def generate(
         self, conversation: Conversation,
         on_chunk: Callable[[str], None] | None = None,
-        _max_retries: int = 2,
+        _max_retries: int = 5,
     ) -> ModelTurn:
         from google.genai import types
 
@@ -539,6 +540,317 @@ class AnthropicModel:
             }
             tools.append(tool)
         return tools
+
+
+# ── OpenAI (GPT) ──────────────────────────────────────────────────────
+
+_OPENAI_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-5.4": 200_000,
+    "gpt-5.4-pro": 200_000,
+    "gpt-5.3": 200_000,
+    "gpt-5.2": 200_000,
+    "gpt-5.1": 200_000,
+    "gpt-5": 128_000,
+    "gpt-4.1": 1_000_000,
+    "gpt-4o": 128_000,
+    "o3": 200_000,
+    "o4-mini": 200_000,
+}
+
+
+class OpenAIModel:
+    """OpenAI GPT model — supports tool calling and streaming."""
+
+    def __init__(self, model: str, api_key: str):
+        from openai import OpenAI
+        self.model = model
+        self._client = OpenAI(api_key=api_key)
+
+    def context_window(self) -> int:
+        return _OPENAI_CONTEXT_WINDOWS.get(self.model, 128_000)
+
+    def create_conversation(
+        self, system_prompt: str, tool_defs: list[dict[str, Any]],
+    ) -> Conversation:
+        return Conversation(system_prompt=system_prompt, tool_defs=tool_defs)
+
+    def generate(
+        self, conversation: Conversation,
+        on_chunk: Callable[[str], None] | None = None,
+        _max_retries: int = 5,
+    ) -> ModelTurn:
+        messages = self._build_messages(conversation)
+        tools = self._tool_defs_to_openai(conversation.tool_defs) if conversation.tool_defs else None
+
+        last_exc: Exception | None = None
+        for attempt in range(_max_retries):
+            try:
+                kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": True,
+                }
+                if tools:
+                    kwargs["tools"] = tools
+
+                text_parts: list[str] = []
+                tool_calls_map: dict[int, dict[str, Any]] = {}
+                usage = TokenUsage()
+
+                stream = self._client.chat.completions.create(**kwargs)
+                for chunk in stream:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if not delta:
+                        continue
+
+                    if delta.content:
+                        text_parts.append(delta.content)
+                        if on_chunk:
+                            on_chunk(delta.content)
+
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_calls_map:
+                                tool_calls_map[idx] = {
+                                    "id": tc_delta.id or f"call_{uuid.uuid4().hex[:12]}",
+                                    "name": "",
+                                    "arguments": "",
+                                }
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_calls_map[idx]["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_calls_map[idx]["arguments"] += tc_delta.function.arguments
+
+                    if hasattr(chunk, 'usage') and chunk.usage:
+                        usage.input_tokens = chunk.usage.prompt_tokens or 0
+                        usage.output_tokens = chunk.usage.completion_tokens or 0
+
+                tool_calls: list[ToolCall] = []
+                for tc_data in tool_calls_map.values():
+                    try:
+                        args = json.loads(tc_data["arguments"]) if tc_data["arguments"] else {}
+                    except json.JSONDecodeError:
+                        args = {}
+                    tool_calls.append(ToolCall(
+                        id=tc_data["id"],
+                        name=tc_data["name"],
+                        arguments=args,
+                    ))
+
+                return ModelTurn(
+                    text="".join(text_parts),
+                    tool_calls=tool_calls,
+                    usage=usage,
+                )
+
+            except Exception as exc:
+                error_text = str(exc).lower()
+
+                if "authentication" in error_text or "401" in error_text or "invalid api key" in error_text:
+                    raise ModelError(f"OpenAI auth failed: {exc}") from exc
+
+                if "rate_limit" in error_text or "429" in error_text:
+                    last_exc = exc
+                    wait = min(2 ** attempt * 2, 60)
+                    _log.warning("OpenAI rate limited (attempt %d/%d), retrying in %ds...",
+                                 attempt + 1, _max_retries, wait)
+                    if on_chunk:
+                        on_chunk(f"\n[Rate limited — retrying in {wait}s...]\n")
+                    time.sleep(wait)
+                    continue
+
+                if attempt == 0:
+                    last_exc = exc
+                    _log.warning("OpenAI API error (attempt 1), retrying in 3s: %s", exc)
+                    time.sleep(3)
+                    continue
+                raise ModelError(f"OpenAI API error: {exc}") from exc
+
+        raise RateLimitError(f"OpenAI rate limited after {_max_retries} retries.") from last_exc
+
+    def append_user_message(self, conv: Conversation, text: str) -> None:
+        conv._messages.append({"role": "user", "text": text})
+
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None:
+        if not turn.text and not turn.tool_calls:
+            return
+        conv._messages.append({
+            "role": "assistant",
+            "text": turn.text,
+            "tool_calls": [
+                {"name": tc.name, "args": tc.arguments, "id": tc.id}
+                for tc in turn.tool_calls
+            ],
+        })
+
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
+        conv._messages.append({
+            "role": "tool",
+            "results": [
+                {"name": r.name, "tool_call_id": r.tool_call_id, "content": r.content}
+                for r in results
+            ],
+        })
+
+    def condense_conversation(self, conv: Conversation, summary: str) -> None:
+        conv._messages = [{"role": "user", "text": f"[Previous context summary]\n{summary}"}]
+
+    def estimate_tokens(self, conv: Conversation) -> int:
+        total = len(conv.system_prompt) // 4
+        for msg in conv._messages:
+            total += len(str(msg)) // 4
+        return total
+
+    def _build_messages(self, conv: Conversation) -> list[dict[str, Any]]:
+        """Convert conversation to OpenAI messages format."""
+        messages: list[dict[str, Any]] = []
+
+        if conv.system_prompt:
+            messages.append({"role": "system", "content": conv.system_prompt})
+
+        for msg in conv._messages:
+            role = msg.get("role", "")
+
+            if role == "user":
+                text = msg.get("text", "")
+                if text:
+                    messages.append({"role": "user", "content": text})
+
+            elif role == "assistant":
+                m: dict[str, Any] = {"role": "assistant"}
+                if msg.get("text"):
+                    m["content"] = msg["text"]
+                tcs = msg.get("tool_calls", [])
+                if tcs:
+                    m["tool_calls"] = [
+                        {
+                            "id": tc.get("id", f"call_{uuid.uuid4().hex[:12]}"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name", ""),
+                                "arguments": json.dumps(tc.get("args", {})),
+                            },
+                        }
+                        for tc in tcs
+                    ]
+                messages.append(m)
+
+            elif role == "tool":
+                for r in msg.get("results", []):
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": r.get("tool_call_id", ""),
+                        "content": r.get("content", ""),
+                    })
+
+        return messages
+
+    @staticmethod
+    def _tool_defs_to_openai(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert ARA tool definitions to OpenAI function-calling format."""
+        tools = []
+        for td in tool_defs:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": td["name"],
+                    "description": td.get("description", ""),
+                    "parameters": td.get("parameters", {"type": "object", "properties": {}}),
+                },
+            })
+        return tools
+
+
+# ── Load-Balanced Model (round-robin across providers) ────────────────
+
+class LoadBalancedModel:
+    """Distributes calls across multiple models with configurable weights.
+
+    Each call randomly picks a model based on weight distribution.
+    If the chosen model fails, falls back to the other(s).
+    """
+
+    def __init__(self, models: list[tuple[Any, float]]):
+        """models: list of (model_instance, weight) tuples. Weights don't need to sum to 1."""
+        if not models:
+            raise ValueError("LoadBalancedModel requires at least one model")
+        self._models = models
+        total = sum(w for _, w in models)
+        self._weights = [w / total for _, w in models]
+        self.model = " | ".join(
+            f"{m.model}({w:.0%})" for m, w in zip([m for m, _ in models], self._weights)
+        )
+
+    def _pick(self) -> tuple[Any, list[Any]]:
+        """Pick a primary model and return (primary, fallbacks)."""
+        idx = random.choices(range(len(self._models)), weights=self._weights, k=1)[0]
+        primary = self._models[idx][0]
+        fallbacks = [m for i, (m, _) in enumerate(self._models) if i != idx]
+        return primary, fallbacks
+
+    def context_window(self) -> int:
+        return min(m.context_window() for m, _ in self._models)
+
+    def create_conversation(
+        self, system_prompt: str, tool_defs: list[dict[str, Any]],
+    ) -> Conversation:
+        return Conversation(system_prompt=system_prompt, tool_defs=tool_defs)
+
+    def generate(
+        self, conversation: Conversation,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ModelTurn:
+        primary, fallbacks = self._pick()
+        _log.info("LoadBalanced: picked %s", primary.model)
+        try:
+            return primary.generate(conversation, on_chunk=on_chunk)
+        except (ModelError, RateLimitError) as exc:
+            _log.warning("LoadBalanced: %s failed (%s), trying fallback...", primary.model, exc)
+            for fb in fallbacks:
+                try:
+                    _log.info("LoadBalanced: falling back to %s", fb.model)
+                    if on_chunk:
+                        on_chunk(f"\n[LoadBalanced fallback: {fb.model}]\n")
+                    return fb.generate(conversation, on_chunk=on_chunk)
+                except (ModelError, RateLimitError) as fb_exc:
+                    _log.warning("LoadBalanced: fallback %s also failed: %s", fb.model, fb_exc)
+                    continue
+            raise
+
+    def append_user_message(self, conv: Conversation, text: str) -> None:
+        conv._messages.append({"role": "user", "text": text})
+
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None:
+        if not turn.text and not turn.tool_calls:
+            return
+        conv._messages.append({
+            "role": "assistant",
+            "text": turn.text,
+            "tool_calls": [
+                {"name": tc.name, "args": tc.arguments, "id": tc.id}
+                for tc in turn.tool_calls
+            ],
+        })
+
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
+        conv._messages.append({
+            "role": "tool",
+            "results": [
+                {"name": r.name, "tool_call_id": r.tool_call_id, "content": r.content}
+                for r in results
+            ],
+        })
+
+    def condense_conversation(self, conv: Conversation, summary: str) -> None:
+        conv._messages = [{"role": "user", "text": f"[Previous context summary]\n{summary}"}]
+
+    def estimate_tokens(self, conv: Conversation) -> int:
+        total = len(conv.system_prompt) // 4
+        for msg in conv._messages:
+            total += len(str(msg)) // 4
+        return total
 
 
 # ── Fallback (no API key) ──────────────────────────────────────────────

@@ -20,7 +20,7 @@ class ARAConfig:
     session_root_dir: str = "ara_data"
 
     # Model
-    model: str = "gemini-3.1-flash-lite-preview"
+    model: str = "gemini-3.1-pro-preview"
     writer_model: str = "gemini-2.5-pro"
     google_api_key: str | None = None
 
@@ -110,6 +110,10 @@ class ARAConfig:
     peer_review_budget: float = 5.0
     peer_review_journal: str = "auto"  # "auto" = detect from topic, or explicit journal name
     anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+
+    # Hypothesis/Critic model: "load_balanced" (Opus + GPT-5.4) or "default" (use task model)
+    hypothesis_model: str = "load_balanced"
 
     # Behavior
     approval_gates: bool = True
@@ -141,7 +145,7 @@ class ARAConfig:
         return cls(
             workspace=ws,
             session_root_dir=os.getenv("ARA_SESSION_DIR", "ara_data"),
-            model=os.getenv("ARA_MODEL", "gemini-3.1-flash-lite-preview"),
+            model=os.getenv("ARA_MODEL", "gemini-3.1-pro-preview"),
             writer_model=os.getenv("ARA_WRITER_MODEL", "gemini-2.5-pro"),
             google_api_key=os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY"),
             max_depth=_safe_int("ARA_MAX_DEPTH", 4),
@@ -188,6 +192,8 @@ class ARAConfig:
             peer_review_budget=_safe_float("ARA_PEER_REVIEW_BUDGET", 5.0),
             peer_review_journal=os.getenv("ARA_PEER_REVIEW_JOURNAL", "auto"),
             anthropic_api_key=os.getenv("ARA_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY"),
+            openai_api_key=os.getenv("ARA_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            hypothesis_model=os.getenv("ARA_HYPOTHESIS_MODEL", "load_balanced"),
         )
 
     def apply_narrow_scope(self) -> None:

@@ -1,6 +1,6 @@
 # Location: ara/credentials.py
-# Purpose: API key management — load/save/prompt for Google API key
-# Functions: CredentialStore, load_api_key
+# Purpose: API key management — load/save/prompt for Google, Anthropic, OpenAI keys
+# Functions: CredentialStore, load_api_key, load_anthropic_api_key, load_openai_api_key
 # Calls: N/A
 # Imports: json, os, pathlib
 
@@ -105,6 +105,40 @@ def load_anthropic_api_key(workspace: Path | None = None) -> str | None:
                 key_name, _, val = line.partition("=")
                 key_name, val = key_name.strip(), val.strip().strip("\"'")
                 if key_name in ("ANTHROPIC_API_KEY", "ARA_ANTHROPIC_API_KEY") and val:
+                    return val
+
+    return None
+
+
+def load_openai_api_key(workspace: Path | None = None) -> str | None:
+    """Load OpenAI API key from env vars, credentials file, or .env file."""
+    # 1. Environment variables
+    key = os.getenv("ARA_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if key:
+        return key
+
+    # 2. Credentials file
+    cred_path = Path.home() / ".ara" / "credentials.json"
+    if cred_path.exists():
+        try:
+            data = json.loads(cred_path.read_text("utf-8"))
+            key = data.get("openai_api_key")
+            if key:
+                return key
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # 3. Workspace .env
+    if workspace:
+        env_path = workspace / ".env"
+        if env_path.exists():
+            for line in env_path.read_text("utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key_name, _, val = line.partition("=")
+                key_name, val = key_name.strip(), val.strip().strip("\"'")
+                if key_name in ("OPENAI_API_KEY", "ARA_OPENAI_API_KEY") and val:
                     return val
 
     return None

@@ -11,7 +11,7 @@ import sys
 
 from .builder import build_engine
 from .config import ARAConfig
-from .credentials import CredentialStore, load_api_key, load_anthropic_api_key
+from .credentials import CredentialStore, load_api_key, load_anthropic_api_key, load_openai_api_key
 from .logging import setup_logging
 from .runtime import SessionError, SessionRuntime
 from .settings import SettingsStore
@@ -100,6 +100,11 @@ def main() -> None:
     anthropic_key = load_anthropic_api_key(workspace=cfg.workspace)
     if anthropic_key:
         cfg.anthropic_api_key = anthropic_key
+
+    # Load OpenAI API key for hypothesis/critic load balancing
+    openai_key = load_openai_api_key(workspace=cfg.workspace)
+    if openai_key:
+        cfg.openai_api_key = openai_key
 
     # Apply CLI overrides
     if args.max_depth is not None:

@@ -1,6 +1,6 @@
 # Location: ara/builder.py
-# Purpose: Engine construction — creates GeminiModel + RLMEngine
-# Functions: build_engine
+# Purpose: Engine construction — creates GeminiModel + RLMEngine + phase-specific models
+# Functions: build_engine, _build_hypothesis_model
 # Calls: engine.py, model.py, config.py, tools/
 # Imports: logging
 
@@ -12,14 +12,50 @@ _log = logging.getLogger(__name__)
 
 from .config import ARAConfig
 from .engine import RLMEngine
-from .model import GeminiModel, EchoFallbackModel, ModelError
+from .model import (
+    GeminiModel, AnthropicModel, OpenAIModel, LoadBalancedModel,
+    EchoFallbackModel, ModelError,
+)
 from .tools import ARATools
+
+
+def _build_hypothesis_model(cfg: ARAConfig) -> any:
+    """Build load-balanced model for hypothesis/critic phases (Opus 50% + GPT-5.4 50%)."""
+    models: list[tuple[any, float]] = []
+
+    # Opus 4.6 — 50% weight
+    if cfg.anthropic_api_key:
+        try:
+            opus = AnthropicModel(model="claude-opus-4-6", api_key=cfg.anthropic_api_key)
+            models.append((opus, 0.5))
+            _log.info("Hypothesis model: Opus 4.6 loaded (50%%)")
+        except Exception as exc:
+            _log.warning("Failed to create Opus 4.6 for hypothesis: %s", exc)
+
+    # GPT-5.4 — 50% weight
+    if cfg.openai_api_key:
+        try:
+            gpt = OpenAIModel(model="gpt-5.4", api_key=cfg.openai_api_key)
+            models.append((gpt, 0.5))
+            _log.info("Hypothesis model: GPT-5.4 loaded (50%%)")
+        except Exception as exc:
+            _log.warning("Failed to create GPT-5.4 for hypothesis: %s", exc)
+
+    if not models:
+        _log.warning("No hypothesis models available — falling back to task model")
+        return None
+
+    if len(models) == 1:
+        _log.info("Hypothesis model: only one provider available — using %s at 100%%", models[0][0].model)
+        return models[0][0]
+
+    return LoadBalancedModel(models)
 
 
 def build_engine(cfg: ARAConfig) -> RLMEngine:
     tools = ARATools(workspace=cfg.workspace, approval_gates=cfg.approval_gates, config=cfg)
 
-    model_name = (cfg.model or "gemini-2.0-flash").strip()
+    model_name = (cfg.model or "gemini-3.1-pro-preview").strip()
     writer_model_name = (cfg.writer_model or "gemini-2.5-pro").strip()
 
     if cfg.google_api_key:
@@ -37,4 +73,13 @@ def build_engine(cfg: ARAConfig) -> RLMEngine:
         model = EchoFallbackModel(note="No Google API key configured")
         writer_model = model
 
-    return RLMEngine(model=model, tools=tools, config=cfg, writer_model=writer_model)
+    # Build hypothesis/critic model (Opus 50% + GPT-5.4 50%)
+    hypothesis_model = None
+    if cfg.hypothesis_model == "load_balanced":
+        hypothesis_model = _build_hypothesis_model(cfg)
+
+    return RLMEngine(
+        model=model, tools=tools, config=cfg,
+        writer_model=writer_model,
+        hypothesis_model=hypothesis_model,
+    )
