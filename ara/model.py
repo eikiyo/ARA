@@ -145,10 +145,59 @@ class GeminiModel:
             tool_defs=tool_defs,
         )
 
+    def _stream_generate(
+        self, model_name: str, contents: Any, config: Any,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> ModelTurn:
+        """Stream generate from a specific model. Handles Gemini 3.x thought_signature."""
+        is_gemini3 = "3." in model_name or "3-" in model_name
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        usage = TokenUsage()
+
+        for chunk in self._client.models.generate_content_stream(
+            model=model_name,
+            contents=contents,
+            config=config,
+        ):
+            if chunk.text:
+                text_parts.append(chunk.text)
+                if on_chunk:
+                    on_chunk(chunk.text)
+
+            if chunk.function_calls:
+                for fc in chunk.function_calls:
+                    tc = ToolCall(
+                        id=f"call_{uuid.uuid4().hex[:12]}",
+                        name=fc.name,
+                        arguments=dict(fc.args) if fc.args else {},
+                    )
+                    tool_calls.append(tc)
+
+            # Capture thought_signature from parts (Gemini 3.x only)
+            if is_gemini3 and hasattr(chunk, 'candidates') and chunk.candidates:
+                for cand in chunk.candidates:
+                    if hasattr(cand, 'content') and cand.content and cand.content.parts:
+                        for p in cand.content.parts:
+                            if hasattr(p, 'thought_signature') and p.thought_signature and p.function_call:
+                                for tc in tool_calls:
+                                    if tc.name == p.function_call.name and tc.thought_sig is None:
+                                        tc.thought_sig = p.thought_signature
+
+            if chunk.usage_metadata:
+                usage.input_tokens = chunk.usage_metadata.prompt_token_count or 0
+                usage.output_tokens = chunk.usage_metadata.candidates_token_count or 0
+
+        return ModelTurn(
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            usage=usage,
+        )
+
     def generate(
         self, conversation: Conversation,
         on_chunk: Callable[[str], None] | None = None,
-        _max_retries: int = 10,
+        _max_retries: int = 2,
     ) -> ModelTurn:
         from google.genai import types
 
@@ -163,49 +212,8 @@ class GeminiModel:
 
         last_exc: Exception | None = None
         for attempt in range(_max_retries):
-            text_parts: list[str] = []
-            tool_calls: list[ToolCall] = []
-            usage = TokenUsage()
-
             try:
-                for chunk in self._client.models.generate_content_stream(
-                    model=self.model,
-                    contents=contents,
-                    config=config,
-                ):
-                    if chunk.text:
-                        text_parts.append(chunk.text)
-                        if on_chunk:
-                            on_chunk(chunk.text)
-
-                    if chunk.function_calls:
-                        for fc in chunk.function_calls:
-                            tc = ToolCall(
-                                id=f"call_{uuid.uuid4().hex[:12]}",
-                                name=fc.name,
-                                arguments=dict(fc.args) if fc.args else {},
-                            )
-                            tool_calls.append(tc)
-
-                    # Capture thought_signature from parts (Gemini 3.x)
-                    if hasattr(chunk, 'candidates') and chunk.candidates:
-                        for cand in chunk.candidates:
-                            if hasattr(cand, 'content') and cand.content and cand.content.parts:
-                                for p in cand.content.parts:
-                                    if hasattr(p, 'thought_signature') and p.thought_signature and p.function_call:
-                                        for tc in tool_calls:
-                                            if tc.name == p.function_call.name and tc.thought_sig is None:
-                                                tc.thought_sig = p.thought_signature
-
-                    if chunk.usage_metadata:
-                        usage.input_tokens = chunk.usage_metadata.prompt_token_count or 0
-                        usage.output_tokens = chunk.usage_metadata.candidates_token_count or 0
-
-                return ModelTurn(
-                    text="".join(text_parts),
-                    tool_calls=tool_calls,
-                    usage=usage,
-                )
+                return self._stream_generate(self.model, contents, config, on_chunk)
 
             except Exception as exc:
                 error_text = str(exc).lower()
@@ -217,7 +225,7 @@ class GeminiModel:
                 # Rate limit — retry with exponential backoff
                 if "quota" in error_text or "429" in error_text or "resource_exhausted" in error_text:
                     last_exc = exc
-                    wait = min(2 ** attempt * 2, 60)  # 2s, 4s, 8s, 16s, 32s
+                    wait = min(2 ** attempt * 2, 60)
                     _log.warning("Rate limited on %s (attempt %d/%d), retrying in %ds...",
                                  self.model, attempt + 1, _max_retries, wait)
                     if on_chunk:
@@ -240,35 +248,7 @@ class GeminiModel:
             if on_chunk:
                 on_chunk(f"\n[Switching to fallback: {fallback_model}]\n")
             try:
-                text_parts_fb: list[str] = []
-                tool_calls_fb: list[ToolCall] = []
-                usage_fb = TokenUsage()
-                for chunk in self._client.models.generate_content_stream(
-                    model=fallback_model,
-                    contents=contents,
-                    config=config,
-                ):
-                    if chunk.text:
-                        text_parts_fb.append(chunk.text)
-                        if on_chunk:
-                            on_chunk(chunk.text)
-                    if chunk.function_calls:
-                        for fc in chunk.function_calls:
-                            tool_calls_fb.append(ToolCall(
-                                id=f"call_{uuid.uuid4().hex[:12]}",
-                                name=fc.name,
-                                arguments=dict(fc.args) if fc.args else {},
-                            ))
-                    if chunk.usage_metadata:
-                        usage_fb.input_tokens = chunk.usage_metadata.prompt_token_count or 0
-                        usage_fb.output_tokens = chunk.usage_metadata.candidates_token_count or 0
-
-                _log.info("FALLBACK: %s succeeded", fallback_model)
-                return ModelTurn(
-                    text="".join(text_parts_fb),
-                    tool_calls=tool_calls_fb,
-                    usage=usage_fb,
-                )
+                return self._stream_generate(fallback_model, contents, config, on_chunk)
             except Exception as fb_exc:
                 fb_error = str(fb_exc).lower()
                 if "quota" in fb_error or "429" in fb_error or "resource_exhausted" in fb_error:
