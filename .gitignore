@@ -23,5 +23,8 @@ ara_data/
 .vscode/
 .idea/
 
+# Analysis / working files
+ara_pipeline_analysis.txt
+
 # Claude Code
 .claude/
