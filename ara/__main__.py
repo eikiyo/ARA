@@ -11,7 +11,7 @@ import sys
 
 from .builder import build_engine
 from .config import ARAConfig
-from .credentials import CredentialStore, load_api_key
+from .credentials import CredentialStore, load_api_key, load_anthropic_api_key
 from .logging import setup_logging
 from .runtime import SessionError, SessionRuntime
 from .settings import SettingsStore
@@ -38,6 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Show persistent central database statistics and exit.")
     parser.add_argument("--import-session-db", metavar="PATH",
                         help="Import papers from an existing session.db into the central database.")
+    parser.add_argument("--no-peer-review", action="store_true",
+                        help="Disable post-pipeline peer review.")
     return parser
 
 
@@ -90,6 +92,11 @@ def main() -> None:
             return
     cfg.google_api_key = api_key
 
+    # Load Anthropic API key for peer review
+    anthropic_key = load_anthropic_api_key(workspace=cfg.workspace)
+    if anthropic_key:
+        cfg.anthropic_api_key = anthropic_key
+
     # Apply CLI overrides
     if args.max_depth is not None:
         cfg.max_depth = args.max_depth
@@ -99,6 +106,8 @@ def main() -> None:
         cfg.approval_gates = False
     if args.paper_type:
         cfg.paper_type = args.paper_type
+    if getattr(args, 'no_peer_review', False):
+        cfg.peer_review_enabled = False
     if args.model:
         cfg.model = args.model
     elif settings.default_model:

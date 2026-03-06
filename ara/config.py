@@ -105,6 +105,12 @@ class ARAConfig:
     special_instructions: str = ""
     special_authors: str = ""  # Comma-separated foundational authors to search for
 
+    # Peer review pipeline
+    peer_review_enabled: bool = True
+    peer_review_budget: float = 5.0
+    peer_review_journal: str = "auto"  # "auto" = detect from topic, or explicit journal name
+    anthropic_api_key: str | None = None
+
     # Behavior
     approval_gates: bool = True
 
@@ -178,6 +184,10 @@ class ARAConfig:
             words_propositions=_safe_int("ARA_WORDS_PROPOSITIONS", 1500),
             special_instructions=os.getenv("ARA_SPECIAL_INSTRUCTIONS", ""),
             special_authors=os.getenv("ARA_SPECIAL_AUTHORS", ""),
+            peer_review_enabled=os.getenv("ARA_PEER_REVIEW_ENABLED", "true").lower() not in ("false", "0", "no"),
+            peer_review_budget=_safe_float("ARA_PEER_REVIEW_BUDGET", 5.0),
+            peer_review_journal=os.getenv("ARA_PEER_REVIEW_JOURNAL", "auto"),
+            anthropic_api_key=os.getenv("ARA_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY"),
         )
 
     def apply_narrow_scope(self) -> None:

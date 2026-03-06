@@ -247,6 +247,32 @@ CREATE INDEX IF NOT EXISTS idx_audit_session ON quality_audit(session_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON phase_checkpoints(session_id);
 CREATE INDEX IF NOT EXISTS idx_rob_session ON risk_of_bias(session_id);
 CREATE INDEX IF NOT EXISTS idx_grade_session ON grade_evidence(session_id);
+
+CREATE TABLE IF NOT EXISTS peer_review_scores (
+    score_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(session_id),
+    cycle INTEGER NOT NULL DEFAULT 1,
+    round INTEGER NOT NULL,
+    reviewer TEXT NOT NULL,
+    attribute TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    feedback TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS peer_review_consensus (
+    consensus_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(session_id),
+    cycle INTEGER NOT NULL DEFAULT 1,
+    attribute TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    feedback TEXT,
+    improvement_plan TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pr_scores_session ON peer_review_scores(session_id);
+CREATE INDEX IF NOT EXISTS idx_pr_consensus_session ON peer_review_consensus(session_id);
 """
 
 
@@ -832,3 +858,61 @@ class ARADB:
             ).fetchall()
             p["claims"] = [dict(c) for c in claims]
         return papers
+
+    # ── Peer Review ───────────────────────────────────────────
+
+    def store_peer_review_score(
+        self, session_id: int, cycle: int, round_num: int,
+        reviewer: str, attribute: str, score: int, feedback: str = "",
+    ) -> int:
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO peer_review_scores "
+                "(session_id, cycle, round, reviewer, attribute, score, feedback, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, cycle, round_num, reviewer, attribute, score, feedback, now),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def store_peer_review_consensus(
+        self, session_id: int, cycle: int, attribute: str, score: int,
+        feedback: str = "", improvement_plan: str = "",
+    ) -> int:
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO peer_review_consensus "
+                "(session_id, cycle, attribute, score, feedback, improvement_plan, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_id, cycle, attribute, score, feedback, improvement_plan, now),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def get_peer_review_scores(self, session_id: int, cycle: int | None = None) -> list[dict[str, Any]]:
+        if cycle is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM peer_review_scores WHERE session_id = ? AND cycle = ? ORDER BY round, reviewer, attribute",
+                (session_id, cycle),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM peer_review_scores WHERE session_id = ? ORDER BY cycle, round, reviewer, attribute",
+                (session_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_peer_review_consensus(self, session_id: int, cycle: int | None = None) -> list[dict[str, Any]]:
+        if cycle is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM peer_review_consensus WHERE session_id = ? AND cycle = ? ORDER BY attribute",
+                (session_id, cycle),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM peer_review_consensus WHERE session_id = ? ORDER BY cycle, attribute",
+                (session_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]

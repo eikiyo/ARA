@@ -16,6 +16,7 @@ from .config import ARAConfig
 from .db import ARADB
 from .engine import RLMEngine, ExternalContext, StepCallback, StepEvent, TurnSummary
 from .output import generate_output
+from .peer_review import PeerReviewPipeline, build_peer_review_models
 
 
 class SessionError(Exception):
@@ -101,6 +102,10 @@ class SessionRuntime:
         # Generate output files after pipeline completes
         self._generate_output()
 
+        # Run peer review pipeline if enabled
+        if self.config.peer_review_enabled:
+            self._run_peer_review(on_event)
+
         return result
 
     def _generate_output(self) -> None:
@@ -133,6 +138,58 @@ class SessionRuntime:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).error("Output generation failed: %s", exc)
+
+    def _run_peer_review(self, on_event: StepCallback | None = None) -> None:
+        """Run the peer review pipeline after main pipeline output generation."""
+        import logging
+        log = logging.getLogger(__name__)
+
+        models = build_peer_review_models(self.config)
+        if models is None:
+            log.warning("Peer review skipped — required API keys not configured. "
+                        "Set ANTHROPIC_API_KEY and GOOGLE_API_KEY to enable.")
+            if on_event:
+                on_event(StepEvent("text", data="Peer review skipped — API keys not configured", depth=0))
+            return
+
+        central = getattr(self.db, '_central', None)
+        pipeline = PeerReviewPipeline(
+            models=models,
+            config=self.config,
+            db=self.db,
+            session_id=self.db_session_id,
+            central_db=central,
+            on_event=on_event,
+        )
+
+        if on_event:
+            on_event(StepEvent("subtask_start", data="Phase: peer_review", depth=0))
+
+        try:
+            result = pipeline.run(
+                topic=self._context.topic,
+                paper_type=self._context.paper_type,
+            )
+            if result.get("error"):
+                log.error("Peer review failed: %s", result["error"])
+            else:
+                improved = result.get("improved", False)
+                cost = result.get("total_cost_usd", 0)
+                log.info("Peer review complete — improved=%s, cost=$%.2f", improved, cost)
+                if on_event:
+                    status = "IMPROVED" if improved else "NOT IMPROVED"
+                    on_event(StepEvent("text",
+                        data=f"Peer review: {status} | Cost: ${cost:.2f} | "
+                             f"Cycle 1 avg: {result.get('cycle1_avg', 0):.1f}"
+                             + (f" | Cycle 2 avg: {result.get('cycle2_avg', 0):.1f}" if 'cycle2_avg' in result else ""),
+                        depth=0))
+        except Exception as exc:
+            log.exception("Peer review pipeline error: %s", exc)
+            if on_event:
+                on_event(StepEvent("error", data=f"Peer review error: {exc}", depth=0))
+
+        if on_event:
+            on_event(StepEvent("subtask_end", data="Phase: peer_review complete", depth=0))
 
     def cancel(self) -> None:
         self.engine.cancel_flag.set()

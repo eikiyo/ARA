@@ -95,6 +95,8 @@ _GEMINI_CONTEXT_WINDOWS: dict[str, int] = {
     "gemini-2.0-flash": 1_048_576,
     "gemini-2.5-flash": 1_048_576,
     "gemini-2.5-pro": 1_048_576,
+    "gemini-3-flash-preview": 1_048_576,
+    "gemini-3.1-pro-preview": 1_048_576,
     "gemini-1.5-flash": 1_048_576,
     "gemini-1.5-pro": 2_097_152,
 }
@@ -285,6 +287,199 @@ class GeminiModel:
                     contents.append(types.Content(role="tool", parts=parts))
 
         return contents
+
+
+# ── Anthropic (Claude) ─────────────────────────────────────
+
+_ANTHROPIC_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-opus-4-6": 200_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-haiku-4-5-20251001": 200_000,
+}
+
+
+class AnthropicModel:
+    """Claude model via Anthropic SDK — supports tool calling and streaming."""
+
+    def __init__(self, model: str, api_key: str):
+        import anthropic
+        self.model = model
+        self._client = anthropic.Anthropic(api_key=api_key)
+
+    def context_window(self) -> int:
+        return _ANTHROPIC_CONTEXT_WINDOWS.get(self.model, 200_000)
+
+    def create_conversation(
+        self, system_prompt: str, tool_defs: list[dict[str, Any]],
+    ) -> Conversation:
+        return Conversation(system_prompt=system_prompt, tool_defs=tool_defs)
+
+    def generate(
+        self, conversation: Conversation,
+        on_chunk: Callable[[str], None] | None = None,
+        _max_retries: int = 5,
+    ) -> ModelTurn:
+        messages = self._build_messages(conversation)
+        tools = self._tool_defs_to_anthropic(conversation.tool_defs) if conversation.tool_defs else None
+
+        last_exc: Exception | None = None
+        for attempt in range(_max_retries):
+            try:
+                kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "max_tokens": 16384,
+                    "messages": messages,
+                }
+                if conversation.system_prompt:
+                    kwargs["system"] = conversation.system_prompt
+                if tools:
+                    kwargs["tools"] = tools
+
+                text_parts: list[str] = []
+                tool_calls: list[ToolCall] = []
+                usage = TokenUsage()
+
+                with self._client.messages.stream(**kwargs) as stream:
+                    for event in stream:
+                        if hasattr(event, 'type'):
+                            if event.type == 'content_block_delta':
+                                if hasattr(event.delta, 'text'):
+                                    text_parts.append(event.delta.text)
+                                    if on_chunk:
+                                        on_chunk(event.delta.text)
+
+                    # Get final message
+                    response = stream.get_final_message()
+
+                # Extract tool calls from final response
+                for block in response.content:
+                    if block.type == "tool_use":
+                        tool_calls.append(ToolCall(
+                            id=block.id,
+                            name=block.name,
+                            arguments=block.input if isinstance(block.input, dict) else {},
+                        ))
+                    elif block.type == "text" and not text_parts:
+                        text_parts.append(block.text)
+
+                usage.input_tokens = response.usage.input_tokens
+                usage.output_tokens = response.usage.output_tokens
+
+                return ModelTurn(
+                    text="".join(text_parts),
+                    tool_calls=tool_calls,
+                    usage=usage,
+                )
+
+            except Exception as exc:
+                error_text = str(exc).lower()
+
+                if "authentication" in error_text or "401" in error_text:
+                    raise ModelError(f"Anthropic auth failed: {exc}") from exc
+
+                if "rate_limit" in error_text or "429" in error_text or "overloaded" in error_text:
+                    last_exc = exc
+                    wait = min(2 ** attempt * 2, 60)
+                    _log.warning("Anthropic rate limited (attempt %d/%d), retrying in %ds...", attempt + 1, _max_retries, wait)
+                    if on_chunk:
+                        on_chunk(f"\n[Rate limited — retrying in {wait}s...]\n")
+                    time.sleep(wait)
+                    continue
+
+                if attempt == 0:
+                    last_exc = exc
+                    _log.warning("Anthropic API error (attempt 1), retrying in 3s: %s", exc)
+                    time.sleep(3)
+                    continue
+                raise ModelError(f"Anthropic API error: {exc}") from exc
+
+        raise RateLimitError(f"Rate limited after {_max_retries} retries.") from last_exc
+
+    def append_user_message(self, conv: Conversation, text: str) -> None:
+        conv._messages.append({"role": "user", "text": text})
+
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None:
+        if not turn.text and not turn.tool_calls:
+            return
+        conv._messages.append({
+            "role": "assistant",
+            "text": turn.text,
+            "tool_calls": [
+                {"name": tc.name, "args": tc.arguments, "id": tc.id}
+                for tc in turn.tool_calls
+            ],
+        })
+
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
+        conv._messages.append({
+            "role": "tool",
+            "results": [
+                {"name": r.name, "tool_call_id": r.tool_call_id, "content": r.content}
+                for r in results
+            ],
+        })
+
+    def condense_conversation(self, conv: Conversation, summary: str) -> None:
+        conv._messages = [{"role": "user", "text": f"[Previous context summary]\n{summary}"}]
+
+    def estimate_tokens(self, conv: Conversation) -> int:
+        total = len(conv.system_prompt) // 4
+        for msg in conv._messages:
+            total += len(str(msg)) // 4
+        return total
+
+    def _build_messages(self, conv: Conversation) -> list[dict[str, Any]]:
+        """Convert conversation to Anthropic messages format."""
+        messages: list[dict[str, Any]] = []
+        for msg in conv._messages:
+            role = msg.get("role", "")
+
+            if role == "user":
+                text = msg.get("text", "")
+                if text:
+                    messages.append({"role": "user", "content": text})
+
+            elif role == "assistant":
+                content: list[dict[str, Any]] = []
+                if msg.get("text"):
+                    content.append({"type": "text", "text": msg["text"]})
+                for tc in msg.get("tool_calls", []):
+                    name = tc.get("name")
+                    if name:
+                        content.append({
+                            "type": "tool_use",
+                            "id": tc.get("id", f"call_{uuid.uuid4().hex[:12]}"),
+                            "name": name,
+                            "input": tc.get("args", {}),
+                        })
+                if content:
+                    messages.append({"role": "assistant", "content": content})
+
+            elif role == "tool":
+                content = []
+                for r in msg.get("results", []):
+                    content.append({
+                        "type": "tool_result",
+                        "tool_use_id": r.get("tool_call_id", ""),
+                        "content": r.get("content", ""),
+                    })
+                if content:
+                    messages.append({"role": "user", "content": content})
+
+        return messages
+
+    @staticmethod
+    def _tool_defs_to_anthropic(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert ARA tool definitions to Anthropic tool format."""
+        tools = []
+        for td in tool_defs:
+            tool = {
+                "name": td["name"],
+                "description": td.get("description", ""),
+                "input_schema": td.get("parameters", {"type": "object", "properties": {}}),
+            }
+            tools.append(tool)
+        return tools
 
 
 # ── Fallback (no API key) ──────────────────────────────────────────────

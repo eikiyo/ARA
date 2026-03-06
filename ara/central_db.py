@@ -70,6 +70,16 @@ CREATE INDEX IF NOT EXISTS idx_papers_year ON papers(year);
 CREATE INDEX IF NOT EXISTS idx_papers_embedding ON papers(paper_id) WHERE embedding IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_doi_validations_doi ON doi_validations(doi);
 CREATE INDEX IF NOT EXISTS idx_paper_sources ON paper_sources(paper_id);
+
+CREATE TABLE IF NOT EXISTS peer_review_results (
+    result_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_topic TEXT NOT NULL,
+    cycle INTEGER NOT NULL,
+    scores_json TEXT NOT NULL,
+    average_score REAL,
+    improved INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -426,6 +436,23 @@ class CentralDB:
             "sources": {row["api_source"]: row["cnt"] for row in sources},
             "db_path": str(self._path),
         }
+
+    # ── Peer Review Results ──────────────────────────────────────
+
+    def store_peer_review_result(
+        self, session_topic: str, cycle: int, scores: dict[str, int],
+        average_score: float, improved: bool,
+    ) -> int:
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO peer_review_results "
+                "(session_topic, cycle, scores_json, average_score, improved, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (session_topic, cycle, json.dumps(scores), average_score, int(improved), now),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     # ── Import from session DB ─────────────────────────────────
 
