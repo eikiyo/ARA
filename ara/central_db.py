@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS papers (
     full_text TEXT,
     full_text_path TEXT,
     embedding TEXT,
+    unpaywall_checked INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -96,8 +97,17 @@ class CentralDB:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_CENTRAL_SCHEMA)
+        # Migrations for existing DBs
+        self._migrate()
         self._conn.commit()
         _log.info("CentralDB opened: %s", self._path)
+
+    def _migrate(self) -> None:
+        """Apply schema migrations for existing databases."""
+        # Add unpaywall_checked column if missing
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(papers)").fetchall()}
+        if "unpaywall_checked" not in cols:
+            self._conn.execute("ALTER TABLE papers ADD COLUMN unpaywall_checked INTEGER DEFAULT 0")
 
     def close(self) -> None:
         self._conn.close()
@@ -367,6 +377,33 @@ class CentralDB:
             "SELECT full_text FROM papers WHERE paper_id = ?", (paper_id,),
         ).fetchone()
         return row["full_text"] if row else None
+
+    # ── Fulltext Source Tracking ───────────────────────────────
+
+    def mark_unpaywall_checked(self, paper_ids: list[int]) -> int:
+        """Mark papers as checked via Unpaywall (whether text was found or not).
+        Prevents re-querying Unpaywall for papers that are not open access."""
+        now = _now()
+        updated = 0
+        with self._lock:
+            for pid in paper_ids:
+                self._conn.execute(
+                    "UPDATE papers SET unpaywall_checked = 1, updated_at = ? WHERE paper_id = ?",
+                    (now, pid),
+                )
+                updated += 1
+            self._conn.commit()
+        return updated
+
+    def get_unchecked_for_unpaywall(self, limit: int = 500) -> list[dict[str, Any]]:
+        """Get papers with DOIs that haven't been checked via Unpaywall yet."""
+        rows = self._conn.execute(
+            "SELECT paper_id, doi FROM papers "
+            "WHERE doi IS NOT NULL AND unpaywall_checked = 0 AND full_text IS NULL "
+            "ORDER BY citation_count DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # ── Stats ──────────────────────────────────────────────────
 
