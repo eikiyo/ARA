@@ -838,8 +838,12 @@ class RLMEngine:
         _BATCH_COOLDOWN = 30
 
         for batch_num in range(1, _MAX_BATCHES + 1):
-            if len(claims) >= self.config.min_claims and papers_with_claims >= self.config.min_deep_read_papers:
-                _log.info("PIPELINE: Deep read targets met (%d claims, %d papers)", len(claims), papers_with_claims)
+            # Stop if claim target met OR we've processed most selected papers
+            if len(claims) >= self.config.min_claims:
+                _log.info("PIPELINE: Deep read claim target met (%d claims, %d papers)", len(claims), papers_with_claims)
+                break
+            if papers_with_claims >= self.config.min_deep_read_papers:
+                _log.info("PIPELINE: Deep read paper target met (%d claims, %d papers)", len(claims), papers_with_claims)
                 break
             if self.cancel_flag.is_set():
                 break
