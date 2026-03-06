@@ -1607,6 +1607,13 @@ class RLMEngine:
             if on_event:
                 on_event(StepEvent("subtask_start", data=f"Paper critic cycle {cycle + 1}", depth=0))
 
+            _ignore_sections_note = (
+                "IMPORTANT: Ignore internal working sections (protocol, synthesis_data, writing_brief, "
+                "advisory_report, evaluation). These are pipeline artifacts, NOT part of the paper. "
+                "Do NOT ask the writer to delete or modify them. "
+                "Only evaluate actual paper sections. "
+            )
+
             if paper_type == "conceptual":
                 objective = (
                     "Evaluate the complete conceptual paper draft against AMJ/JIBS/SMJ standards. "
@@ -1617,9 +1624,11 @@ class RLMEngine:
                     "all sections present, 5+ propositions, 3+ theoretical streams, "
                     "3+ framework comparisons, 5+ future research studies, boundary conditions). "
                     "ALSO CHECK: (1) domain specificity — every section must use topic-relevant examples, "
-                    "not generic examples, (2) NO PRISMA diagram or systematic review methodology, "
+                    "not generic examples, (2) NO PRISMA diagram or systematic review methodology "
+                    "in the paper sections (ignore internal pipeline files), "
                     "(3) framework and propositions sections have DISTINCT content — no duplication, "
                     "(4) at least 2 counter-intuitive propositions. "
+                    + _ignore_sections_note +
                     "If revision needed, specify exactly which sections and what to fix."
                 )
             else:
@@ -1631,6 +1640,7 @@ class RLMEngine:
                     f"{self.config.min_paper_words}+ words, {self.config.min_quality_tables}+ tables, "
                     "all sections present, structured abstract, PRISMA in methods, limitations, "
                     "3+ review comparisons, 3+ future questions). "
+                    + _ignore_sections_note +
                     "If revision needed, specify exactly which sections and what to fix."
                 )
 
@@ -1738,11 +1748,12 @@ class RLMEngine:
         _log.info("PIPELINE: Generating references")
         try:
             self.tools.dispatch("get_citations", {})
-            if context.paper_type != "conceptual":
+            paper_cfg = get_paper_config(context.paper_type)
+            if paper_cfg.requires_prisma:
                 _log.info("PIPELINE: Generating PRISMA diagram")
                 self.tools.dispatch("generate_prisma_diagram", {})
             else:
-                _log.info("PIPELINE: Skipping PRISMA diagram (conceptual paper)")
+                _log.info("PIPELINE: Skipping PRISMA diagram (%s paper)", context.paper_type)
         except Exception as exc:
             _log.error("PIPELINE: Reference generation failed: %s", exc)
 

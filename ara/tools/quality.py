@@ -398,8 +398,14 @@ def validate_all_citations(args: dict[str, Any], ctx: dict) -> str:
     all_unverified = 0
     all_unverified_list: list[str] = []
 
+    # Internal pipeline sections that are NOT part of the paper
+    _internal = {"protocol", "synthesis_data", "writing_brief", "advisor_1",
+                 "advisor_2", "advisory_report", "evaluation"}
+
     for f in sections_dir.iterdir():
         if f.suffix != ".md" or not f.is_file():
+            continue
+        if f.stem in _internal:
             continue
         content = f.read_text(encoding="utf-8")
         citations = _extract_citations_from_text(content)

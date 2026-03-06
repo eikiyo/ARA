@@ -18,6 +18,13 @@ _log = logging.getLogger(__name__)
 # Keyed by "session_id:section_key" — auto-cleans stale entries on access
 _section_rejection_counts: dict[str, int] = {}
 _section_rejection_session: int | None = None  # Track which session owns the counts
+_section_too_short_counts: dict[str, int] = {}  # Track too-short rejections separately
+
+# Internal working sections that should NOT appear in final paper output
+_INTERNAL_SECTIONS = frozenset({
+    "protocol", "synthesis_data", "writing_brief", "advisor_1",
+    "advisor_2", "advisory_report", "evaluation",
+})
 _MAX_SECTION_REJECTIONS = 3  # After this many citation rejections, save anyway
 
 # Fallback minimums — overridden by config at runtime via ctx
@@ -264,24 +271,39 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
             errors = []  # Downgrade to warnings
             _section_rejection_counts[rejection_key] = 0  # Reset for potential revisions
 
-    # Save section to file — prevent quality regression (never overwrite with shorter content)
+    # Save section to file — prevent quality regression (don't overwrite with much shorter content)
     section_file = output_dir / f"{section_key}.md"
-    if section_file.exists():
+    if section_file.exists() and section_key not in _INTERNAL_SECTIONS:
         existing_words = len(section_file.read_text(encoding="utf-8").split())
-        if word_count < existing_words * 0.85:  # Allow 15% shrink for quality rewrites, but not more
-            _log.warning("WRITE_SECTION: refusing to overwrite %s (existing=%d words, new=%d words — too short)",
-                          section, existing_words, word_count)
-            warnings.append(
-                f"Revision rejected: new version ({word_count} words) is significantly shorter than "
-                f"existing ({existing_words} words). Expand the content to at least {existing_words} words."
-            )
-            return json.dumps({
-                "status": "revision_too_short",
-                "section": section,
-                "existing_words": existing_words,
-                "new_words": word_count,
-                "warnings": warnings,
-            })
+        if word_count < existing_words * 0.70:  # Allow 30% shrink for quality rewrites
+            too_short_key = f"{current_session}:{section_key}"
+            _section_too_short_counts[too_short_key] = _section_too_short_counts.get(too_short_key, 0) + 1
+            attempts = _section_too_short_counts[too_short_key]
+
+            if attempts >= 3:
+                # After 3 failed attempts, allow the write to prevent infinite loops
+                _log.warning("WRITE_SECTION: allowing shorter overwrite of %s after %d attempts "
+                             "(existing=%d, new=%d)", section, attempts, existing_words, word_count)
+                warnings.append(
+                    f"Shorter revision accepted after {attempts} attempts "
+                    f"(was {existing_words} words, now {word_count} words)."
+                )
+                _section_too_short_counts[too_short_key] = 0
+            else:
+                _log.warning("WRITE_SECTION: refusing to overwrite %s (existing=%d words, new=%d words — too short, attempt %d/3)",
+                              section, existing_words, word_count, attempts)
+                warnings.append(
+                    f"Revision rejected: new version ({word_count} words) is significantly shorter than "
+                    f"existing ({existing_words} words). Expand to at least {int(existing_words * 0.70)} words. "
+                    f"(attempt {attempts}/3 — will force-accept after 3 attempts)"
+                )
+                return json.dumps({
+                    "status": "revision_too_short",
+                    "section": section,
+                    "existing_words": existing_words,
+                    "new_words": word_count,
+                    "warnings": warnings,
+                })
     section_file.write_text(content, encoding="utf-8")
 
     # Track PRISMA stats if this is the methods section
