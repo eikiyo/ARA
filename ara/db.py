@@ -883,6 +883,18 @@ class ARADB:
         ).fetchall()
         return {row["phase"] for row in rows}
 
+    def claim_count(self, session_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM claims WHERE session_id = ?", (session_id,),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def papers_with_claims_count(self, session_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(DISTINCT paper_id) FROM claims WHERE session_id = ?", (session_id,),
+        ).fetchone()
+        return row[0] if row else 0
+
     def get_all_papers_with_claims(self, session_id: int) -> list[dict[str, Any]]:
         """Get all papers that have at least one claim, with their claims attached."""
         papers = self.get_cited_papers(session_id)

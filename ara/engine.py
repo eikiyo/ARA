@@ -581,11 +581,20 @@ class RLMEngine:
 
             try:
                 if name == "fetch_texts" and "embed" not in completed:
-                    # Run fetch_texts + embed in parallel — they're independent
-                    # fetch gets full text from APIs; embed creates vectors from abstracts/titles
-                    _log.info("PIPELINE: Running fetch_texts + embed in parallel")
+                    # Run fetch_texts + embed + deep_read in parallel
+                    # fetch gets full text; embed creates vectors; deep_read starts on available papers
+                    deep_read_def = next(
+                        (p for p in self._get_pipeline_phases() if p["name"] == "deep_read"), None
+                    )
+                    run_deep_read = (
+                        deep_read_def and "deep_read" not in completed
+                        and deep_read_def.get("objective")
+                    )
+
+                    parallel_label = "fetch_texts + embed + deep_read" if run_deep_read else "fetch_texts + embed"
+                    _log.info("PIPELINE: Running %s in parallel", parallel_label)
                     if on_event:
-                        on_event(StepEvent("text", data="Running fetch_texts + embed in parallel", depth=0))
+                        on_event(StepEvent("text", data=f"Running {parallel_label} in parallel", depth=0))
 
                     def _run_fetch():
                         self._pipeline_fetch_texts(on_event)
@@ -593,18 +602,37 @@ class RLMEngine:
                     def _run_embed():
                         self._pipeline_embed(on_event)
 
-                    with ThreadPoolExecutor(max_workers=2) as pool:
-                        futures = [pool.submit(_run_fetch), pool.submit(_run_embed)]
-                        for fut in as_completed(futures):
+                    def _run_deep_read():
+                        # Small delay so some full texts land before deep_read starts querying
+                        import time
+                        time.sleep(10)
+                        self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
+
+                    max_w = 3 if run_deep_read else 2
+                    with ThreadPoolExecutor(max_workers=max_w) as pool:
+                        futs = [pool.submit(_run_fetch), pool.submit(_run_embed)]
+                        if run_deep_read:
+                            futs.append(pool.submit(_run_deep_read))
+                        for fut in as_completed(futs):
                             try:
                                 fut.result()
                             except Exception as exc:
-                                _log.exception("PIPELINE: Parallel fetch/embed failed: %s", exc)
+                                _log.exception("PIPELINE: Parallel phase failed: %s", exc)
 
-                    # Mark embed as completed so it's skipped in the main loop
+                    # Mark embed + deep_read as completed so they're skipped in the main loop
                     if db and session_id:
                         db.save_phase_checkpoint(session_id, "embed")
                     completed.add("embed")
+                    if run_deep_read:
+                        if db and session_id:
+                            db.save_phase_checkpoint(session_id, "deep_read")
+                        completed.add("deep_read")
+                        # Run batched deep_read continuation if targets not yet met
+                        if db and session_id:
+                            self._deep_read_batched_continuation(
+                                deep_read_def, topic, paper_type, context, on_event,
+                                db, session_id,
+                            )
 
                 elif name == "embed":
                     # Already ran in parallel with fetch_texts above
@@ -660,89 +688,17 @@ class RLMEngine:
 
             # After deep_read: run batched continuation until targets met
             if name == "deep_read" and db and session_id:
-                claims = db.get_claims(session_id)
-                papers_with_claims = len(set(c["paper_id"] for c in claims))
-                _log.info("PIPELINE: Deep read batch 1 produced %d claims from %d papers", len(claims), papers_with_claims)
-
-                # Batched deep_read: large batches to maximize context utilization
-                _BATCH_SIZE = 27  # Process all selected papers per batch — 1M context handles it easily
-                _MAX_BATCHES = 5  # Fewer batches needed with larger batch size
-                _BATCH_COOLDOWN = 30  # seconds between batches for rate limit recovery
-
-                for batch_num in range(1, _MAX_BATCHES + 1):
-                    if len(claims) >= self.config.min_claims and papers_with_claims >= self.config.min_deep_read_papers:
-                        _log.info("PIPELINE: Deep read targets met (%d claims, %d papers)", len(claims), papers_with_claims)
-                        break
-                    if self.cancel_flag.is_set():
-                        break
-
-                    _log.info(
-                        "PIPELINE: Deep read batch %d/%d — %d claims from %d papers so far (need %d from %d)",
-                        batch_num + 1, _MAX_BATCHES + 1, len(claims), papers_with_claims,
-                        self.config.min_claims, self.config.min_deep_read_papers,
-                    )
-                    if on_event:
-                        on_event(StepEvent("text", data=(
-                            f"Deep read batch {batch_num + 1}: {len(claims)} claims from "
-                            f"{papers_with_claims} papers — processing next {_BATCH_SIZE}"
-                        ), depth=0))
-
-                    # Cooldown between batches to let rate limits recover
-                    if batch_num > 0:
-                        _log.info("PIPELINE: Cooling down %ds between deep_read batches", _BATCH_COOLDOWN)
-                        time.sleep(_BATCH_COOLDOWN)
-
-                    batch_objective = (
-                        f"CONTINUE extracting claims from papers about {topic}. "
-                        f"You have {len(claims)} claims from {papers_with_claims} papers so far. "
-                        f"Target: {self.config.min_claims}+ claims from {self.config.min_deep_read_papers}+ papers. "
-                        f"Call list_papers(selected_only=true) to see ALL selected papers. "
-                        f"Skip papers you already processed (call list_claims() to see which paper_ids have claims). "
-                        f"Process the NEXT {_BATCH_SIZE} unprocessed papers. "
-                        f"For each: read_paper(paper_id=ID, include_fulltext=true) → extract_claims with EXACT quotes → assess_risk_of_bias. "
-                        f"Stop after processing {_BATCH_SIZE} papers — another batch will follow."
-                    )
-                    batch_phase = {
-                        "name": "deep_read",
-                        "prompt": "analyst_deep_read",
-                        "objective": batch_objective,
-                    }
-                    try:
-                        self._pipeline_run_phase(batch_phase, topic, paper_type, context, on_event)
-                    except Exception as exc:
-                        _log.exception("PIPELINE: Deep read batch %d failed: %s", batch_num + 1, exc)
-
-                    # Recount after each batch
-                    prev_claims = len(claims)
-                    claims = db.get_claims(session_id)
-                    papers_with_claims = len(set(c["paper_id"] for c in claims))
-                    new_claims = len(claims) - prev_claims
-                    _log.info("PIPELINE: Batch %d done: +%d claims, total %d from %d papers",
-                              batch_num + 1, new_claims, len(claims), papers_with_claims)
-
-                    # If a batch produced 0 new claims, increase cooldown (likely rate limited)
-                    if new_claims == 0:
-                        extra_cooldown = 45
-                        _log.warning("PIPELINE: Batch %d produced 0 claims — extra cooldown %ds", batch_num + 1, extra_cooldown)
-                        time.sleep(extra_cooldown)
-
-                # HARD GATE: If still 0 claims, this is fatal
-                if len(claims) == 0:
-                    _log.error("PIPELINE: FATAL — 0 claims after all deep_read batches. Cannot produce a credible paper.")
-                    if on_event:
-                        on_event(StepEvent("error", data="FATAL: 0 claims extracted. Pipeline cannot continue without evidence.", depth=0))
-                    break
-
-                # Store claim/paper counts in context for downstream phases
-                context.claim_count = len(claims)
-                context.papers_with_claims = papers_with_claims
-
+                deep_read_def_inline = phase_def
+                self._deep_read_batched_continuation(
+                    deep_read_def_inline, topic, paper_type, context, on_event,
+                    db, session_id,
+                )
                 # Start brancher in parallel with re-embed if we have enough claims
-                # Brancher searches cross-domain papers — doesn't need embed to finish
                 brancher_future = None
                 brancher_def = next(
                     (p for p in self._get_pipeline_phases() if p["name"] == "brancher"), None
                 )
+                claims = db.get_claims(session_id)
                 if (brancher_def and "brancher" not in completed
                         and len(claims) >= 50 and not self.cancel_flag.is_set()):
                     _log.info("PIPELINE: Starting brancher in parallel with re-embed")
@@ -866,6 +822,85 @@ class RLMEngine:
         )
         _log.info("PIPELINE: Phase %s completed — %d chars", phase_def["name"], len(result))
         return result
+
+    def _deep_read_batched_continuation(
+        self, deep_read_def: dict, topic: str, paper_type: str,
+        context: ExternalContext, on_event: StepCallback | None,
+        db: Any, session_id: int,
+    ) -> None:
+        """Run batched deep_read continuation until claim targets are met."""
+        claims = db.get_claims(session_id)
+        papers_with_claims = len(set(c["paper_id"] for c in claims))
+        _log.info("PIPELINE: Deep read batch 1 produced %d claims from %d papers", len(claims), papers_with_claims)
+
+        _BATCH_SIZE = 27
+        _MAX_BATCHES = 5
+        _BATCH_COOLDOWN = 30
+
+        for batch_num in range(1, _MAX_BATCHES + 1):
+            if len(claims) >= self.config.min_claims and papers_with_claims >= self.config.min_deep_read_papers:
+                _log.info("PIPELINE: Deep read targets met (%d claims, %d papers)", len(claims), papers_with_claims)
+                break
+            if self.cancel_flag.is_set():
+                break
+
+            _log.info(
+                "PIPELINE: Deep read batch %d/%d — %d claims from %d papers so far (need %d from %d)",
+                batch_num + 1, _MAX_BATCHES + 1, len(claims), papers_with_claims,
+                self.config.min_claims, self.config.min_deep_read_papers,
+            )
+            if on_event:
+                on_event(StepEvent("text", data=(
+                    f"Deep read batch {batch_num + 1}: {len(claims)} claims from "
+                    f"{papers_with_claims} papers — processing next {_BATCH_SIZE}"
+                ), depth=0))
+
+            if batch_num > 0:
+                _log.info("PIPELINE: Cooling down %ds between deep_read batches", _BATCH_COOLDOWN)
+                time.sleep(_BATCH_COOLDOWN)
+
+            batch_objective = (
+                f"CONTINUE extracting claims from papers about {topic}. "
+                f"You have {len(claims)} claims from {papers_with_claims} papers so far. "
+                f"Target: {self.config.min_claims}+ claims from {self.config.min_deep_read_papers}+ papers. "
+                f"Call list_papers(selected_only=true) to see ALL selected papers. "
+                f"Skip papers you already processed (call list_claims() to see which paper_ids have claims). "
+                f"Process the NEXT {_BATCH_SIZE} unprocessed papers. "
+                f"For each: read_paper(paper_id=ID, include_fulltext=true) → extract_claims with EXACT quotes → assess_risk_of_bias. "
+                f"Stop after processing {_BATCH_SIZE} papers — another batch will follow."
+            )
+            batch_phase = {
+                "name": "deep_read",
+                "prompt": "analyst_deep_read",
+                "objective": batch_objective,
+            }
+            try:
+                self._pipeline_run_phase(batch_phase, topic, paper_type, context, on_event)
+            except Exception as exc:
+                _log.exception("PIPELINE: Deep read batch %d failed: %s", batch_num + 1, exc)
+
+            prev_claims = len(claims)
+            claims = db.get_claims(session_id)
+            papers_with_claims = len(set(c["paper_id"] for c in claims))
+            new_claims = len(claims) - prev_claims
+            _log.info("PIPELINE: Batch %d done: +%d claims, total %d from %d papers",
+                      batch_num + 1, new_claims, len(claims), papers_with_claims)
+
+            if new_claims == 0:
+                extra_cooldown = 45
+                _log.warning("PIPELINE: Batch %d produced 0 claims — extra cooldown %ds", batch_num + 1, extra_cooldown)
+                time.sleep(extra_cooldown)
+
+        # HARD GATE: If still 0 claims, this is fatal
+        if len(claims) == 0:
+            _log.error("PIPELINE: FATAL — 0 claims after all deep_read batches. Cannot produce a credible paper.")
+            if on_event:
+                on_event(StepEvent("error", data="FATAL: 0 claims extracted. Pipeline cannot continue without evidence.", depth=0))
+            return
+
+        # Store claim/paper counts in context for downstream phases
+        context.claim_count = len(claims)
+        context.papers_with_claims = papers_with_claims
 
     def _pipeline_fetch_texts(self, on_event: StepCallback | None) -> None:
         """Batch fetch full text from 6 sources — no LLM needed."""
