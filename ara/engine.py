@@ -1374,6 +1374,24 @@ class RLMEngine:
             )
             _log.info("PIPELINE WRITER: Section %s done — %d chars", section_name, len(result))
 
+            # Auto-save: if the writer produced substantial text but didn't call write_section,
+            # save it automatically. This prevents losing 10K+ chars of output.
+            section_file = sections_dir / f"{section_name}.md"
+            should_auto_save = False
+            if len(result) > 500:
+                if not section_file.exists():
+                    should_auto_save = True
+                elif section_file.stat().st_size < 100:
+                    should_auto_save = True
+                elif section_file.stat().st_size < len(result) * 0.5:
+                    # Existing file is less than half the new content — writer probably
+                    # produced a better version as text instead of calling write_section
+                    should_auto_save = True
+            if should_auto_save:
+                _log.info("PIPELINE WRITER: Auto-saving %s (%d chars — writer didn't call write_section)",
+                          section_name, len(result))
+                section_file.write_text(result, encoding="utf-8")
+
             # Inline section critic — programmatic check, rewrite if failed
             section_issues = self._check_section_quality(section_name, sections_dir, context)
             if section_issues and not self.cancel_flag.is_set():
@@ -1669,14 +1687,29 @@ class RLMEngine:
                 phase="writer", topic=topic, rules=context.rules,
                 paper_type=paper_type,
             )
+            # Extract section names from critic feedback to scope the revision
+            import re as _re
+            _revision_sections = _re.findall(
+                r'"section"\s*:\s*"([^"]+)"', result[:5000]
+            )
+            if _revision_sections:
+                _scope_note = (
+                    f"SCOPE: Only revise these sections: {', '.join(_revision_sections)}. "
+                    f"Do NOT touch or rewrite any other sections. "
+                )
+            else:
+                _scope_note = ""
+
             revision_objective = (
                 f"Revise the paper based on critic feedback below. Follow the exact_fixes VERBATIM — "
                 f"the critic has written specific replacement text and citations for you.\n\n"
                 f"CRITIC FEEDBACK:\n{result[:5000]}\n\n"
+                f"{_scope_note}"
                 f"FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
-                f"INSTRUCTIONS: For each section in sections_needing_revision, read the exact_fixes "
-                f"and apply them. Use write_section to save each revised section. "
-                f"Do NOT shorten sections. Add the specific citations and text the critic requested."
+                f"INSTRUCTIONS: For each section in sections_needing_revision, read the current version "
+                f"with read_section, apply the exact_fixes, and save using write_section. "
+                f"Do NOT shorten sections. Do NOT rewrite sections that are not listed. "
+                f"Add the specific citations and text the critic requested."
             )
             self._solve_recursive(
                 objective=revision_objective,

@@ -162,6 +162,21 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
     if not content:
         return json.dumps({"error": "content is required — write the section text and pass it here"})
 
+    section_key = section.lower().replace(" ", "_")
+
+    # Reject invalid section names (dummy, test, temp, untitled, etc.)
+    _VALID_SECTIONS = {
+        "abstract", "introduction", "literature_review", "methods", "results",
+        "discussion", "conclusion", "theoretical_background", "framework",
+        "propositions", "references",
+    } | _INTERNAL_SECTIONS
+    if section_key not in _VALID_SECTIONS:
+        _log.warning("WRITE_SECTION: rejected invalid section name '%s'", section)
+        return json.dumps({
+            "error": f"Invalid section name '{section}'. Valid sections: "
+                     + ", ".join(sorted(_VALID_SECTIONS - _INTERNAL_SECTIONS)),
+        })
+
     db = ctx.get("db")
     session_id = ctx.get("session_id")
     workspace = ctx.get("workspace", Path("."))
@@ -169,7 +184,6 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     word_count = len(content.split())
-    section_key = section.lower().replace(" ", "_")
     warnings: list[str] = []
     errors: list[str] = []
 
@@ -188,9 +202,10 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
                 f"Consider expanding by {min_words - word_count} words."
             )
 
-    # Hard reject if section has 0 citations (except abstract and conclusion)
+    # Hard reject if section has 0 citations (except abstract, conclusion, and internal sections)
     citations_in_text = _extract_citations_from_text(content)
-    if section_key not in ("abstract", "conclusion", "protocol") and len(citations_in_text) == 0:
+    _exempt_from_citation_check = {"abstract", "conclusion", "protocol"} | _INTERNAL_SECTIONS
+    if section_key not in _exempt_from_citation_check and len(citations_in_text) == 0:
         errors.append(
             f"ZERO CITATIONS: section '{section}' has no (Author, Year) citations. "
             f"Every section except abstract/conclusion must cite papers from the database. "
@@ -237,10 +252,12 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
             f"minimum is {min_cites}. Add more (Author, Year) citations from list_papers data."
         )
 
+    # Session tracking for retry budgets
+    global _section_rejection_session
+    current_session = ctx.get('session_id', 0)
+
     # If critical errors, check retry budget before rejecting
     if errors:
-        global _section_rejection_session
-        current_session = ctx.get('session_id', 0)
         # Clear stale counts from previous sessions
         if _section_rejection_session != current_session:
             _section_rejection_counts.clear()
