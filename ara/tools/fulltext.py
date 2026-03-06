@@ -34,7 +34,10 @@ def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
     Rotates to backup email on 429 rate limits."""
     results: dict[str, str] = {}
     current_email = email
-    for doi in dois:
+    _log.info("Unpaywall: starting %d DOI lookups", len(dois))
+    for idx, doi in enumerate(dois):
+        if idx % 20 == 0 and idx > 0:
+            _log.info("Unpaywall: progress %d/%d, found %d so far", idx, len(dois), len(results))
         for attempt in range(2):  # Try up to 2 emails
             try:
                 resp = rate_limited_get(
@@ -79,18 +82,24 @@ def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
 def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
     """Fetch full text from CORE API using OR-query batching. Retries on 429."""
     results: dict[str, str] = {}
-    batch_size = 10  # CORE supports OR queries
+    batch_size = 20  # CORE supports OR queries with 20 DOIs
+    # Cap at 100 DOIs to avoid being the bottleneck
+    dois = dois[:100]
+    total_batches = (len(dois) + batch_size - 1) // batch_size
+    _log.info("CORE: starting %d batches for %d DOIs (capped)", total_batches, len(dois))
 
     for i in range(0, len(dois), batch_size):
+        batch_num = i // batch_size + 1
         batch = dois[i:i + batch_size]
         query = " OR ".join(f'doi:"{d}"' for d in batch)
+        _log.info("CORE batch %d/%d: querying %d DOIs", batch_num, total_batches, len(batch))
         for attempt in range(3):
             try:
                 resp = rate_limited_get(
                     "https://api.core.ac.uk/v3/search/works",
                     headers={"Authorization": f"Bearer {api_key}"},
                     params={"q": query, "limit": batch_size},
-                    timeout=30,
+                    timeout=15,
                 )
                 if resp.status_code == 429:
                     wait = 5 * (attempt + 1)
@@ -98,7 +107,7 @@ def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
                     time.sleep(wait)
                     continue
                 if resp.status_code != 200:
-                    _log.debug("CORE batch returned %d", resp.status_code)
+                    _log.info("CORE batch %d returned %d — skipping", batch_num, resp.status_code)
                     break
                 data = resp.json()
                 for item in data.get("results", []):
@@ -115,11 +124,12 @@ def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
                             results[item_doi] = text
                 break
             except Exception as exc:
-                _log.debug("CORE batch failed (attempt %d): %s", attempt + 1, exc)
+                _log.info("CORE batch %d failed (attempt %d): %s", batch_num, attempt + 1, exc)
                 if attempt < 2:
                     time.sleep(3 * (attempt + 1))
-        time.sleep(3)  # CORE rate limit recovery
+        time.sleep(1)
 
+    _log.info("CORE: completed — found %d texts", len(results))
     return results
 
 
@@ -129,6 +139,7 @@ def _fetch_s2_batch(dois: list[str]) -> dict[str, str]:
     """Fetch open access PDFs from Semantic Scholar batch API."""
     results: dict[str, str] = {}
     batch_size = 500
+    _log.info("S2: starting batch fetch for %d DOIs", len(dois))
     api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
     headers: dict[str, str] = {}
     if api_key:
@@ -280,10 +291,13 @@ def _fetch_pmc_batch(dois: list[str]) -> dict[str, str]:
     results: dict[str, str] = {}
     ncbi_key = os.getenv("NCBI_API_KEY", "")
     batch_size = 20
+    total_batches = (len(dois) + batch_size - 1) // batch_size
+    _log.info("PMC: starting %d batches for %d DOIs", total_batches, len(dois))
 
     for i in range(0, len(dois), batch_size):
+        batch_num = i // batch_size + 1
         batch = dois[i:i + batch_size]
-        # Search PMC for DOIs
+        _log.info("PMC batch %d/%d: querying %d DOIs", batch_num, total_batches, len(batch))
         query = " OR ".join(f'{d}[DOI]' for d in batch)
         try:
             params: dict[str, Any] = {
@@ -354,7 +368,7 @@ def _normalize_doi(raw: str) -> str:
 def _download_and_extract(url: str) -> str | None:
     """Download a URL and extract text (PDF or HTML/XML)."""
     try:
-        with httpx.stream("GET", url, timeout=30, follow_redirects=True) as resp:
+        with httpx.stream("GET", url, timeout=15, follow_redirects=True) as resp:
             if resp.status_code != 200:
                 return None
             content_type = resp.headers.get("content-type", "")
@@ -443,38 +457,69 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     # Remaining DOIs after each source succeeds — avoid re-fetching
     remaining = set(dois)
 
-    # Phase 1: Batch APIs first (cheapest, fastest)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = []
+    def _collect_results(name: str, results: dict[str, str]) -> int:
+        """Store results in DB and update remaining set. Returns count of new texts."""
+        new_found = 0
+        for doi, text in results.items():
+            doi_lower = doi.lower()
+            if doi_lower in remaining:
+                all_results[doi_lower] = text
+                remaining.discard(doi_lower)
+                new_found += 1
+                try:
+                    db.store_fulltext_content(doi=doi_lower, text=text[:_MAX_FULLTEXT_CHARS])
+                except Exception as exc:
+                    _log.debug("Immediate store failed for %s: %s", doi_lower, exc)
+        source_stats[name] = new_found
+        _log.info("FULLTEXT source %s: found %d texts (%d remaining)", name, new_found, len(remaining))
+        return new_found
 
-        # S2 batch — up to 500 per call, no key needed
-        futures.append(pool.submit(_run_source, "semantic_scholar", _fetch_s2_batch, list(remaining)))
+    # Phase 1: Batch APIs first (cheapest, fastest) — 180s total timeout
+    _PHASE1_TIMEOUT = 180
+    _log.info("FULLTEXT Phase 1: starting parallel batch APIs (S2, OpenAlex, EPMC, CORE)")
+    pool = ThreadPoolExecutor(max_workers=4)
+    futures: dict[Any, str] = {}
 
-        # CORE batch — 10 per OR-query
-        if core_key:
-            futures.append(pool.submit(_run_source, "core", _fetch_core_batch, list(remaining), core_key))
+    # S2 batch — up to 500 per call, no key needed
+    futures[pool.submit(_run_source, "semantic_scholar", _fetch_s2_batch, list(remaining))] = "semantic_scholar"
 
-        # OpenAlex batch — 50 per filter
-        futures.append(pool.submit(_run_source, "openalex", _fetch_openalex_batch, list(remaining)))
+    # CORE batch — 20 per OR-query, capped at 100 DOIs
+    if core_key:
+        futures[pool.submit(_run_source, "core", _fetch_core_batch, list(remaining), core_key)] = "core"
 
-        # Europe PMC — 20 per query
-        futures.append(pool.submit(_run_source, "europe_pmc", _fetch_epmc_batch, list(remaining)))
+    # OpenAlex batch — 50 per filter
+    futures[pool.submit(_run_source, "openalex", _fetch_openalex_batch, list(remaining))] = "openalex"
 
-        for fut in as_completed(futures):
-            name, results = fut.result()
-            new_found = 0
-            for doi, text in results.items():
-                doi_lower = doi.lower()
-                if doi_lower in remaining:
-                    all_results[doi_lower] = text
-                    remaining.discard(doi_lower)
-                    new_found += 1
-            source_stats[name] = new_found
-            _log.info("FULLTEXT source %s: found %d texts (%d remaining)", name, new_found, len(remaining))
+    # Europe PMC — 20 per query
+    futures[pool.submit(_run_source, "europe_pmc", _fetch_epmc_batch, list(remaining))] = "europe_pmc"
 
-    # Phase 2: PMC — needs NCBI, good for biomedical
+    try:
+        for fut in as_completed(futures, timeout=_PHASE1_TIMEOUT):
+            try:
+                name, results = fut.result(timeout=5)
+                _collect_results(name, results)
+            except Exception as exc:
+                src = futures.get(fut, "unknown")
+                _log.warning("FULLTEXT Phase 1 source %s failed: %s", src, exc)
+    except TimeoutError:
+        _log.warning("FULLTEXT Phase 1 timeout (%ds) — cancelling remaining futures", _PHASE1_TIMEOUT)
+        for fut in futures:
+            fut.cancel()
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    _log.info("FULLTEXT Phase 1 complete: %d texts found so far, %d remaining", len(all_results), len(remaining))
+
+    # Phase 2: PMC — needs NCBI, good for biomedical (cap at 100 DOIs, 120s timeout)
     if remaining:
-        _, pmc_results = _run_source("pmc", _fetch_pmc_batch, list(remaining))
+        pmc_dois = list(remaining)[:100]
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(_run_source, "pmc", _fetch_pmc_batch, pmc_dois)
+            try:
+                _, pmc_results = fut.result(timeout=120)
+            except Exception as exc:
+                _log.warning("FULLTEXT PMC phase timed out or failed: %s", exc)
+                pmc_results = {}
         new_found = 0
         for doi, text in pmc_results.items():
             doi_lower = doi.lower()
@@ -482,14 +527,23 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
                 all_results[doi_lower] = text
                 remaining.discard(doi_lower)
                 new_found += 1
+                try:
+                    db.store_fulltext_content(doi=doi_lower, text=text[:_MAX_FULLTEXT_CHARS])
+                except Exception:
+                    pass
         source_stats["pmc"] = new_found
         _log.info("FULLTEXT source pmc: found %d texts (%d remaining)", new_found, len(remaining))
 
-    # Phase 3: Unpaywall — 1 per call, use only for remaining
+    # Phase 3: Unpaywall — 1 per call, use only for remaining (cap at 100, 120s timeout)
     if remaining:
-        # Cap at 100 to avoid excessive API calls
         unpaywall_dois = list(remaining)[:100]
-        _, uw_results = _run_source("unpaywall", _fetch_unpaywall_batch, unpaywall_dois, unpaywall_email)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(_run_source, "unpaywall", _fetch_unpaywall_batch, unpaywall_dois, unpaywall_email)
+            try:
+                _, uw_results = fut.result(timeout=120)
+            except Exception as exc:
+                _log.warning("FULLTEXT Unpaywall phase timed out or failed: %s", exc)
+                uw_results = {}
         new_found = 0
         for doi, text in uw_results.items():
             doi_lower = doi.lower()
@@ -497,17 +551,15 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
                 all_results[doi_lower] = text
                 remaining.discard(doi_lower)
                 new_found += 1
+                try:
+                    db.store_fulltext_content(doi=doi_lower, text=text[:_MAX_FULLTEXT_CHARS])
+                except Exception:
+                    pass
         source_stats["unpaywall"] = new_found
         _log.info("FULLTEXT source unpaywall: found %d texts (%d remaining)", new_found, len(remaining))
 
-    # Store all results in DB
-    stored = 0
-    for doi, text in all_results.items():
-        try:
-            db.store_fulltext_content(doi=doi, text=text[:_MAX_FULLTEXT_CHARS])
-            stored += 1
-        except Exception as exc:
-            _log.debug("Failed to store fulltext for %s: %s", doi, exc)
+    # Final count (all already committed individually above)
+    stored = len(all_results)
 
     summary = {
         "total_needed": len(dois),

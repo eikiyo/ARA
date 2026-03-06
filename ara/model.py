@@ -23,6 +23,7 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
+    thought_sig: bytes | None = None
 
 
 @dataclass(slots=True)
@@ -94,6 +95,7 @@ class BaseModel(Protocol):
 _GEMINI_CONTEXT_WINDOWS: dict[str, int] = {
     "gemini-2.0-flash": 1_048_576,
     "gemini-2.5-flash": 1_048_576,
+    "gemini-3.1-flash-lite-preview": 1_048_576,
     "gemini-2.5-pro": 1_048_576,
     "gemini-3-flash-preview": 1_048_576,
     "gemini-3.1-pro-preview": 1_048_576,
@@ -137,7 +139,7 @@ class GeminiModel:
     def generate(
         self, conversation: Conversation,
         on_chunk: Callable[[str], None] | None = None,
-        _max_retries: int = 5,
+        _max_retries: int = 10,
     ) -> ModelTurn:
         from google.genai import types
 
@@ -169,11 +171,22 @@ class GeminiModel:
 
                     if chunk.function_calls:
                         for fc in chunk.function_calls:
-                            tool_calls.append(ToolCall(
+                            tc = ToolCall(
                                 id=f"call_{uuid.uuid4().hex[:12]}",
                                 name=fc.name,
                                 arguments=dict(fc.args) if fc.args else {},
-                            ))
+                            )
+                            tool_calls.append(tc)
+
+                    # Capture thought_signature from parts (Gemini 3.x)
+                    if hasattr(chunk, 'candidates') and chunk.candidates:
+                        for cand in chunk.candidates:
+                            if hasattr(cand, 'content') and cand.content and cand.content.parts:
+                                for p in cand.content.parts:
+                                    if hasattr(p, 'thought_signature') and p.thought_signature and p.function_call:
+                                        for tc in tool_calls:
+                                            if tc.name == p.function_call.name and tc.thought_sig is None:
+                                                tc.thought_sig = p.thought_signature
 
                     if chunk.usage_metadata:
                         usage.input_tokens = chunk.usage_metadata.prompt_token_count or 0
@@ -222,7 +235,10 @@ class GeminiModel:
             "role": "assistant",
             "text": turn.text,
             "tool_calls": [
-                {"name": tc.name, "args": tc.arguments, "id": tc.id}
+                {
+                    "name": tc.name, "args": tc.arguments, "id": tc.id,
+                    "thought_sig": tc.thought_sig,
+                }
                 for tc in turn.tool_calls
             ],
         })
@@ -267,10 +283,15 @@ class GeminiModel:
                 for tc in msg.get("tool_calls", []):
                     name = tc.get("name")
                     if name:
-                        parts.append(types.Part.from_function_call(
+                        part = types.Part.from_function_call(
                             name=name,
                             args=tc.get("args", {}),
-                        ))
+                        )
+                        # Gemini 3.x requires thought_signature on function_call parts
+                        thought_sig = tc.get("thought_sig")
+                        if thought_sig:
+                            part.thought_signature = thought_sig
+                        parts.append(part)
                 if parts:
                     contents.append(types.Content(role="model", parts=parts))
 
@@ -317,7 +338,7 @@ class AnthropicModel:
     def generate(
         self, conversation: Conversation,
         on_chunk: Callable[[str], None] | None = None,
-        _max_retries: int = 5,
+        _max_retries: int = 10,
     ) -> ModelTurn:
         messages = self._build_messages(conversation)
         tools = self._tool_defs_to_anthropic(conversation.tool_defs) if conversation.tool_defs else None

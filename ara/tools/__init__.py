@@ -23,12 +23,13 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "analyst_triage": ["list_papers", "read_paper", "rate_papers"],
     "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "assess_risk_of_bias", "search_similar", "list_papers", "list_claims"],
     "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "verify_claim"],
-    "hypothesis": ["read_paper", "search_similar", "list_claims", "list_papers", "score_hypothesis"],
-    "brancher": ["search_*", "search_similar", "list_claims"],
+    "hypothesis": ["read_paper", "search_similar", "list_claims", "list_papers", "score_hypothesis", "get_risk_of_bias_table", "get_grade_table"],
+    "brancher": ["search_*", "search_similar", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table"],
     "critic": ["read_paper", "search_similar", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table"],
     "synthesis": ["list_papers", "list_claims", "read_paper", "search_similar", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section"],
     "protocol": ["list_papers", "write_section"],
     "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table"],
+    "advisory_board": ["list_papers", "list_claims", "read_paper", "search_similar", "get_risk_of_bias_table", "get_grade_table", "write_section"],
     "paper_critic": ["read_paper", "search_similar", "list_claims", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
 }
 
@@ -178,10 +179,19 @@ class ARATools:
         try:
             import signal
             import platform
+            import threading
 
-            _TOOL_TIMEOUT = 120  # 2 minute max per tool call
+            # Long-running tools get extended timeouts
+            _LONG_TOOLS = {"search_all", "batch_fetch_fulltext", "batch_embed_papers"}
+            if tool_name.startswith("search_") or tool_name in _LONG_TOOLS:
+                _TOOL_TIMEOUT = 600
+            else:
+                _TOOL_TIMEOUT = 120
 
-            if platform.system() != "Windows":
+            # SIGALRM only works in main thread — skip timeout in worker threads
+            is_main_thread = threading.current_thread() is threading.main_thread()
+
+            if platform.system() != "Windows" and is_main_thread:
                 def _timeout_handler(signum, frame):
                     raise TimeoutError(f"Tool '{tool_name}' timed out after {_TOOL_TIMEOUT}s")
 
@@ -196,7 +206,7 @@ class ARATools:
                 result = handler(arguments, ctx)
         except TimeoutError as exc:
             _log.error("DISPATCH TIMEOUT: %s — %s", tool_name, exc)
-            return json.dumps({"error": f"Tool '{tool_name}' timed out after 120s"})
+            return json.dumps({"error": f"Tool '{tool_name}' timed out after {_TOOL_TIMEOUT}s"})
         except Exception as exc:
             _log.exception("DISPATCH FAIL: %s — %s", tool_name, exc)
             return json.dumps({"error": f"Tool '{tool_name}' failed: {exc}"})

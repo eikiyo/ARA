@@ -50,6 +50,41 @@ def extract_claims(args: dict[str, Any], ctx: dict) -> str:
         # Invalidate claims cache so search_similar picks up new claims
         from .papers import invalidate_claims_cache
         invalidate_claims_cache(session_id)
+
+        # Store claims in central DB for cross-session reuse
+        central_db = ctx.get("central_db")
+        if central_db:
+            paper = db.get_paper(paper_id)
+            paper_title = paper.get("title", "") if paper else ""
+            paper_doi = paper.get("doi", "") if paper else ""
+            central_claims = []
+            for c in claims:
+                if not isinstance(c, dict) or not c.get("claim_text"):
+                    continue
+                central_claims.append({
+                    "paper_title": paper_title,
+                    "paper_doi": paper_doi,
+                    "claim_text": c["claim_text"],
+                    "claim_type": c.get("claim_type", "finding"),
+                    "confidence": c.get("confidence", 0.5),
+                    "supporting_quotes": json.dumps(c.get("supporting_quotes", [])),
+                    "section": c.get("section", ""),
+                    "sample_size": c.get("sample_size", ""),
+                    "effect_size": c.get("effect_size", ""),
+                    "p_value": c.get("p_value", ""),
+                    "confidence_interval": c.get("confidence_interval", ""),
+                    "study_design": c.get("study_design", ""),
+                    "population": c.get("population", ""),
+                    "country": c.get("country", ""),
+                    "year_range": c.get("year_range", ""),
+                })
+            if central_claims:
+                try:
+                    topic = getattr(ctx.get("config"), "topic", "") if ctx.get("config") else ""
+                    central_db.store_claims(central_claims, session_topic=topic)
+                except Exception as exc:
+                    _log.debug("Central DB claim store failed: %s", exc)
+
         return json.dumps({"stored": stored, "paper_id": paper_id})
 
     # Otherwise return paper content for LLM to extract claims from

@@ -20,7 +20,7 @@ class ARAConfig:
     session_root_dir: str = "ara_data"
 
     # Model
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.1-flash-lite-preview"
     writer_model: str = "gemini-2.5-pro"
     google_api_key: str | None = None
 
@@ -56,9 +56,9 @@ class ARAConfig:
     steps_verifier: int = 80
     steps_triage: int = 20
     steps_deep_read: int = 400
-    steps_brancher: int = 40
-    steps_hypothesis: int = 30
-    steps_critic: int = 20
+    steps_brancher: int = 120
+    steps_hypothesis: int = 150
+    steps_critic: int = 60
     steps_synthesis: int = 40
 
     # Writer section word minimums
@@ -141,7 +141,7 @@ class ARAConfig:
         return cls(
             workspace=ws,
             session_root_dir=os.getenv("ARA_SESSION_DIR", "ara_data"),
-            model=os.getenv("ARA_MODEL", "gemini-2.5-flash"),
+            model=os.getenv("ARA_MODEL", "gemini-3.1-flash-lite-preview"),
             writer_model=os.getenv("ARA_WRITER_MODEL", "gemini-2.5-pro"),
             google_api_key=os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY"),
             max_depth=_safe_int("ARA_MAX_DEPTH", 4),

@@ -23,7 +23,7 @@ _DOMAIN_LIMITS: dict[str, int] = {
     "api.openalex.org": 60,
     "api.unpaywall.org": 30,
     "doi.org": 30,
-    "eutils.ncbi.nlm.nih.gov": 10,   # NCBI: 10/s with key, 3/s without
+    "eutils.ncbi.nlm.nih.gov": 60,   # NCBI: 10/s with key, 3/s without — 60rpm is safe
     "core.ac.uk": 20,
     "dblp.org": 20,
     "www.ebi.ac.uk": 20,
@@ -116,11 +116,11 @@ def rate_limited_get(
                 retry_after = resp.headers.get("Retry-After")
                 if retry_after:
                     try:
-                        wait = min(float(retry_after), 120)
+                        wait = min(float(retry_after), 30)
                     except ValueError:
-                        wait = min(10 * (2 ** attempt), 120)
+                        wait = min(5 * (2 ** attempt), 30)
                 else:
-                    wait = min(10 * (2 ** attempt), 120)
+                    wait = min(5 * (2 ** attempt), 30)
                 _log.warning("429 from %s, backing off %ds (attempt %d/%d)", domain, int(wait), attempt + 1, _MAX_RETRIES)
                 time.sleep(wait)
                 continue

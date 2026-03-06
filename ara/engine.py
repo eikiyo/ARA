@@ -201,21 +201,34 @@ class RLMEngine:
                 "prompt": "brancher",
                 "objective": (
                     "Cross-domain search for: {topic}. "
-                    "Search for papers from adjacent fields, alternative methodologies, "
-                    "analogous problems in other domains, and independent confirmations. "
-                    "Use search_semantic_scholar, search_crossref, etc. with cross-disciplinary queries."
+                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "Call get_risk_of_bias_table() to understand methodological quality. "
+                    "Then search for papers from AT LEAST 3 adjacent fields, using 9+ distinct cross-disciplinary queries. "
+                    "Target domains: (a) adjacent academic disciplines, (b) industry/practitioner literature, "
+                    "(c) policy/regulatory reports, (d) analogous problems in other sectors, "
+                    "(e) methodological innovations from other fields, (f) contradictory/disconfirming evidence. "
+                    "Use search_semantic_scholar, search_crossref, search_openalex with diverse queries. "
+                    "For each branch, explain HOW it connects to existing claims."
                 ),
             },
             {
                 "name": "hypothesis",
                 "prompt": "hypothesis",
                 "objective": (
-                    "Generate 5+ research hypotheses from the evidence on {topic}. "
-                    "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
+                    "Generate 15+ research hypotheses from the evidence on {topic}. "
+                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "Call get_risk_of_bias_table() to understand which evidence is strongest. "
+                    "Call get_grade_table() to see evidence certainty ratings. "
+                    "Use search_similar() per theme to find relevant papers via embeddings. "
+                    "For the 3-5 most important papers, call read_paper(paper_id=ID, include_fulltext=true). "
+                    "Generate hypotheses across these categories: "
+                    "(a) 3+ causal mechanism hypotheses, (b) 3+ moderator/boundary condition hypotheses, "
+                    "(c) 3+ novel synthesis hypotheses connecting disparate findings, "
+                    "(d) 2+ contrarian hypotheses challenging conventional wisdom, "
+                    "(e) 2+ methodological hypotheses about measurement/design. "
                     "Score each: novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility. "
-                    "For the top hypothesis, specify: methodology (PRISMA/GRADE), "
-                    "analysis approach, quality assessment framework (JBI/Newcastle-Ottawa). "
-                    "Use score_hypothesis to evaluate each one. "
+                    "For the top 3 hypotheses, specify: methodology, analysis approach, quality assessment framework. "
+                    "Use score_hypothesis to evaluate EVERY one. "
                     "Ground every hypothesis in specific claims from the database — do NOT hypothesize beyond the evidence."
                 ),
             },
@@ -223,14 +236,16 @@ class RLMEngine:
                 "name": "critic",
                 "prompt": "critic",
                 "objective": (
-                    "FIRST: Call list_claims() to load all extracted evidence. "
-                    "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
-                    "Use search_similar() to find the most relevant papers for the hypothesis. "
-                    "Read 3-5 key papers using read_paper(paper_id=ID, include_fulltext=true) to ground your evaluation. "
-                    "THEN evaluate the top hypothesis across 8 dimensions. "
+                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "Call get_risk_of_bias_table() to assess evidence quality. "
+                    "Call get_grade_table() to see evidence certainty ratings. "
+                    "Use search_similar() to find the most relevant papers for each hypothesis. "
+                    "Read 5-8 key papers using read_paper(paper_id=ID, include_fulltext=true) to ground your evaluation. "
+                    "THEN evaluate the top 3 hypotheses across 8 dimensions each. "
                     "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
                     "Apply the meta-test: would an expert believe something different? "
-                    "Decide: APPROVE or REJECT with detailed feedback and specific revisions."
+                    "Cross-reference claims against RoB ratings — discount claims from high-bias papers. "
+                    "Decide per hypothesis: APPROVE or REJECT with detailed feedback and specific revisions."
                 ),
             },
             {
@@ -241,13 +256,16 @@ class RLMEngine:
                     "{papers_with_claims} deeply-read papers. "
                     "FIRST: Call list_claims() to load all extracted evidence. "
                     "Call list_papers(compact=true) to get exact author names. "
+                    "Call get_risk_of_bias_table() to get RoB assessments for all papers. "
+                    "Call get_grade_table() to get GRADE evidence certainty ratings. "
                     "Use search_similar() per theme to find relevant papers via embeddings. "
                     "For top 5-10 papers, call read_paper(paper_id=ID, include_fulltext=true). "
                     "Build these outputs: "
                     "(1) Study characteristics table with author names, (2) Evidence synthesis "
-                    "table with GRADE ratings, (3) Risk of bias assessment, "
+                    "table with GRADE ratings, (3) Risk of bias summary table, "
                     "(4) PRISMA flow numbers, (5) Citation map by theme with (Author, Year), "
-                    "(6) Structural causal model notes, (7) Inclusion/exclusion criteria table. "
+                    "(6) Structural causal model notes, (7) Inclusion/exclusion criteria table, "
+                    "(8) Evidence quality matrix (cross-reference claims with RoB and GRADE). "
                     "Save ALL tables using write_section(section='synthesis_data', content=...) so the writer can load them."
                 ),
             },
@@ -334,22 +352,32 @@ class RLMEngine:
                 "prompt": "brancher",
                 "objective": (
                     "Cross-domain search for: {topic}. "
-                    "Search for papers from adjacent theoretical fields that could inform "
-                    "the conceptual framework. Look for: analogous frameworks in other domains, "
-                    "competing theories, and methodological insights for proposition testing. "
-                    "Use search_semantic_scholar, search_crossref, etc. with cross-disciplinary queries."
+                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "Call get_risk_of_bias_table() to understand methodological quality. "
+                    "Then search for papers from AT LEAST 3 adjacent theoretical fields using 9+ cross-disciplinary queries. "
+                    "Target: (a) analogous frameworks in other domains, (b) competing theories, "
+                    "(c) methodological insights for proposition testing, (d) empirical evidence from adjacent fields, "
+                    "(e) practitioner/industry perspectives, (f) contradictory/disconfirming evidence. "
+                    "Use search_semantic_scholar, search_crossref, search_openalex with diverse queries. "
+                    "For each branch, explain HOW it connects to existing claims."
                 ),
             },
             {
                 "name": "hypothesis",
                 "prompt": "hypothesis",
                 "objective": (
-                    "Identify the core theoretical gap and propose 3-5 candidate frameworks for: {topic}. "
-                    "You have {claim_count} theoretical claims from {papers_with_claims} deeply-read papers. "
+                    "Identify the core theoretical gap and propose 10-15 candidate frameworks for: {topic}. "
+                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "Call get_risk_of_bias_table() to understand which evidence is strongest. "
+                    "Call get_grade_table() to see evidence certainty ratings. "
+                    "Use search_similar() per theme to find relevant papers via embeddings. "
+                    "For the 3-5 most important papers, call read_paper(paper_id=ID, include_fulltext=true). "
                     "Each framework should be a TYPOLOGY, PROCESS MODEL, or MULTI-LEVEL FRAMEWORK. "
+                    "Generate across categories: (a) 3+ integration frameworks, (b) 3+ process models, "
+                    "(c) 2+ multi-level frameworks, (d) 2+ contrarian frameworks, (e) 2+ boundary condition models. "
                     "Score each: novelty (2x weight), feasibility, evidence_strength, methodology_fit, "
-                    "impact, reproducibility. Answer the Five Questions for the top framework. "
-                    "Use score_hypothesis to evaluate each one. "
+                    "impact, reproducibility. Answer the Five Questions for the top 3 frameworks. "
+                    "Use score_hypothesis to evaluate EVERY one. "
                     "Ground every framework in specific claims from the database — do NOT theorize beyond the evidence."
                 ),
             },
@@ -357,14 +385,16 @@ class RLMEngine:
                 "name": "critic",
                 "prompt": "critic",
                 "objective": (
-                    "FIRST: Call list_claims() to load all extracted evidence. "
-                    "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
-                    "Use search_similar() to find the most relevant papers for the framework. "
-                    "Read 3-5 key theoretical papers using read_paper(paper_id=ID, include_fulltext=true) to ground your evaluation. "
-                    "THEN evaluate the top framework across 8 dimensions. "
+                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "Call get_risk_of_bias_table() to assess evidence quality. "
+                    "Call get_grade_table() to see evidence certainty ratings. "
+                    "Use search_similar() to find the most relevant papers for each framework. "
+                    "Read 5-8 key theoretical papers using read_paper(paper_id=ID, include_fulltext=true) to ground your evaluation. "
+                    "THEN evaluate the top 3 frameworks across 8 dimensions each. "
                     "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
                     "Apply the meta-test: would a management scholar believe something different? "
-                    "Decide: APPROVE or REJECT with detailed feedback."
+                    "Cross-reference claims against RoB ratings — discount claims from high-bias papers. "
+                    "Decide per framework: APPROVE or REJECT with detailed feedback."
                 ),
             },
             {
@@ -375,6 +405,8 @@ class RLMEngine:
                     "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
                     "FIRST: Call list_claims() to load all extracted evidence. "
                     "Call list_papers(compact=true) to get exact author names. "
+                    "Call get_risk_of_bias_table() to get RoB assessments for all papers. "
+                    "Call get_grade_table() to get GRADE evidence certainty ratings. "
                     "Use search_similar() per theme to find relevant papers via embeddings. "
                     "For top 5-10 papers, call read_paper(paper_id=ID, include_fulltext=true). "
                     "Build these outputs: "
@@ -383,7 +415,7 @@ class RLMEngine:
                     "(3) Construct definitions table, (4) Proposition evidence map with supporting/opposing papers, "
                     "(5) Citation map by section with (Author, Year), "
                     "(6) Boundary conditions analysis, (7) Competing frameworks comparison table, "
-                    "(8) Novel contribution statement. "
+                    "(8) Novel contribution statement, (9) Evidence quality matrix (cross-ref claims with RoB/GRADE). "
                     "Save ALL tables using write_section(section='synthesis_data', content=...) so the writer can load them."
                 ),
             },
@@ -542,7 +574,34 @@ class RLMEngine:
                 on_event(StepEvent("subtask_start", data=f"Phase: {name}", depth=0))
 
             try:
-                if name == "embed":
+                if name == "fetch_texts" and "embed" not in completed:
+                    # Run fetch_texts + embed in parallel — they're independent
+                    # fetch gets full text from APIs; embed creates vectors from abstracts/titles
+                    _log.info("PIPELINE: Running fetch_texts + embed in parallel")
+                    if on_event:
+                        on_event(StepEvent("text", data="Running fetch_texts + embed in parallel", depth=0))
+
+                    def _run_fetch():
+                        self._pipeline_fetch_texts(on_event)
+
+                    def _run_embed():
+                        self._pipeline_embed(on_event)
+
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        futures = [pool.submit(_run_fetch), pool.submit(_run_embed)]
+                        for fut in as_completed(futures):
+                            try:
+                                fut.result()
+                            except Exception as exc:
+                                _log.exception("PIPELINE: Parallel fetch/embed failed: %s", exc)
+
+                    # Mark embed as completed so it's skipped in the main loop
+                    if db and session_id:
+                        db.save_phase_checkpoint(session_id, "embed")
+                    completed.add("embed")
+
+                elif name == "embed":
+                    # Already ran in parallel with fetch_texts above
                     self._pipeline_embed(on_event)
                 elif name == "fetch_texts":
                     self._pipeline_fetch_texts(on_event)
@@ -599,10 +658,10 @@ class RLMEngine:
                 papers_with_claims = len(set(c["paper_id"] for c in claims))
                 _log.info("PIPELINE: Deep read batch 1 produced %d claims from %d papers", len(claims), papers_with_claims)
 
-                # Batched deep_read: keep launching batches of 15 papers until targets met
-                _BATCH_SIZE = 15
-                _MAX_BATCHES = 12  # 12 batches × 15 papers = 180 papers max
-                _BATCH_COOLDOWN = 15  # seconds between batches for rate limit recovery
+                # Batched deep_read: large batches to maximize context utilization
+                _BATCH_SIZE = 27  # Process all selected papers per batch — 1M context handles it easily
+                _MAX_BATCHES = 5  # Fewer batches needed with larger batch size
+                _BATCH_COOLDOWN = 30  # seconds between batches for rate limit recovery
 
                 for batch_num in range(1, _MAX_BATCHES + 1):
                     if len(claims) >= self.config.min_claims and papers_with_claims >= self.config.min_deep_read_papers:
@@ -672,6 +731,22 @@ class RLMEngine:
                 context.claim_count = len(claims)
                 context.papers_with_claims = papers_with_claims
 
+                # Start brancher in parallel with re-embed if we have enough claims
+                # Brancher searches cross-domain papers — doesn't need embed to finish
+                brancher_future = None
+                brancher_def = next(
+                    (p for p in self._get_pipeline_phases() if p["name"] == "brancher"), None
+                )
+                if (brancher_def and "brancher" not in completed
+                        and len(claims) >= 50 and not self.cancel_flag.is_set()):
+                    _log.info("PIPELINE: Starting brancher in parallel with re-embed")
+                    if on_event:
+                        on_event(StepEvent("text", data="Starting brancher + re-embed in parallel", depth=0))
+                    _brancher_pool = ThreadPoolExecutor(max_workers=1)
+                    brancher_future = _brancher_pool.submit(
+                        self._pipeline_run_phase, brancher_def, topic, paper_type, context, on_event
+                    )
+
                 # Re-embed: papers may have gained full text during deep_read
                 _log.info("PIPELINE: Re-embedding papers after deep_read (full text may have changed)")
                 if on_event:
@@ -684,10 +759,29 @@ class RLMEngine:
                 if paper_type != "conceptual":
                     self._finalize_prisma_exclusions(db, session_id)
 
+                # Wait for brancher if it was started in parallel
+                if brancher_future is not None:
+                    try:
+                        brancher_future.result(timeout=600)
+                        _log.info("PIPELINE: Parallel brancher completed")
+                    except Exception as exc:
+                        _log.exception("PIPELINE: Parallel brancher failed: %s", exc)
+                    finally:
+                        _brancher_pool.shutdown(wait=False)
+                    if db and session_id:
+                        db.save_phase_checkpoint(session_id, "brancher")
+                    completed.add("brancher")
+
             if db and session_id:
                 db.save_phase_checkpoint(session_id, name)
             if on_event:
                 on_event(StepEvent("subtask_end", data=f"Phase {name} complete", depth=0))
+
+        # Advisory board — multi-advisor deliberation before writing
+        if "advisory_board" not in completed and not self.cancel_flag.is_set():
+            self._pipeline_advisory_board(topic, paper_type, context, on_event)
+            if db and session_id:
+                db.save_phase_checkpoint(session_id, "advisory_board")
 
         # Writer — section by section
         if "writer" not in completed and not self.cancel_flag.is_set():
@@ -895,6 +989,235 @@ class RLMEngine:
         if on_event:
             on_event(StepEvent("text", data=f"Triage complete: {selected_count}/{total} papers selected for deep reading", depth=0))
 
+    # ── Advisory Board ────────────────────────────────────────
+
+    _ADVISOR_PERSONAS = [
+        {
+            "id": "methodologist",
+            "name": "Methodologist",
+            "focus": (
+                "You are a senior research methodologist. Your focus is on: "
+                "how to present the methodology convincingly, PRISMA compliance, "
+                "which quality assessment tools to emphasize (JBI, GRADE), "
+                "how to address methodological limitations proactively, "
+                "what statistical/analytical approaches to highlight, "
+                "and how to make the methods section reproducible."
+            ),
+        },
+        {
+            "id": "domain_expert",
+            "name": "Domain Expert",
+            "focus": (
+                "You are a domain expert in the paper's field. Your focus is on: "
+                "theoretical framing and which theories to use, "
+                "how to position the contribution relative to existing work, "
+                "which debates and tensions to engage with, "
+                "what the key narrative arc should be, "
+                "and how to make the paper compelling to the target audience."
+            ),
+        },
+        {
+            "id": "evidence_synthesizer",
+            "name": "Evidence Synthesizer",
+            "focus": (
+                "You are an evidence synthesis specialist. Your focus is on: "
+                "which findings to highlight vs. de-emphasize based on evidence quality, "
+                "how to organize thematic results for maximum clarity, "
+                "which cross-cutting patterns deserve attention, "
+                "how to handle conflicting evidence, "
+                "and what the strongest evidence-based conclusions are."
+            ),
+        },
+        {
+            "id": "journal_reviewer",
+            "name": "Journal Reviewer",
+            # focus is set dynamically based on detected journal — see _pipeline_advisory_board
+            "focus": "",
+        },
+    ]
+
+    def _pipeline_advisory_board(
+        self, topic: str, paper_type: str,
+        context: ExternalContext, on_event: StepCallback | None,
+    ) -> None:
+        """Pre-writing advisory board: 4 advisors deliberate, then consensus writing brief."""
+        _log.info("=" * 40)
+        _log.info("PIPELINE: Advisory Board — pre-writing deliberation")
+        _log.info("=" * 40)
+        if on_event:
+            on_event(StepEvent("subtask_start", data="Advisory Board: deliberating before writing", depth=0))
+
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+
+        # Detect target journal for the journal reviewer
+        from .peer_review import _detect_journal
+        journal = self.config.peer_review_journal
+        if journal == "auto":
+            journal = _detect_journal(topic)
+        _log.info("ADVISORY BOARD: Target journal: %s", journal)
+
+        # Load synthesis data for advisor context
+        synthesis_file = sections_dir / "synthesis_data.md"
+        synthesis_data = ""
+        if synthesis_file.exists():
+            synthesis_data = synthesis_file.read_text(encoding="utf-8")[:8000]
+
+        # ── Round 1: Independent advisor recommendations ──────
+        advisor_plans: list[dict[str, str]] = []
+
+        for advisor in self._ADVISOR_PERSONAS:
+            # Inject journal-specific focus for journal reviewer
+            if advisor["id"] == "journal_reviewer":
+                advisor = dict(advisor)  # shallow copy to avoid mutating class attr
+                advisor["focus"] = (
+                    f"You are a senior reviewer and editorial board member at {journal}. "
+                    f"You have reviewed 100+ papers for this journal and know exactly what gets published. "
+                    f"Your focus is on: "
+                    f"(a) whether this paper fits the scope and standards of {journal}, "
+                    f"(b) what {journal} reviewers specifically look for (methodology rigor, contribution clarity, "
+                    f"empirical grounding, theoretical novelty), "
+                    f"(c) how to frame the contribution to maximize acceptance probability at {journal}, "
+                    f"(d) common rejection reasons at {journal} and how to preempt them, "
+                    f"(e) which recent papers published in {journal} this paper should cite and engage with, "
+                    f"(f) the appropriate tone, structure, and presentation style for {journal}."
+                )
+            if self.cancel_flag.is_set():
+                break
+
+            _log.info("ADVISORY BOARD: %s analyzing evidence...", advisor["name"])
+            if on_event:
+                on_event(StepEvent("text", data=f"Advisory Board: {advisor['name']} analyzing...", depth=0))
+
+            advisor_objective = (
+                f"You are on the advisory board for a research paper on: {topic}. "
+                f"{advisor['focus']}\n\n"
+                f"You have {context.claim_count} claims from {context.papers_with_claims} deeply-read papers.\n"
+                f"SYNTHESIS DATA (summary):\n{synthesis_data[:3000]}\n\n"
+                f"INSTRUCTIONS:\n"
+                f"1. Call list_claims() to review all extracted evidence.\n"
+                f"2. Call get_risk_of_bias_table() and get_grade_table() to assess evidence quality.\n"
+                f"3. Use search_similar() to find the most relevant papers for key themes.\n"
+                f"4. Read 3-5 key papers using read_paper(paper_id=ID, include_fulltext=true).\n"
+                f"5. Based on your analysis, produce a DETAILED advisory report with:\n"
+                f"   - Your recommended narrative arc (what story should this paper tell?)\n"
+                f"   - Section-by-section recommendations (what each section MUST cover)\n"
+                f"   - Specific papers/claims to cite in each section (with paper_id and author names)\n"
+                f"   - Potential weaknesses to address proactively\n"
+                f"   - What makes this paper's contribution unique\n"
+                f"6. Save your report using write_section(section='advisor_{advisor['id']}', content=YOUR_REPORT)"
+            )
+
+            system_prompt = build_phase_system_prompt(
+                phase="advisory_board", topic=topic, rules=context.rules,
+                paper_type=paper_type,
+            )
+
+            result = self._solve_recursive(
+                objective=advisor_objective,
+                context=context,
+                depth=self.config.max_depth,
+                on_event=on_event,
+                system_prompt_override=system_prompt,
+                phase="advisory_board",
+                max_steps=40,
+            )
+
+            # Read the saved advisor report
+            advisor_file = sections_dir / f"advisor_{advisor['id']}.md"
+            report = ""
+            if advisor_file.exists():
+                report = advisor_file.read_text(encoding="utf-8")
+            elif result:
+                report = result
+
+            advisor_plans.append({
+                "advisor": advisor["name"],
+                "id": advisor["id"],
+                "report": report,
+            })
+            _log.info("ADVISORY BOARD: %s done — %d chars", advisor["name"], len(report))
+
+        if not advisor_plans:
+            _log.warning("ADVISORY BOARD: No advisor reports produced — skipping")
+            return
+
+        # ── Round 2: Consensus writing brief ──────────────────
+        _log.info("ADVISORY BOARD: Synthesizing consensus writing brief...")
+        if on_event:
+            on_event(StepEvent("text", data="Advisory Board: synthesizing consensus brief...", depth=0))
+
+        # Build combined advisor input
+        advisor_summaries = ""
+        for plan in advisor_plans:
+            advisor_summaries += f"\n## {plan['advisor']}'s Recommendations\n"
+            advisor_summaries += plan["report"][:4000] + "\n"
+
+        consensus_objective = (
+            f"You are the Senior Editor synthesizing the advisory board's recommendations "
+            f"for a research paper on: {topic}.\n"
+            f"TARGET JOURNAL: {journal}\n\n"
+            f"Four advisors have analyzed the evidence and produced recommendations:\n"
+            f"{advisor_summaries}\n\n"
+            f"IMPORTANT: The Journal Reviewer's input is CRITICAL — they know what {journal} "
+            f"accepts and rejects. Prioritize their framing and scope advice.\n\n"
+            f"INSTRUCTIONS:\n"
+            f"1. Call list_claims() to verify the advisors' evidence references.\n"
+            f"2. Call list_papers(compact=true) to get exact author names for citations.\n"
+            f"3. Resolve any DISAGREEMENTS between advisors — pick the stronger argument.\n"
+            f"4. Produce the DEFINITIVE WRITING BRIEF with:\n\n"
+            f"   ## Target Journal: {journal}\n"
+            f"   (Key requirements, style expectations, what gets published vs rejected)\n\n"
+            f"   ## Paper Narrative Arc\n"
+            f"   (The overarching story: problem → gap → contribution → implications)\n\n"
+            f"   ## Section-by-Section Blueprint\n"
+            f"   For EACH section (abstract, introduction, literature_review, methods, results, discussion, conclusion):\n"
+            f"   - Key argument/purpose of this section\n"
+            f"   - Specific subsections and their content\n"
+            f"   - MUST-CITE papers with (Author, Year) format — at least 5 per body section\n"
+            f"   - Key claims to reference (by claim_id)\n"
+            f"   - Transitions to next section\n\n"
+            f"   ## Theoretical Framework\n"
+            f"   (Which theories to use, how they connect, what the original contribution is)\n\n"
+            f"   ## Evidence Hierarchy\n"
+            f"   (Strongest evidence first, how to handle weak/conflicting evidence)\n\n"
+            f"   ## Proactive Defense\n"
+            f"   (Anticipated reviewer objections at {journal} and how to address them in the text)\n\n"
+            f"5. Save using write_section(section='writing_brief', content=YOUR_BRIEF)"
+        )
+
+        system_prompt = build_phase_system_prompt(
+            phase="advisory_board", topic=topic, rules=context.rules,
+            paper_type=paper_type,
+        )
+
+        self._solve_recursive(
+            objective=consensus_objective,
+            context=context,
+            depth=self.config.max_depth,
+            on_event=on_event,
+            system_prompt_override=system_prompt,
+            phase="advisory_board",
+            max_steps=50,
+        )
+
+        # Verify brief was saved
+        brief_file = sections_dir / "writing_brief.md"
+        if brief_file.exists():
+            brief_size = len(brief_file.read_text(encoding="utf-8"))
+            _log.info("ADVISORY BOARD: Writing brief saved — %d chars", brief_size)
+        else:
+            _log.warning("ADVISORY BOARD: Writing brief not saved — writer will proceed without it")
+
+        # Clean up individual advisor files (they've been synthesized)
+        for advisor in self._ADVISOR_PERSONAS:
+            f = sections_dir / f"advisor_{advisor['id']}.md"
+            if f.exists():
+                f.unlink()
+
+        if on_event:
+            on_event(StepEvent("subtask_end", data="Advisory Board complete", depth=0))
+
     def _pipeline_writer(
         self, topic: str, paper_type: str,
         context: ExternalContext, on_event: StepCallback | None,
@@ -911,6 +1234,13 @@ class RLMEngine:
             for f in sections_dir.iterdir():
                 if f.suffix == ".md" and f.stat().st_size > 100:
                     existing_sections.add(f.stem)
+
+        # Load writing brief from advisory board (if available)
+        writing_brief = ""
+        brief_file = sections_dir / "writing_brief.md"
+        if brief_file.exists():
+            writing_brief = brief_file.read_text(encoding="utf-8")
+            _log.info("PIPELINE WRITER: Loaded writing brief from advisory board (%d chars)", len(writing_brief))
 
         system_prompt = build_phase_system_prompt(
             phase="writer", topic=topic, rules=context.rules,
@@ -931,9 +1261,40 @@ class RLMEngine:
             if on_event:
                 on_event(StepEvent("subtask_start", data=f"Writing: {section_name}", depth=0))
 
+            # Extract section-specific guidance from writing brief
+            brief_guidance = ""
+            if writing_brief:
+                # Try to extract the section's specific guidance from the brief
+                import re as _re
+                # Look for section header in brief (case-insensitive)
+                section_patterns = [
+                    section_name.replace("_", " "),
+                    section_name.replace("_", " ").title(),
+                    section_name,
+                ]
+                for pat in section_patterns:
+                    match = _re.search(
+                        rf"(?:^|\n)#+\s*.*{_re.escape(pat)}.*?\n(.*?)(?=\n#+\s|\Z)",
+                        writing_brief, _re.IGNORECASE | _re.DOTALL,
+                    )
+                    if match:
+                        brief_guidance = match.group(1).strip()[:2000]
+                        break
+                if not brief_guidance and len(writing_brief) < 6000:
+                    # Brief is short enough to include entirely
+                    brief_guidance = writing_brief[:3000]
+
+            brief_instruction = ""
+            if brief_guidance:
+                brief_instruction = (
+                    f"\n\nADVISORY BOARD GUIDANCE for this section:\n{brief_guidance}\n"
+                    f"Follow this guidance closely — it was produced by expert advisors who analyzed all evidence.\n"
+                )
+
             objective = (
                 f"Write the '{section_name}' section for the research paper on: {topic}. "
                 f"{instruction} "
+                f"{brief_instruction}"
                 f"MANDATORY FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
                 f"Use search_similar(text='<section theme>') to find the most relevant papers for this section. "
                 f"For the 2-3 most important papers in this section, call read_paper(paper_id=ID, include_fulltext=true). "

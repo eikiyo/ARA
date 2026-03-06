@@ -173,7 +173,7 @@ def _build_rebuttal_prompt(
             continue
         others_text += f"\n### {r['reviewer']}\n"
         for attr, data in r["scores"].items():
-            others_text += f"- {attr}: {data['score']}/100 — {data['feedback'][:150]}...\n"
+            others_text += f"- {attr}: {data.get('score', 50)}/100 — {str(data.get('feedback', ''))[:150]}...\n"
 
     return (
         f"You previously reviewed a paper. Now review the other reviewers' assessments.\n\n"
@@ -198,7 +198,7 @@ def _build_consensus_prompt(
     for r in all_reviews:
         reviews_text += f"\n### {r['reviewer']}\n"
         for attr, data in r["scores"].items():
-            reviews_text += f"- {attr}: {data['score']}/100\n"
+            reviews_text += f"- {attr}: {data.get('score', 50)}/100\n"
 
     rebuttals_text = ""
     for rb in all_rebuttals:
@@ -320,6 +320,7 @@ class PeerReviewPipeline:
             "gemini-3-flash-preview": (0.15, 0.60),
             "gemini-2.5-pro": (1.25, 10.0),
             "gemini-2.5-flash": (0.15, 0.60),
+            "gemini-3.1-flash-lite-preview": (0.10, 0.40),
         }
         # Default for unknown models
         rates = costs.get(model_name, (2.0, 10.0))
@@ -345,6 +346,36 @@ class PeerReviewPipeline:
 
         return turn.text, usage
 
+    def _checkpoint_path(self) -> Path:
+        """Path for peer review checkpoint file."""
+        ws = self.config.workspace
+        return ws / self.config.session_root_dir / "output" / "peer_review" / "_checkpoint.json"
+
+    def _save_checkpoint(self, stage: str, data: dict) -> None:
+        """Save peer review checkpoint for resume capability."""
+        cp = self._checkpoint_path()
+        cp.parent.mkdir(parents=True, exist_ok=True)
+        cp.write_text(json.dumps({"stage": stage, **data}, indent=2, default=str), encoding="utf-8")
+        _log.info("PEER_REVIEW: Checkpoint saved — stage=%s", stage)
+
+    def _load_checkpoint(self) -> dict | None:
+        """Load peer review checkpoint if it exists."""
+        cp = self._checkpoint_path()
+        if cp.exists():
+            try:
+                data = json.loads(cp.read_text(encoding="utf-8"))
+                _log.info("PEER_REVIEW: Checkpoint found — stage=%s", data.get("stage"))
+                return data
+            except Exception:
+                return None
+        return None
+
+    def _clear_checkpoint(self) -> None:
+        """Remove checkpoint after successful completion."""
+        cp = self._checkpoint_path()
+        if cp.exists():
+            cp.unlink()
+
     def run(self, topic: str, paper_type: str) -> dict[str, Any]:
         """Execute the full peer review pipeline.
 
@@ -369,37 +400,65 @@ class PeerReviewPipeline:
         paper_md = paper_md_path.read_text(encoding="utf-8")
         sections_dir = ws / self.config.session_root_dir / "output" / "sections"
 
+        # ── Check for checkpoint to resume ─────────────────────
+        checkpoint = self._load_checkpoint()
+        cycle1_consensus = None
+        cycle1_scores = {}
+
+        if checkpoint and checkpoint.get("stage") in ("cycle1_done", "revision_done", "cycle2_done"):
+            # Restore cycle 1 consensus from saved round 3 JSON
+            c1r3 = ws / self.config.session_root_dir / "output" / "peer_review" / "cycle1_round3.json"
+            if c1r3.exists():
+                try:
+                    cycle1_consensus = json.loads(c1r3.read_text(encoding="utf-8"))
+                    cycle1_scores = {attr: data["score"] for attr, data in cycle1_consensus.items()}
+                    cycle1_avg = sum(cycle1_scores.values()) / len(cycle1_scores) if cycle1_scores else 0
+                    self._emit(f"Resuming — Cycle 1 scores restored (avg {cycle1_avg:.1f}/100)")
+                except Exception as exc:
+                    _log.warning("PEER_REVIEW: Failed to restore cycle1 checkpoint: %s", exc)
+                    checkpoint = None
+
         # ── Cycle 1: Review the draft ─────────────────────────
-        self._emit("Starting Peer Review Cycle 1...")
-        cycle1_consensus = self._run_review_cycle(paper_md, topic, journal, cycle=1)
-        if not cycle1_consensus:
-            return {"error": "Peer review cycle 1 failed to produce consensus"}
+        if cycle1_consensus is None:
+            self._emit("Starting Peer Review Cycle 1...")
+            cycle1_consensus = self._run_review_cycle(paper_md, topic, journal, cycle=1)
+            if not cycle1_consensus:
+                return {"error": "Peer review cycle 1 failed to produce consensus"}
 
-        cycle1_scores = {attr: data["score"] for attr, data in cycle1_consensus.items()}
-        cycle1_avg = sum(cycle1_scores.values()) / len(cycle1_scores) if cycle1_scores else 0
-        self._emit(f"Cycle 1 average score: {cycle1_avg:.1f}/100")
+            cycle1_scores = {attr: data["score"] for attr, data in cycle1_consensus.items()}
+            cycle1_avg = sum(cycle1_scores.values()) / len(cycle1_scores) if cycle1_scores else 0
+            self._emit(f"Cycle 1 average score: {cycle1_avg:.1f}/100")
 
-        # Store in central DB
-        if self.central_db:
-            self.central_db.store_peer_review_result(
-                session_topic=topic, cycle=1, scores=cycle1_scores,
-                average_score=cycle1_avg, improved=False,
-            )
+            # Store in central DB
+            if self.central_db:
+                self.central_db.store_peer_review_result(
+                    session_topic=topic, cycle=1, scores=cycle1_scores,
+                    average_score=cycle1_avg, improved=False,
+                )
+
+            self._save_checkpoint("cycle1_done", {"cycle1_avg": cycle1_avg})
 
         # ── Revision by Opus 4.6 ──────────────────────────────
-        if not self._check_budget():
-            self._emit(f"Budget exhausted (${self._cost_usd:.2f}/${self.config.peer_review_budget:.2f}). Skipping revision.")
-            return self._finalize(topic, paper_type, cycle1_consensus, None, improved=False)
+        skip_revision = checkpoint and checkpoint.get("stage") in ("revision_done", "cycle2_done")
+        if not skip_revision:
+            if not self._check_budget():
+                self._emit(f"Budget exhausted (${self._cost_usd:.2f}/${self.config.peer_review_budget:.2f}). Skipping revision.")
+                self._clear_checkpoint()
+                return self._finalize(topic, paper_type, cycle1_consensus, None, improved=False)
 
-        self._emit("Opus 4.6 making surgical edits...")
-        self._apply_revisions(cycle1_consensus, sections_dir, paper_md)
+            self._emit("Opus 4.6 making surgical edits...")
+            self._apply_revisions(cycle1_consensus, sections_dir, paper_md)
 
-        # Regenerate output with revised sections
-        self._regenerate_output(topic, paper_type)
+            # Regenerate output with revised sections
+            self._regenerate_output(topic, paper_type)
+            self._save_checkpoint("revision_done", {"cycle1_avg": sum(cycle1_scores.values()) / len(cycle1_scores) if cycle1_scores else 0})
+        else:
+            self._emit("Resuming — skipping revision (already applied)")
 
         # ── Cycle 2: Review the revision ───────────────────────
         if not self._check_budget():
             self._emit(f"Budget exhausted after revision (${self._cost_usd:.2f}). Skipping cycle 2.")
+            self._clear_checkpoint()
             return self._finalize(topic, paper_type, cycle1_consensus, None, improved=True)
 
         revised_md_path = ws / "output" / "paper.md"
@@ -408,6 +467,7 @@ class PeerReviewPipeline:
         self._emit("Starting Peer Review Cycle 2...")
         cycle2_consensus = self._run_review_cycle(revised_md, topic, journal, cycle=2)
         if not cycle2_consensus:
+            self._clear_checkpoint()
             return self._finalize(topic, paper_type, cycle1_consensus, None, improved=True)
 
         cycle2_scores = {attr: data["score"] for attr, data in cycle2_consensus.items()}
@@ -427,6 +487,7 @@ class PeerReviewPipeline:
         self._emit(f"Improvement check: {'PASSED' if improved else 'FAILED'}")
         self._emit(f"Total peer review cost: ${self._cost_usd:.2f}")
 
+        self._clear_checkpoint()
         return self._finalize(topic, paper_type, cycle1_consensus, cycle2_consensus, improved)
 
     def _run_review_cycle(

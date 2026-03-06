@@ -19,6 +19,7 @@ from .critic import CRITIC_PROMPT, PAPER_CRITIC_PROMPT
 from .writer import WRITER_PROMPT
 from .synthesis import SYNTHESIS_PROMPT
 from .protocol import PROTOCOL_PROMPT
+from .advisory_board import ADVISORY_BOARD_PROMPT
 from .conceptual import (
     CONCEPTUAL_WRITER_PROMPT, CONCEPTUAL_SYNTHESIS_PROMPT,
     CONCEPTUAL_CRITIC_PROMPT, CONCEPTUAL_HYPOTHESIS_PROMPT,
@@ -38,6 +39,7 @@ PHASE_PROMPTS: dict[str, str] = {
     "paper_critic": PAPER_CRITIC_PROMPT,
     "writer": WRITER_PROMPT,
     "protocol": PROTOCOL_PROMPT,
+    "advisory_board": ADVISORY_BOARD_PROMPT,
 }
 
 # Conceptual paper prompt overrides — only the phases that differ

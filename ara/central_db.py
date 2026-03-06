@@ -71,6 +71,32 @@ CREATE INDEX IF NOT EXISTS idx_papers_embedding ON papers(paper_id) WHERE embedd
 CREATE UNIQUE INDEX IF NOT EXISTS idx_doi_validations_doi ON doi_validations(doi);
 CREATE INDEX IF NOT EXISTS idx_paper_sources ON paper_sources(paper_id);
 
+CREATE TABLE IF NOT EXISTS claims (
+    claim_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_doi TEXT,
+    paper_title TEXT NOT NULL,
+    paper_title_hash TEXT NOT NULL,
+    claim_text TEXT NOT NULL,
+    claim_type TEXT NOT NULL DEFAULT 'finding',
+    confidence REAL DEFAULT 0.5,
+    supporting_quotes TEXT,
+    section TEXT,
+    sample_size TEXT,
+    effect_size TEXT,
+    p_value TEXT,
+    confidence_interval TEXT,
+    study_design TEXT,
+    population TEXT,
+    country TEXT,
+    year_range TEXT,
+    session_topic TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_claims_doi ON claims(paper_doi) WHERE paper_doi IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_claims_title_hash ON claims(paper_title_hash);
+CREATE INDEX IF NOT EXISTS idx_claims_type ON claims(claim_type);
+
 CREATE TABLE IF NOT EXISTS peer_review_results (
     result_id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_topic TEXT NOT NULL,
@@ -424,6 +450,7 @@ class CentralDB:
         with_embedding = self._conn.execute("SELECT COUNT(*) FROM papers WHERE embedding IS NOT NULL").fetchone()[0]
         with_fulltext = self._conn.execute("SELECT COUNT(*) FROM papers WHERE full_text IS NOT NULL").fetchone()[0]
         doi_validations = self._conn.execute("SELECT COUNT(*) FROM doi_validations").fetchone()[0]
+        total_claims = self._conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
         sources = self._conn.execute(
             "SELECT api_source, COUNT(*) as cnt FROM paper_sources GROUP BY api_source ORDER BY cnt DESC"
         ).fetchall()
@@ -432,6 +459,7 @@ class CentralDB:
             "with_doi": with_doi,
             "with_embedding": with_embedding,
             "with_fulltext": with_fulltext,
+            "total_claims": total_claims,
             "doi_validations_cached": doi_validations,
             "sources": {row["api_source"]: row["cnt"] for row in sources},
             "db_path": str(self._path),
@@ -453,6 +481,79 @@ class CentralDB:
             )
             self._conn.commit()
             return cur.lastrowid
+
+    # ── Claims ──────────────────────────────────────────────────
+
+    def store_claims(self, claims: list[dict[str, Any]], session_topic: str = "") -> dict[str, int]:
+        """Store claims in central DB, deduplicating by (paper_title_hash, claim_text hash)."""
+        now = _now()
+        stored = 0
+        skipped = 0
+
+        with self._lock:
+            for c in claims:
+                paper_title = c.get("paper_title", "").strip()
+                if not paper_title or not c.get("claim_text"):
+                    continue
+
+                t_hash = _title_hash(paper_title)
+                claim_text = c["claim_text"].strip()
+                # Check for duplicate: same paper + same claim text
+                existing = self._conn.execute(
+                    "SELECT claim_id FROM claims WHERE paper_title_hash = ? AND claim_text = ?",
+                    (t_hash, claim_text),
+                ).fetchone()
+                if existing:
+                    skipped += 1
+                    continue
+
+                try:
+                    self._conn.execute(
+                        "INSERT INTO claims "
+                        "(paper_doi, paper_title, paper_title_hash, claim_text, claim_type, "
+                        "confidence, supporting_quotes, section, sample_size, effect_size, "
+                        "p_value, confidence_interval, study_design, population, country, "
+                        "year_range, session_topic, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            c.get("paper_doi"), paper_title, t_hash, claim_text,
+                            c.get("claim_type", "finding"), c.get("confidence", 0.5),
+                            c.get("supporting_quotes"), c.get("section"),
+                            c.get("sample_size"), c.get("effect_size"),
+                            c.get("p_value"), c.get("confidence_interval"),
+                            c.get("study_design"), c.get("population"),
+                            c.get("country"), c.get("year_range"),
+                            session_topic, now,
+                        ),
+                    )
+                    stored += 1
+                except sqlite3.IntegrityError:
+                    skipped += 1
+
+            self._conn.commit()
+
+        if stored > 0:
+            _log.info("CentralDB store_claims: stored=%d, skipped=%d", stored, skipped)
+        return {"stored": stored, "skipped": skipped}
+
+    def search_claims(self, keyword: str, limit: int = 100) -> list[dict[str, Any]]:
+        """Search claims by keyword in claim_text."""
+        rows = self._conn.execute(
+            "SELECT * FROM claims WHERE claim_text LIKE ? ORDER BY confidence DESC LIMIT ?",
+            (f"%{keyword}%", limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_claims_for_paper(self, doi: str) -> list[dict[str, Any]]:
+        """Get all claims for a paper by DOI."""
+        rows = self._conn.execute(
+            "SELECT * FROM claims WHERE paper_doi = ? ORDER BY claim_id",
+            (doi,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def claim_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
 
     # ── Import from session DB ─────────────────────────────────
 
@@ -505,12 +606,49 @@ class CentralDB:
                     self.store_embedding(central_id, emb)
                     imported_emb += 1
 
-        _log.info("CentralDB import from %s: papers=%d, skipped=%d, fulltext=%d, embeddings=%d",
-                   session_db_path.name, result["stored"], result["skipped"], imported_ft, imported_emb)
+        # Import claims
+        imported_claims = 0
+        try:
+            conn2 = sqlite3.connect(str(session_db_path))
+            conn2.row_factory = sqlite3.Row
+            claim_rows = conn2.execute(
+                "SELECT c.*, p.title as paper_title, p.doi as paper_doi "
+                "FROM claims c JOIN papers p ON c.paper_id = p.paper_id"
+            ).fetchall()
+            conn2.close()
+
+            if claim_rows:
+                central_claims = []
+                for cr in claim_rows:
+                    central_claims.append({
+                        "paper_title": cr["paper_title"],
+                        "paper_doi": cr["paper_doi"] or "",
+                        "claim_text": cr["claim_text"],
+                        "claim_type": cr["claim_type"],
+                        "confidence": cr["confidence"],
+                        "supporting_quotes": cr["supporting_quotes"],
+                        "section": cr["section"],
+                        "sample_size": cr["sample_size"],
+                        "effect_size": cr["effect_size"],
+                        "p_value": cr["p_value"],
+                        "confidence_interval": cr["confidence_interval"],
+                        "study_design": cr["study_design"],
+                        "population": cr["population"],
+                        "country": cr["country"],
+                        "year_range": cr["year_range"],
+                    })
+                claim_result = self.store_claims(central_claims)
+                imported_claims = claim_result["stored"]
+        except Exception as exc:
+            _log.warning("CentralDB claim import failed: %s", exc)
+
+        _log.info("CentralDB import from %s: papers=%d, skipped=%d, fulltext=%d, embeddings=%d, claims=%d",
+                   session_db_path.name, result["stored"], result["skipped"], imported_ft, imported_emb, imported_claims)
 
         return {
             "imported": result["stored"],
             "skipped": result["skipped"],
             "fulltext_imported": imported_ft,
             "embeddings_imported": imported_emb,
+            "claims_imported": imported_claims,
         }
