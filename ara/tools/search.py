@@ -515,15 +515,15 @@ def search_base(args: dict[str, Any], ctx: dict) -> str:
 # ── Batch search (all APIs) ──────────────────────────────────────────
 
 _ALL_SEARCH_FNS = [
-    ("semantic_scholar", search_semantic_scholar),
-    ("arxiv", search_arxiv),
-    ("crossref", search_crossref),
     ("openalex", search_openalex),
+    ("crossref", search_crossref),
+    ("arxiv", search_arxiv),
     ("pubmed", search_pubmed),
     ("core", search_core),
     ("dblp", search_dblp),
     ("europe_pmc", search_europe_pmc),
     ("base", search_base),
+    ("semantic_scholar", search_semantic_scholar),  # Last — rate-limits aggressively
 ]
 
 
@@ -566,10 +566,10 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
     central_db = ctx.get("central_db")
     if central_db and query:
         # Search by multiple keywords from the query
-        keywords = [w for w in query.split() if len(w) > 3][:5]
+        keywords = [w for w in query.replace('"', '').split() if len(w) > 3][:8]
         seen_ids: set[int] = set()
         for kw in keywords:
-            for p in central_db.search_by_keyword(kw, limit=50):
+            for p in central_db.search_by_keyword(kw, limit=100):
                 if p["paper_id"] not in seen_ids:
                     seen_ids.add(p["paper_id"])
                     p["source"] = f"central_db:{p.get('source', 'cached')}"
@@ -580,8 +580,19 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
     results: dict[str, Any] = {}
     errors: list[str] = []
 
-    # Sequential execution — one API at a time to avoid race conditions
+    # If central DB already provides enough papers, skip expensive external APIs
+    skip_external = False
+    if central_papers and db and session_id:
+        existing = db.paper_count(session_id)
+        if existing + len(central_papers) >= min_papers:
+            _log.info("SEARCH_ALL: Central DB + session DB = %d papers — skipping external APIs",
+                       existing + len(central_papers))
+            skip_external = True
+
+    # Sequential execution — one API at a time, Semantic Scholar last
     for name, fn in _ALL_SEARCH_FNS:
+        if skip_external:
+            break
         try:
             raw = fn({"query": query, "limit": limit}, ctx)
             data = json.loads(raw)
