@@ -43,8 +43,8 @@ Your task is to rank all discovered papers by relevance to the research topic an
 ### CRITICAL RULES
 - Step 1: Call list_papers() to get papers.
 - Step 2: Evaluate each paper's title and abstract for relevance.
-- Step 3: Call rate_papers() with ALL ratings. This is MANDATORY — never skip it.
-- Do NOT call read_paper — the title and abstract from list_papers is sufficient.
+- Step 3: For borderline papers (scoring 0.4-0.7 with ambiguous abstracts), call `read_paper(paper_id=N)` to read the full abstract before deciding. Do NOT call read_paper for clearly relevant or clearly irrelevant papers.
+- Step 4: Call rate_papers() with ALL ratings. This is MANDATORY — never skip it.
 - Set selected=true for papers scoring >= 0.6 relevance.
 - Set selected=false for papers scoring < 0.6.
 """
@@ -56,10 +56,10 @@ Your task is to extract structured claims AND quantitative data from selected pa
 ### Process — FOLLOW THIS EXACT PATTERN FOR EVERY PAPER
 
 For each paper:
-1. Call `read_paper(paper_id=N)` to get full content
-2. Read the title, abstract, and any full text carefully
-3. Call `extract_claims(paper_id=N, claims=[...])` with 3-5 claim objects
-4. Call `assess_risk_of_bias(paper_id=N, ...)` with bias ratings for the study
+1. Call `read_paper(paper_id=N, include_fulltext=true)` to get the full paper text (title, abstract, introduction, methods, results, discussion). If full text is not available, you'll get metadata + abstract only.
+2. Read the content carefully — extract claims from the ACTUAL TEXT, not from memory.
+3. Call `extract_claims(paper_id=N, claims=[...])` with 3-5 claim objects. The `supporting_quotes` field MUST contain EXACT quotes from the paper text.
+4. Call `assess_risk_of_bias(paper_id=N, ...)` with bias ratings for the study.
 
 ### EXACT Tool Call Format — COPY THIS STRUCTURE
 

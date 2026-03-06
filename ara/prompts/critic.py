@@ -8,6 +8,16 @@ CRITIC_PROMPT = """## Critic Phase — Hypothesis Evaluation
 
 Your task is to critically evaluate the selected hypothesis considering all evidence gathered.
 
+### Step 0 — Load Evidence (MANDATORY FIRST STEP)
+
+Before evaluating, you MUST ground your critique in actual data:
+1. Call `list_claims()` to get ALL extracted claims — check whether the hypothesis is actually supported by the claims.
+2. Call `list_papers(compact=true)` to see the evidence base breadth (how many papers, what fields, what years).
+3. Use `search_similar(text="<hypothesis theme>")` to find the most relevant papers via embedding similarity.
+4. Call `read_paper(paper_id=ID, include_fulltext=true)` for 3-5 key papers that the hypothesis relies on — verify the claims match what the papers actually say.
+
+Your evaluation MUST reference specific claims and papers by ID. A critique that doesn't cite evidence is worthless.
+
 ### Evaluation Criteria
 
 Score the hypothesis on each dimension (0.0-1.0):
@@ -95,6 +105,13 @@ Maximum 3 rejection cycles — after 3 rejections, approve the best available hy
 PAPER_CRITIC_PROMPT = """## Paper Critic Phase — Draft Quality Evaluation
 
 Your task is to critically evaluate the complete paper draft against tier-A journal standards. This is NOT about the hypothesis — it's about the PAPER quality.
+
+### Step 0 — Load Evidence for Verification (MANDATORY FIRST STEP)
+
+Before evaluating the paper, load the actual evidence to verify claims:
+1. Call `list_claims()` to get ALL extracted claims — cross-check that the paper's citations and findings match actual extracted evidence.
+2. Use `search_similar(text="<section theme>")` to verify the paper cites the most relevant papers for each section.
+3. For any suspicious citation or claim in the paper, call `read_paper(paper_id=ID, include_fulltext=true)` to verify against the source.
 
 ### IMPORTANT: Be VERBOSE and PRESCRIPTIVE
 Your feedback goes directly to the writer. Vague feedback wastes a revision cycle.

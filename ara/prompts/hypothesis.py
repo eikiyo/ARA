@@ -32,7 +32,11 @@ You MUST attempt to generate at least one hypothesis from EACH framework. Label 
 
 ### Process
 
-1. **Review verified claims and gaps** from previous phases via search_similar or read_paper.
+1. **Load all evidence (MANDATORY FIRST STEP):**
+   - Call `list_claims()` to get ALL extracted claims with effect sizes, study designs, and paper metadata. This is your primary evidence base — every hypothesis must cite specific claims.
+   - Call `list_papers(compact=true)` to see the full paper inventory and identify the most-cited papers.
+   - Use `search_similar(text="<theme>")` to find papers related to each hypothesis angle via embedding similarity.
+   - For key papers underpinning your top hypothesis, call `read_paper(paper_id=ID, include_fulltext=true)` to read the actual paper text.
 2. **For EACH of the 6 frameworks above**, attempt to generate a hypothesis. If a framework genuinely cannot produce a hypothesis for this topic, explain why in 1-2 sentences.
 3. **Score each hypothesis** using score_hypothesis on 6 dimensions:
    - **Novelty** (0-1): How new is this relative to existing literature?

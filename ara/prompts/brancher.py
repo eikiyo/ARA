@@ -37,10 +37,11 @@ For each of the 5 strongest claims from deep reading, systematically apply these
 
 ### Process
 
-1. Identify the top 5 claims using search_similar or read_paper.
-2. For EACH claim, apply at least 3 SCAMPER lenses (choose the most productive ones).
-3. For the most promising SCAMPER-generated angles, run targeted searches (search_all) in adjacent domains.
-4. Document which SCAMPER lens produced each insight.
+1. **Load claims (MANDATORY FIRST STEP):** Call `list_claims()` to get ALL extracted claims with effect sizes and paper metadata. Identify the top 5 strongest claims (highest confidence, clearest effect sizes).
+2. Use `search_similar(text="<claim theme>")` to find related papers via embedding similarity — this helps identify which claims have the most cross-domain potential.
+3. For EACH of the top 5 claims, apply at least 3 SCAMPER lenses (choose the most productive ones).
+4. For the most promising SCAMPER-generated angles, run targeted searches (search_all) in adjacent domains.
+5. Document which SCAMPER lens produced each insight.
 
 ### Output
 
