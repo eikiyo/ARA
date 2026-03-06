@@ -106,6 +106,70 @@ CREATE TABLE IF NOT EXISTS peer_review_results (
     improved INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS risk_of_bias (
+    rob_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_topic TEXT NOT NULL,
+    paper_doi TEXT,
+    paper_title TEXT NOT NULL,
+    paper_title_hash TEXT NOT NULL,
+    framework TEXT DEFAULT 'JBI',
+    selection_bias TEXT DEFAULT 'unclear',
+    performance_bias TEXT DEFAULT 'unclear',
+    detection_bias TEXT DEFAULT 'unclear',
+    attrition_bias TEXT DEFAULT 'unclear',
+    reporting_bias TEXT DEFAULT 'unclear',
+    overall_risk TEXT DEFAULT 'unclear',
+    notes TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS grade_evidence (
+    grade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_topic TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    n_studies INTEGER DEFAULT 0,
+    study_designs TEXT,
+    risk_of_bias_rating TEXT DEFAULT 'not serious',
+    inconsistency TEXT DEFAULT 'not serious',
+    indirectness TEXT DEFAULT 'not serious',
+    imprecision TEXT DEFAULT 'not serious',
+    publication_bias TEXT DEFAULT 'not serious',
+    effect_size_range TEXT,
+    certainty TEXT DEFAULT 'low',
+    direction TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS peer_review_scores (
+    score_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_topic TEXT NOT NULL,
+    cycle INTEGER NOT NULL,
+    round INTEGER NOT NULL,
+    reviewer TEXT NOT NULL,
+    attribute TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    feedback TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS peer_review_consensus (
+    consensus_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_topic TEXT NOT NULL,
+    cycle INTEGER NOT NULL,
+    attribute TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    feedback TEXT,
+    improvement_plan TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rob_title_hash ON risk_of_bias(paper_title_hash);
+CREATE INDEX IF NOT EXISTS idx_rob_topic ON risk_of_bias(session_topic);
+CREATE INDEX IF NOT EXISTS idx_grade_topic ON grade_evidence(session_topic);
+CREATE INDEX IF NOT EXISTS idx_pr_scores_topic ON peer_review_scores(session_topic);
+CREATE INDEX IF NOT EXISTS idx_pr_consensus_topic ON peer_review_consensus(session_topic);
 """
 
 
@@ -555,6 +619,158 @@ class CentralDB:
     def claim_count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
 
+    # ── Risk of Bias ──────────────────────────────────────────
+
+    def store_risk_of_bias(
+        self, session_topic: str, paper_title: str, paper_doi: str | None = None,
+        framework: str = "JBI", selection_bias: str = "unclear",
+        performance_bias: str = "unclear", detection_bias: str = "unclear",
+        attrition_bias: str = "unclear", reporting_bias: str = "unclear",
+        overall_risk: str = "unclear", notes: str | None = None,
+    ) -> int:
+        now = _now()
+        t_hash = _title_hash(paper_title)
+        with self._lock:
+            # Dedup: same paper + same session topic
+            existing = self._conn.execute(
+                "SELECT rob_id FROM risk_of_bias WHERE paper_title_hash = ? AND session_topic = ?",
+                (t_hash, session_topic),
+            ).fetchone()
+            if existing:
+                return existing["rob_id"]
+            cur = self._conn.execute(
+                "INSERT INTO risk_of_bias "
+                "(session_topic, paper_doi, paper_title, paper_title_hash, framework, "
+                "selection_bias, performance_bias, detection_bias, attrition_bias, "
+                "reporting_bias, overall_risk, notes, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_topic, paper_doi, paper_title, t_hash, framework,
+                 selection_bias, performance_bias, detection_bias, attrition_bias,
+                 reporting_bias, overall_risk, notes, now),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def get_risk_of_bias(self, session_topic: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM risk_of_bias WHERE session_topic = ? ORDER BY rob_id",
+            (session_topic,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ── GRADE Evidence ────────────────────────────────────────
+
+    def store_grade_evidence(
+        self, session_topic: str, outcome: str, n_studies: int = 0,
+        study_designs: str = "", risk_of_bias_rating: str = "not serious",
+        inconsistency: str = "not serious", indirectness: str = "not serious",
+        imprecision: str = "not serious", publication_bias: str = "not serious",
+        effect_size_range: str = "", certainty: str = "low",
+        direction: str = "", notes: str | None = None,
+    ) -> int:
+        now = _now()
+        with self._lock:
+            # Dedup: same outcome + same session topic
+            existing = self._conn.execute(
+                "SELECT grade_id FROM grade_evidence WHERE outcome = ? AND session_topic = ?",
+                (outcome, session_topic),
+            ).fetchone()
+            if existing:
+                return existing["grade_id"]
+            cur = self._conn.execute(
+                "INSERT INTO grade_evidence "
+                "(session_topic, outcome, n_studies, study_designs, risk_of_bias_rating, "
+                "inconsistency, indirectness, imprecision, publication_bias, "
+                "effect_size_range, certainty, direction, notes, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_topic, outcome, n_studies, study_designs, risk_of_bias_rating,
+                 inconsistency, indirectness, imprecision, publication_bias,
+                 effect_size_range, certainty, direction, notes, now),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def get_grade_evidence(self, session_topic: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM grade_evidence WHERE session_topic = ? ORDER BY grade_id",
+            (session_topic,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ── Peer Review Scores (Granular) ─────────────────────────
+
+    def store_peer_review_score(
+        self, session_topic: str, cycle: int, round_num: int,
+        reviewer: str, attribute: str, score: int, feedback: str = "",
+    ) -> int:
+        now = _now()
+        with self._lock:
+            # Dedup: same topic + cycle + round + reviewer + attribute
+            existing = self._conn.execute(
+                "SELECT score_id FROM peer_review_scores "
+                "WHERE session_topic = ? AND cycle = ? AND round = ? AND reviewer = ? AND attribute = ?",
+                (session_topic, cycle, round_num, reviewer, attribute),
+            ).fetchone()
+            if existing:
+                return existing["score_id"]
+            cur = self._conn.execute(
+                "INSERT INTO peer_review_scores "
+                "(session_topic, cycle, round, reviewer, attribute, score, feedback, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_topic, cycle, round_num, reviewer, attribute, score, feedback, now),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def store_peer_review_consensus(
+        self, session_topic: str, cycle: int, attribute: str,
+        score: int, feedback: str = "", improvement_plan: str = "",
+    ) -> int:
+        now = _now()
+        with self._lock:
+            # Dedup: same topic + cycle + attribute
+            existing = self._conn.execute(
+                "SELECT consensus_id FROM peer_review_consensus "
+                "WHERE session_topic = ? AND cycle = ? AND attribute = ?",
+                (session_topic, cycle, attribute),
+            ).fetchone()
+            if existing:
+                return existing["consensus_id"]
+            cur = self._conn.execute(
+                "INSERT INTO peer_review_consensus "
+                "(session_topic, cycle, attribute, score, feedback, improvement_plan, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_topic, cycle, attribute, score, feedback, improvement_plan, now),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def get_peer_review_scores(self, session_topic: str, cycle: int | None = None) -> list[dict[str, Any]]:
+        if cycle is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM peer_review_scores WHERE session_topic = ? AND cycle = ? ORDER BY round, reviewer",
+                (session_topic, cycle),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM peer_review_scores WHERE session_topic = ? ORDER BY cycle, round, reviewer",
+                (session_topic,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_peer_review_consensus(self, session_topic: str, cycle: int | None = None) -> list[dict[str, Any]]:
+        if cycle is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM peer_review_consensus WHERE session_topic = ? AND cycle = ? ORDER BY attribute",
+                (session_topic, cycle),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM peer_review_consensus WHERE session_topic = ? ORDER BY cycle, attribute",
+                (session_topic,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # ── Import from session DB ─────────────────────────────────
 
     def import_from_session_db(self, session_db_path: Path) -> dict[str, int]:
@@ -606,17 +822,26 @@ class CentralDB:
                     self.store_embedding(central_id, emb)
                     imported_emb += 1
 
-        # Import claims
+        # Import claims, RoB, GRADE, peer review scores/consensus
         imported_claims = 0
+        imported_rob = 0
+        imported_grade = 0
+        imported_pr_scores = 0
+        imported_pr_consensus = 0
+
         try:
             conn2 = sqlite3.connect(str(session_db_path))
             conn2.row_factory = sqlite3.Row
+
+            # Get session topic
+            session_row = conn2.execute("SELECT topic FROM sessions LIMIT 1").fetchone()
+            session_topic = session_row["topic"] if session_row else ""
+
+            # Claims
             claim_rows = conn2.execute(
                 "SELECT c.*, p.title as paper_title, p.doi as paper_doi "
                 "FROM claims c JOIN papers p ON c.paper_id = p.paper_id"
             ).fetchall()
-            conn2.close()
-
             if claim_rows:
                 central_claims = []
                 for cr in claim_rows:
@@ -637,13 +862,100 @@ class CentralDB:
                         "country": cr["country"],
                         "year_range": cr["year_range"],
                     })
-                claim_result = self.store_claims(central_claims)
+                claim_result = self.store_claims(central_claims, session_topic=session_topic)
                 imported_claims = claim_result["stored"]
-        except Exception as exc:
-            _log.warning("CentralDB claim import failed: %s", exc)
 
-        _log.info("CentralDB import from %s: papers=%d, skipped=%d, fulltext=%d, embeddings=%d, claims=%d",
-                   session_db_path.name, result["stored"], result["skipped"], imported_ft, imported_emb, imported_claims)
+            # Risk of Bias
+            try:
+                rob_rows = conn2.execute(
+                    "SELECT r.*, p.title as paper_title, p.doi as paper_doi "
+                    "FROM risk_of_bias r JOIN papers p ON r.paper_id = p.paper_id"
+                ).fetchall()
+                for rr in rob_rows:
+                    self.store_risk_of_bias(
+                        session_topic=session_topic,
+                        paper_title=rr["paper_title"],
+                        paper_doi=rr["paper_doi"],
+                        framework=rr["framework"] or "JBI",
+                        selection_bias=rr["selection_bias"] or "unclear",
+                        performance_bias=rr["performance_bias"] or "unclear",
+                        detection_bias=rr["detection_bias"] or "unclear",
+                        attrition_bias=rr["attrition_bias"] or "unclear",
+                        reporting_bias=rr["reporting_bias"] or "unclear",
+                        overall_risk=rr["overall_risk"] or "unclear",
+                        notes=rr["notes"],
+                    )
+                    imported_rob += 1
+            except Exception as exc:
+                _log.warning("CentralDB RoB import failed: %s", exc)
+
+            # GRADE Evidence
+            try:
+                grade_rows = conn2.execute("SELECT * FROM grade_evidence").fetchall()
+                for gr in grade_rows:
+                    self.store_grade_evidence(
+                        session_topic=session_topic,
+                        outcome=gr["outcome"],
+                        n_studies=gr["n_studies"] or 0,
+                        study_designs=gr["study_designs"] or "",
+                        risk_of_bias_rating=gr["risk_of_bias_rating"] or "not serious",
+                        inconsistency=gr["inconsistency"] or "not serious",
+                        indirectness=gr["indirectness"] or "not serious",
+                        imprecision=gr["imprecision"] or "not serious",
+                        publication_bias=gr["publication_bias"] or "not serious",
+                        effect_size_range=gr["effect_size_range"] or "",
+                        certainty=gr["certainty"] or "low",
+                        direction=gr["direction"] or "",
+                        notes=gr["notes"],
+                    )
+                    imported_grade += 1
+            except Exception as exc:
+                _log.warning("CentralDB GRADE import failed: %s", exc)
+
+            # Peer Review Scores (granular)
+            try:
+                pr_rows = conn2.execute("SELECT * FROM peer_review_scores").fetchall()
+                for pr in pr_rows:
+                    self.store_peer_review_score(
+                        session_topic=session_topic,
+                        cycle=pr["cycle"],
+                        round_num=pr["round"],
+                        reviewer=pr["reviewer"],
+                        attribute=pr["attribute"],
+                        score=pr["score"],
+                        feedback=pr["feedback"] or "",
+                    )
+                    imported_pr_scores += 1
+            except Exception as exc:
+                _log.warning("CentralDB peer review scores import failed: %s", exc)
+
+            # Peer Review Consensus
+            try:
+                pc_rows = conn2.execute("SELECT * FROM peer_review_consensus").fetchall()
+                for pc in pc_rows:
+                    self.store_peer_review_consensus(
+                        session_topic=session_topic,
+                        cycle=pc["cycle"],
+                        attribute=pc["attribute"],
+                        score=pc["score"],
+                        feedback=pc["feedback"] or "",
+                        improvement_plan=pc["improvement_plan"] or "",
+                    )
+                    imported_pr_consensus += 1
+            except Exception as exc:
+                _log.warning("CentralDB peer review consensus import failed: %s", exc)
+
+            conn2.close()
+        except Exception as exc:
+            _log.warning("CentralDB session import failed: %s", exc)
+
+        _log.info(
+            "CentralDB import from %s: papers=%d, skipped=%d, fulltext=%d, embeddings=%d, "
+            "claims=%d, rob=%d, grade=%d, pr_scores=%d, pr_consensus=%d",
+            session_db_path.name, result["stored"], result["skipped"],
+            imported_ft, imported_emb, imported_claims,
+            imported_rob, imported_grade, imported_pr_scores, imported_pr_consensus,
+        )
 
         return {
             "imported": result["stored"],
@@ -651,4 +963,8 @@ class CentralDB:
             "fulltext_imported": imported_ft,
             "embeddings_imported": imported_emb,
             "claims_imported": imported_claims,
+            "rob_imported": imported_rob,
+            "grade_imported": imported_grade,
+            "pr_scores_imported": imported_pr_scores,
+            "pr_consensus_imported": imported_pr_consensus,
         }

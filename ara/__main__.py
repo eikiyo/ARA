@@ -40,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Import papers from an existing session.db into the central database.")
     parser.add_argument("--no-peer-review", action="store_true",
                         help="Disable post-pipeline peer review.")
+    parser.add_argument("--special-instructions", type=str, default=None,
+                        help="Topic-specific instructions passed to all phases (e.g., 'Focus on fintech applications').")
+    parser.add_argument("--special-authors", type=str, default=None,
+                        help="Comma-separated foundational authors to search for (e.g., 'Kappen,Govindarajan').")
     return parser
 
 
@@ -108,6 +112,10 @@ def main() -> None:
         cfg.paper_type = args.paper_type
     if getattr(args, 'no_peer_review', False):
         cfg.peer_review_enabled = False
+    if args.special_instructions:
+        cfg.special_instructions = args.special_instructions
+    if args.special_authors:
+        cfg.special_authors = args.special_authors
     if args.model:
         cfg.model = args.model
     elif settings.default_model:

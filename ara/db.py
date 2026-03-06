@@ -757,6 +757,10 @@ class ARADB:
 
     # ── Risk of Bias ─────────────────────────────────────────────
 
+    def _get_session_topic(self, session_id: int) -> str:
+        row = self._conn.execute("SELECT topic FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+        return row["topic"] if row else ""
+
     def store_risk_of_bias(
         self, session_id: int, paper_id: int, *,
         framework: str = "JBI",
@@ -779,6 +783,23 @@ class ARADB:
                  detection_bias, attrition_bias, reporting_bias, overall_risk, notes, now),
             )
             self._conn.commit()
+        # Sync to central DB
+        if self._central:
+            try:
+                paper = self._conn.execute(
+                    "SELECT title, doi FROM papers WHERE paper_id = ?", (paper_id,)
+                ).fetchone()
+                if paper:
+                    self._central.store_risk_of_bias(
+                        session_topic=self._get_session_topic(session_id),
+                        paper_title=paper["title"], paper_doi=paper["doi"],
+                        framework=framework, selection_bias=selection_bias,
+                        performance_bias=performance_bias, detection_bias=detection_bias,
+                        attrition_bias=attrition_bias, reporting_bias=reporting_bias,
+                        overall_risk=overall_risk, notes=notes,
+                    )
+            except Exception as exc:
+                _log.warning("CentralDB RoB sync failed: %s", exc)
         return cur.lastrowid  # type: ignore
 
     def get_risk_of_bias(self, session_id: int) -> list[dict[str, Any]]:
@@ -819,6 +840,21 @@ class ARADB:
                  effect_size_range, certainty, direction, notes, now),
             )
             self._conn.commit()
+        # Sync to central DB
+        if self._central:
+            try:
+                self._central.store_grade_evidence(
+                    session_topic=self._get_session_topic(session_id),
+                    outcome=outcome, n_studies=n_studies,
+                    study_designs=study_designs or "",
+                    risk_of_bias_rating=risk_of_bias_rating,
+                    inconsistency=inconsistency, indirectness=indirectness,
+                    imprecision=imprecision, publication_bias=publication_bias,
+                    effect_size_range=effect_size_range or "",
+                    certainty=certainty, direction=direction or "", notes=notes,
+                )
+            except Exception as exc:
+                _log.warning("CentralDB GRADE sync failed: %s", exc)
         return cur.lastrowid  # type: ignore
 
     def get_grade_evidence(self, session_id: int) -> list[dict[str, Any]]:
@@ -874,7 +910,17 @@ class ARADB:
                 (session_id, cycle, round_num, reviewer, attribute, score, feedback, now),
             )
             self._conn.commit()
-            return cur.lastrowid
+        # Sync to central DB
+        if self._central:
+            try:
+                self._central.store_peer_review_score(
+                    session_topic=self._get_session_topic(session_id),
+                    cycle=cycle, round_num=round_num, reviewer=reviewer,
+                    attribute=attribute, score=score, feedback=feedback,
+                )
+            except Exception as exc:
+                _log.warning("CentralDB peer review score sync failed: %s", exc)
+        return cur.lastrowid
 
     def store_peer_review_consensus(
         self, session_id: int, cycle: int, attribute: str, score: int,
@@ -889,7 +935,17 @@ class ARADB:
                 (session_id, cycle, attribute, score, feedback, improvement_plan, now),
             )
             self._conn.commit()
-            return cur.lastrowid
+        # Sync to central DB
+        if self._central:
+            try:
+                self._central.store_peer_review_consensus(
+                    session_topic=self._get_session_topic(session_id),
+                    cycle=cycle, attribute=attribute, score=score,
+                    feedback=feedback, improvement_plan=improvement_plan,
+                )
+            except Exception as exc:
+                _log.warning("CentralDB peer review consensus sync failed: %s", exc)
+        return cur.lastrowid
 
     def get_peer_review_scores(self, session_id: int, cycle: int | None = None) -> list[dict[str, Any]]:
         if cycle is not None:

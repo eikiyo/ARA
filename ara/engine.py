@@ -133,6 +133,7 @@ class RLMEngine:
                     "Scout phase: Search for papers on: {topic}. "
                     "Use search_all() with 1-2 query formulations. "
                     "Target: {min_papers}+ unique papers. Date range: {search_start_year} to present. "
+                    "{special_instructions}"
                     "When the database reports target reached, stop searching."
                 ),
             },
@@ -229,7 +230,8 @@ class RLMEngine:
                     "Score each: novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility. "
                     "For the top 3 hypotheses, specify: methodology, analysis approach, quality assessment framework. "
                     "Use score_hypothesis to evaluate EVERY one. "
-                    "Ground every hypothesis in specific claims from the database — do NOT hypothesize beyond the evidence."
+                    "Ground every hypothesis in specific claims from the database — do NOT hypothesize beyond the evidence. "
+                    "{special_instructions}"
                 ),
             },
             {
@@ -266,6 +268,7 @@ class RLMEngine:
                     "(4) PRISMA flow numbers, (5) Citation map by theme with (Author, Year), "
                     "(6) Structural causal model notes, (7) Inclusion/exclusion criteria table, "
                     "(8) Evidence quality matrix (cross-reference claims with RoB and GRADE). "
+                    "{special_instructions}"
                     "Save ALL tables using write_section(section='synthesis_data', content=...) so the writer can load them."
                 ),
             },
@@ -285,6 +288,7 @@ class RLMEngine:
                     "Focus on: (a) core theoretical papers, (b) empirical studies providing evidence "
                     "for framework building, (c) competing frameworks and models. "
                     "{special_authors_instruction}"
+                    "{special_instructions}"
                     "When the database reports target reached, stop searching."
                 ),
             },
@@ -378,7 +382,8 @@ class RLMEngine:
                     "Score each: novelty (2x weight), feasibility, evidence_strength, methodology_fit, "
                     "impact, reproducibility. Answer the Five Questions for the top 3 frameworks. "
                     "Use score_hypothesis to evaluate EVERY one. "
-                    "Ground every framework in specific claims from the database — do NOT theorize beyond the evidence."
+                    "Ground every framework in specific claims from the database — do NOT theorize beyond the evidence. "
+                    "{special_instructions}"
                 ),
             },
             {
@@ -416,6 +421,7 @@ class RLMEngine:
                     "(5) Citation map by section with (Author, Year), "
                     "(6) Boundary conditions analysis, (7) Competing frameworks comparison table, "
                     "(8) Novel contribution statement, (9) Evidence quality matrix (cross-ref claims with RoB/GRADE). "
+                    "{special_instructions}"
                     "Save ALL tables using write_section(section='synthesis_data', content=...) so the writer can load them."
                 ),
             },
