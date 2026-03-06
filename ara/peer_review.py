@@ -144,12 +144,15 @@ def _build_review_prompt(
         f"Read the paper below carefully and score it on ALL 15 attributes (1-100 each).\n"
         f"For each attribute, provide:\n"
         f"- A numeric score (1-100)\n"
-        f"- Detailed feedback explaining the score\n"
-        f"- Specific, actionable suggestions to reach a score of 95+\n\n"
+        f"- Feedback explaining the score (2-4 sentences MAX per attribute)\n"
+        f"- One specific, actionable improvement suggestion (1-2 sentences MAX)\n\n"
+        f"**CRITICAL: Keep your entire response under 4000 words. Be concise — "
+        f"score justifications should be sharp and specific, not exhaustive. "
+        f"The JSON must be valid and parseable.**\n\n"
         f"## Scoring Attributes\n{attrs_text}\n\n"
         f"## Output Format\n"
         f"Return your review as valid JSON with this exact structure:\n"
-        f'{{"scores": {{"Methodological Rigor": {{"score": <int>, "feedback": "<text>", "improvement": "<text>"}}, ...}}}}\n\n'
+        f'{{"scores": {{"Methodological Rigor": {{"score": <int>, "feedback": "<2-4 sentences>", "improvement": "<1-2 sentences>"}}, ...}}}}\n\n'
         f"## Paper to Review\n\n{paper_md}"
     )
 
@@ -175,9 +178,10 @@ def _build_rebuttal_prompt(
         f"- AGREE with the other reviewers' consensus\n"
         f"- DISAGREE (explain why, provide revised score if needed)\n"
         f"- PARTIALLY AGREE (nuance your position)\n\n"
+        f"**Keep reasoning to 1-2 sentences per attribute. Total response under 2000 words.**\n\n"
         f"Return as JSON:\n"
         f'{{"rebuttals": {{"Methodological Rigor": {{"position": "AGREE|DISAGREE|PARTIALLY_AGREE", '
-        f'"revised_score": <int_or_null>, "reasoning": "<text>"}}, ...}}}}'
+        f'"revised_score": <int_or_null>, "reasoning": "<1-2 sentences>"}}, ...}}}}'
     )
 
 
@@ -209,11 +213,12 @@ def _build_consensus_prompt(
         f"Synthesize all reviewer feedback into final consensus scores.\n"
         f"For each attribute provide:\n"
         f"- Final consensus score (1-100) — weighted by reviewer expertise\n"
-        f"- Unified feedback combining all reviewers' insights\n"
-        f"- Specific improvement plan to reach 95+ on this attribute\n\n"
+        f"- Unified feedback (2-3 sentences MAX)\n"
+        f"- Specific improvement plan (1-2 sentences MAX)\n\n"
+        f"**Keep total response under 3000 words. Be decisive — consensus means picking a score, not hedging.**\n\n"
         f"Return as JSON:\n"
-        f'{{"consensus": {{"Methodological Rigor": {{"score": <int>, "feedback": "<text>", '
-        f'"improvement_plan": "<text>"}}, ...}}}}'
+        f'{{"consensus": {{"Methodological Rigor": {{"score": <int>, "feedback": "<2-3 sentences>", '
+        f'"improvement_plan": "<1-2 sentences>"}}, ...}}}}'
     )
 
 
