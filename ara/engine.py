@@ -61,10 +61,12 @@ class RLMEngine:
         config: ARAConfig,
         writer_model: BaseModel | None = None,
         hypothesis_model: BaseModel | None = None,
+        light_model: BaseModel | None = None,
     ):
         self.model = model
         self.writer_model = writer_model or model
         self.hypothesis_model = hypothesis_model or model
+        self.light_model = light_model or model
         self.tools = tools
         self.config = config
         self.cancel_flag = threading.Event()
@@ -1725,10 +1727,17 @@ class RLMEngine:
             return json.dumps({"error": f"Max depth {self.config.max_depth} reached"})
 
         # Select active model based on phase
+        # Light: mechanical phases (search, verify, triage)
+        # Pro: deep analysis + writing
+        # Hypothesis: Opus/GPT-5.4 load-balanced for gap identification
         if phase in ("hypothesis", "critic"):
             active_model = self.hypothesis_model
-        elif phase in ("writer", "paper_critic", "synthesis"):
+        elif phase in ("writer", "paper_critic", "synthesis", "advisory_board"):
             active_model = self.writer_model
+        elif phase in ("analyst_deep_read", "brancher"):
+            active_model = self.model
+        elif phase in ("scout", "verifier", "protocol"):
+            active_model = self.light_model
         else:
             active_model = self.model
         model_name = getattr(active_model, 'model', 'unknown')

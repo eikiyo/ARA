@@ -40,11 +40,109 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Import papers from an existing session.db into the central database.")
     parser.add_argument("--no-peer-review", action="store_true",
                         help="Disable post-pipeline peer review.")
+    parser.add_argument("--import-papers", metavar="DIR",
+                        help="Import papers from a directory (PDFs/text files). Skips scout/snowball/brancher.")
     parser.add_argument("--special-instructions", type=str, default=None,
                         help="Topic-specific instructions passed to all phases (e.g., 'Focus on fintech applications').")
     parser.add_argument("--special-authors", type=str, default=None,
                         help="Comma-separated foundational authors to search for (e.g., 'Kappen,Govindarajan').")
     return parser
+
+
+def _import_paper_corpus(runtime: SessionRuntime, corpus_dir) -> int:
+    """Import papers from a directory into the session DB and checkpoint search phases."""
+    import re
+    from pathlib import Path
+
+    # Ensure session exists
+    if not runtime.db_session_id:
+        runtime.start_research(topic="Corpus import")
+
+    db = runtime.db
+    sid = runtime.db_session_id
+    papers: list[dict] = []
+
+    for f in sorted(corpus_dir.iterdir()):
+        if f.is_dir():
+            continue
+        suffix = f.suffix.lower()
+
+        if suffix == ".pdf":
+            # Extract text from PDF filename as title, store path for later processing
+            title = f.stem.replace("_", " ").replace("-", " ")
+            # Try to extract year from filename
+            year_match = re.search(r"(19|20)\d{2}", f.name)
+            year = int(year_match.group()) if year_match else None
+            papers.append({
+                "title": title,
+                "source": "corpus_import",
+                "year": year,
+                "full_text_path": str(f),
+            })
+
+        elif suffix in (".txt", ".md"):
+            content = f.read_text("utf-8", errors="replace")
+            title = content.split("\n", 1)[0].strip()[:200] or f.stem
+            year_match = re.search(r"(19|20)\d{2}", f.name)
+            year = int(year_match.group()) if year_match else None
+            papers.append({
+                "title": title,
+                "source": "corpus_import",
+                "year": year,
+                "full_text": content,
+            })
+
+        elif suffix in (".bib", ".json"):
+            # Try to parse structured bibliographic data
+            if suffix == ".json":
+                import json as _json
+                try:
+                    data = _json.loads(f.read_text("utf-8"))
+                    if isinstance(data, list):
+                        for entry in data:
+                            if isinstance(entry, dict) and entry.get("title"):
+                                papers.append({
+                                    "title": entry["title"],
+                                    "abstract": entry.get("abstract", ""),
+                                    "authors": entry.get("authors", []),
+                                    "year": entry.get("year"),
+                                    "doi": entry.get("doi"),
+                                    "source": "corpus_import",
+                                })
+                except Exception:
+                    pass
+
+    if not papers:
+        return 0
+
+    stored = db.store_papers(sid, papers)
+
+    # Mark all imported papers as selected for deep read
+    db._conn.execute(
+        "UPDATE papers SET selected_for_deep_read = 1 WHERE session_id = ? AND source = 'corpus_import'",
+        (sid,),
+    )
+    db._conn.commit()
+
+    # Store full_text for papers that had it
+    for p in papers:
+        if p.get("full_text"):
+            row = db._conn.execute(
+                "SELECT paper_id FROM papers WHERE session_id = ? AND title = ?",
+                (sid, p["title"]),
+            ).fetchone()
+            if row:
+                db._conn.execute(
+                    "UPDATE papers SET full_text = ? WHERE paper_id = ?",
+                    (p["full_text"], row["paper_id"]),
+                )
+    db._conn.commit()
+
+    # Checkpoint search phases so pipeline skips them
+    for phase in ("scout", "snowball", "verifier", "protocol", "triage"):
+        db.save_phase_checkpoint(sid, phase)
+
+    return stored
 
 
 def main() -> None:
@@ -146,6 +244,17 @@ def main() -> None:
     # Persist model choice
     settings.default_model = cfg.model
     settings_store.save(settings)
+
+    # Handle --import-papers: ingest corpus and pre-checkpoint search phases
+    if getattr(args, 'import_papers', None):
+        from pathlib import Path as _Path
+        corpus_dir = _Path(args.import_papers).expanduser().resolve()
+        if not corpus_dir.is_dir():
+            print(f"Error: {corpus_dir} is not a directory.")
+            return
+        count = _import_paper_corpus(runtime, corpus_dir)
+        print(f"Imported {count} papers from {corpus_dir}")
+        print("Scout/Snowball/Brancher phases will be skipped.")
 
     ctx = ChatContext(runtime=runtime, cfg=cfg, settings_store=settings_store)
 

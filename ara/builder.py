@@ -73,6 +73,16 @@ def build_engine(cfg: ARAConfig) -> RLMEngine:
         model = EchoFallbackModel(note="No Google API key configured")
         writer_model = model
 
+    # Build light model for mechanical phases (scout, verifier, protocol)
+    light_model_name = (cfg.light_model or "gemini-3.1-flash-lite-preview").strip()
+    light_model = model  # fallback to main model
+    if cfg.google_api_key and light_model_name != model_name:
+        try:
+            light_model = GeminiModel(model=light_model_name, api_key=cfg.google_api_key)
+            _log.info("Light model: %s (for scout/verifier/protocol)", light_model_name)
+        except Exception as exc:
+            _log.warning("Failed to create light model (%s), using main model: %s", light_model_name, exc)
+
     # Build hypothesis/critic model (Opus 50% + GPT-5.4 50%)
     hypothesis_model = None
     if cfg.hypothesis_model == "load_balanced":
@@ -82,4 +92,5 @@ def build_engine(cfg: ARAConfig) -> RLMEngine:
         model=model, tools=tools, config=cfg,
         writer_model=writer_model,
         hypothesis_model=hypothesis_model,
+        light_model=light_model,
     )
