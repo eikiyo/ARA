@@ -274,12 +274,22 @@ def generate_output(
     return generated
 
 
-def _load_sections(sections_dir: Path) -> dict[str, str]:
+_PIPELINE_ARTIFACTS = frozenset({
+    "protocol", "synthesis_data", "writing_brief", "advisor_1",
+    "advisor_2", "advisory_report", "evaluation",
+})
+
+
+def _load_sections(sections_dir: Path, paper_type: str = "review") -> dict[str, str]:
     sections: dict[str, str] = {}
     if not sections_dir.exists():
         return sections
     for f in sections_dir.iterdir():
         if f.suffix == ".md" and f.is_file():
+            # Skip pipeline artifacts — these are internal working docs, not paper content
+            if f.stem in _PIPELINE_ARTIFACTS:
+                _log.debug("Skipping pipeline artifact: %s", f.stem)
+                continue
             content = f.read_text(encoding="utf-8")
             # Strip leading markdown headers to avoid duplication (output.py adds its own)
             content = re.sub(r'^#{1,4}\s+.*\n*', '', content, count=1).strip()
@@ -332,7 +342,7 @@ def _md_to_html(text: str) -> str:
     lines = text.split("\n")
     html_parts: list[str] = []
     in_table = False
-    in_list = False
+    in_list: str | bool = False  # False, "ul", or "ol"
     table_rows: list[str] = []
     current_para: list[str] = []
 
@@ -363,30 +373,37 @@ def _md_to_html(text: str) -> str:
         elif in_table:
             flush_table()
 
-        # Headers
-        if stripped.startswith("### "):
+        # Headers (## inside section content becomes h3, ### becomes h4, #### becomes h5)
+        if stripped.startswith("## "):
             flush_para()
-            html_parts.append(f"<h3>{_inline_format(stripped[4:])}</h3>")
+            html_parts.append(f"<h3>{_inline_format(stripped[3:])}</h3>")
+        elif stripped.startswith("### "):
+            flush_para()
+            html_parts.append(f"<h4>{_inline_format(stripped[4:])}</h4>")
         elif stripped.startswith("#### "):
             flush_para()
-            html_parts.append(f"<h4>{_inline_format(stripped[5:])}</h4>")
+            html_parts.append(f"<h5>{_inline_format(stripped[5:])}</h5>")
         # List items
         elif stripped.startswith("- ") or stripped.startswith("* "):
             flush_para()
-            if not in_list:
+            if in_list != "ul":
+                if in_list:
+                    html_parts.append(f"</{in_list}>")
                 html_parts.append("<ul>")
-                in_list = True
+                in_list = "ul"
             html_parts.append(f"<li>{_inline_format(stripped[2:])}</li>")
         elif re.match(r'^\d+\.\s', stripped):
             flush_para()
             content = re.sub(r'^\d+\.\s', '', stripped)
-            if not in_list:
+            if in_list != "ol":
+                if in_list:
+                    html_parts.append(f"</{in_list}>")
                 html_parts.append("<ol>")
-                in_list = True
+                in_list = "ol"
             html_parts.append(f"<li>{_inline_format(content)}</li>")
         else:
             if in_list:
-                html_parts.append("</ul>" if html_parts[-2].startswith("<ul") or any("<ul>" in p for p in html_parts[-5:]) else "</ol>")
+                html_parts.append(f"</{in_list}>")
                 in_list = False
 
             if not stripped:
@@ -398,7 +415,7 @@ def _md_to_html(text: str) -> str:
     if in_table:
         flush_table()
     if in_list:
-        html_parts.append("</ul>")
+        html_parts.append(f"</{in_list}>")
 
     return "\n".join(html_parts)
 

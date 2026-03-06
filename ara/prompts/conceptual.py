@@ -139,17 +139,18 @@ Your task is to organize ALL theoretical evidence the writer needs to build the 
 
 ### Step 1: Map Theoretical Streams
 
-Call `list_papers(compact=true)` to get all papers. Organize them into theoretical streams:
+Call `list_papers(compact=true)` to get all papers. Organize them into 2-4 theoretical streams.
+RULE: Only include streams that will DIRECTLY generate at least one proposition. If a stream doesn't contribute a proposition, merge it as a mechanism within another stream or drop it.
 
 **Stream 1: [Theory Name]** (e.g., Reverse Innovation Theory)
 | Author(s) | Year | Core Argument | Key Construct | Limitation/Gap |
 |-----------|------|--------------|---------------|----------------|
 
-**Stream 2: [Theory Name]** (e.g., Subsidiary Mandate Literature)
+**Stream 2: [Theory Name]** (e.g., Digital Platform Economics)
 | Author(s) | Year | Core Argument | Key Construct | Limitation/Gap |
 |-----------|------|--------------|---------------|----------------|
 
-**Stream 3: [Theory Name]** (e.g., Exploration/Exploitation)
+**Stream N: [Theory Name]** (add more streams only if each generates at least 1 proposition)
 | Author(s) | Year | Core Argument | Key Construct | Limitation/Gap |
 |-----------|------|--------------|---------------|----------------|
 
@@ -279,17 +280,20 @@ Must include:
 - Paper structure overview
 
 #### 4. Theoretical Background (minimum 1500 words)
+THIS SECTION IS LITERATURE — NOT YOUR FRAMEWORK. Only present what OTHER scholars have argued.
 Must include:
-- 3+ major theoretical streams, each as a subsection
+- 2-4 theoretical streams, each as a subsection. Only include streams that DIRECTLY feed your propositions — if a stream doesn't generate at least one proposition, cut it or merge it as a mechanism within another stream
 - For each stream: foundational works, key developments, current state, AND limitations
 - DO NOT summarize papers one by one — synthesize across papers thematically
 - Explicit identification of where streams CONVERGE and where they CONFLICT
 - The theoretical gap must emerge naturally from the background — show that existing theories individually cannot explain the phenomenon, but together (as integrated by your framework) they can
 - 25+ unique citations minimum
 - End with a clear transition: "These limitations suggest the need for an integrative framework that..."
+- SEPARATION RULE: This section describes WHAT IS KNOWN. Do NOT preview your framework's constructs, typologies, or causal logic here — that belongs in the Framework section. If you catch yourself writing "We propose..." or "Our framework suggests...", you've crossed the line.
 
 #### 5. Framework Development (minimum 2000 words)
-This is the CORE of the paper. Describes the CONCEPTUAL MODEL. Do NOT include formal propositions here — those belong in section 6.
+This is the CORE of the paper. Describes YOUR CONCEPTUAL MODEL — new constructs, new relationships, new causal logic. Do NOT include formal propositions here — those belong in section 6.
+SEPARATION RULE: This section describes WHAT YOU ADD. Do NOT repeat the literature review — refer to it with "As established in Section 2, [Theory X] shows that..." and move on to YOUR model. If a paragraph could appear in the Theoretical Background unchanged, it doesn't belong here.
 
 **5a. Typology** (if applicable):
 - Classification of the phenomenon into distinct types/categories
@@ -338,6 +342,12 @@ Must include:
 - Each proposition must be DISTINCT — no two propositions should test the same relationship
 - Operationalize constructs with fintech-specific measures where possible
 - At least 2 propositions should be COUNTER-INTUITIVE (challenge conventional wisdom)
+
+**PROPOSITION QUALITY TEST — apply to every proposition before including it:**
+1. **Obviousness filter**: If an IB scholar would say "of course" after reading it, REJECT IT and write a non-obvious version. Example of an OBVIOUS proposition: "Subsidiary autonomy positively affects innovation." Example of a NON-OBVIOUS version: "Beyond a threshold level of autonomy, subsidiary innovation output declines because the subsidiary lacks the legitimacy pressure that HQ mandates provide, leading to diffuse exploration without strategic focus."
+2. **Mechanism test**: Every proposition must specify the causal mechanism (the WHY), not just the relationship (the WHAT). "X affects Y" is not a proposition — "X affects Y BECAUSE [mechanism]" is.
+3. **Shape test**: Specify the functional form — is it linear, U-shaped, inverted-U, threshold, or conditional? Justify the shape with theory.
+4. **Every stream must earn its place**: If a theoretical stream from the background doesn't generate at least one proposition, either (a) cut the stream from the background or (b) write a proposition grounded in it. No orphan streams.
 
 #### 8. References
 - APA 7th edition format
@@ -430,6 +440,10 @@ Your feedback is handed directly to the writer for revision. Vague feedback like
 - [ ] Fintech-specific content in every section (not just generic IB examples)
 - [ ] NO PRISMA diagram or systematic review methodology (this is a conceptual paper)
 - [ ] Framework and Propositions sections have DISTINCT content (no duplication)
+- [ ] Theoretical Background and Framework have DISTINCT content (Background = literature, Framework = your model — no paragraph should work in both)
+- [ ] Every theoretical stream in the background generates at least 1 proposition (no orphan streams)
+- [ ] Every proposition specifies a causal mechanism (WHY, not just WHAT)
+- [ ] At least 3 propositions are non-obvious (an expert would NOT predict them from priors alone)
 - [ ] No single author cited more than 6 times across the paper (over-reliance check)
 - [ ] Re-contextualization construct explicitly defined with clear boundaries
 
