@@ -108,7 +108,7 @@ class ARAConfig:
 
     # Peer review pipeline
     peer_review_enabled: bool = True
-    peer_review_budget: float = 5.0
+    peer_review_budget: float = 8.0
     peer_review_journal: str = "auto"  # "auto" = detect from topic, or explicit journal name
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
@@ -191,7 +191,7 @@ class ARAConfig:
             special_instructions=os.getenv("ARA_SPECIAL_INSTRUCTIONS", ""),
             special_authors=os.getenv("ARA_SPECIAL_AUTHORS", ""),
             peer_review_enabled=os.getenv("ARA_PEER_REVIEW_ENABLED", "true").lower() not in ("false", "0", "no"),
-            peer_review_budget=_safe_float("ARA_PEER_REVIEW_BUDGET", 5.0),
+            peer_review_budget=_safe_float("ARA_PEER_REVIEW_BUDGET", 8.0),
             peer_review_journal=os.getenv("ARA_PEER_REVIEW_JOURNAL", "auto"),
             anthropic_api_key=os.getenv("ARA_ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY"),
             openai_api_key=os.getenv("ARA_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),

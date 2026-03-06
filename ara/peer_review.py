@@ -21,7 +21,7 @@ _log = logging.getLogger(__name__)
 
 # ── 15 Scoring Attributes ─────────────────────────────────
 
-REVIEW_ATTRIBUTES = [
+REVIEW_ATTRIBUTES_EMPIRICAL = [
     "Methodological Rigor",
     "Literature Coverage",
     "Theoretical Grounding",
@@ -39,9 +39,37 @@ REVIEW_ATTRIBUTES = [
     "Publication Readiness",
 ]
 
+REVIEW_ATTRIBUTES_CONCEPTUAL = [
+    "Theoretical Gap Clarity",
+    "Framework Novelty",
+    "Proposition Quality",
+    "Literature Coverage",
+    "Theoretical Integration",
+    "Construct Clarity",
+    "Logical Coherence",
+    "Writing Clarity",
+    "Citation Accuracy",
+    "Boundary Conditions",
+    "Competing Frameworks Comparison",
+    "Practical Implications",
+    "Future Research Agenda",
+    "Domain Specificity",
+    "Publication Readiness",
+]
+
+# Default for backward compatibility
+REVIEW_ATTRIBUTES = REVIEW_ATTRIBUTES_EMPIRICAL
+
+
+def _get_review_attributes(paper_type: str) -> list[str]:
+    """Return review attributes appropriate for the paper type."""
+    if paper_type in ("conceptual", "scoping"):
+        return REVIEW_ATTRIBUTES_CONCEPTUAL
+    return REVIEW_ATTRIBUTES_EMPIRICAL
+
 # ── Reviewer Personas ──────────────────────────────────────
 
-REVIEWER_PERSONAS = {
+REVIEWER_PERSONAS_EMPIRICAL = {
     "deep_methodologist": {
         "name": "Reviewer 1 (Deep Methodologist)",
         "model_key": "gemini_deep",
@@ -84,6 +112,62 @@ REVIEWER_PERSONAS = {
     },
 }
 
+REVIEWER_PERSONAS_CONCEPTUAL = {
+    "theory_expert": {
+        "name": "Reviewer 1 (Theory Expert)",
+        "model_key": "gemini_deep",
+        "persona": (
+            "You are a senior theorist reviewing a CONCEPTUAL FRAMEWORK paper for AMJ/JIBS/SMJ. "
+            "You evaluate theoretical contribution quality: Is the gap genuine? Does the framework explain "
+            "something existing theories cannot? Are constructs clearly defined with boundaries? "
+            "Are propositions testable, non-obvious, and grounded in evidence? "
+            "You check that theoretical streams are properly integrated (not just listed), "
+            "that the framework has clear boundary conditions, and that competing frameworks "
+            "are compared on specific dimensions. "
+            "IMPORTANT: This is NOT an empirical paper — do NOT evaluate statistical validity, "
+            "effect sizes, sample sizes, or reproducibility. The rigor comes from theoretical logic."
+        ),
+    },
+    "structure_editor": {
+        "name": "Reviewer 2 (Structure Editor)",
+        "model_key": "claude_sonnet",
+        "persona": (
+            "You are a meticulous editor reviewing a CONCEPTUAL paper for a top-tier management journal. "
+            "You focus on: argument architecture (does each section build on the previous?), "
+            "separation between literature review and framework (no redundancy), "
+            "proposition formatting and distinctness, writing clarity, and domain specificity. "
+            "You check that the theoretical background presents OTHERS' work while the framework "
+            "presents the AUTHOR'S contribution — they should not overlap. "
+            "You verify all required sections are present and well-developed."
+        ),
+    },
+    "senior_editor": {
+        "name": "Reviewer 3 (Senior Editor)",
+        "model_key": "claude_opus",
+        "persona": (
+            "You are the editor-in-chief of JIBS/AMJ evaluating a conceptual framework paper. "
+            "You assess: Does this paper make a genuine theoretical contribution? "
+            "Would the framework change how scholars think about this topic? "
+            "Are the propositions surprising enough to motivate empirical testing? "
+            "Is the future research agenda specific and feasible? "
+            "You judge publication readiness holistically — theoretical novelty, "
+            "construct clarity, practical implications, and overall scholarly impact. "
+            "IMPORTANT: Score this AS a conceptual paper — rigor is in the logic of the "
+            "framework and grounding in prior theory, not in data or statistics."
+        ),
+    },
+}
+
+# Default for backward compatibility
+REVIEWER_PERSONAS = REVIEWER_PERSONAS_EMPIRICAL
+
+
+def _get_reviewer_personas(paper_type: str) -> dict:
+    """Return reviewer personas appropriate for the paper type."""
+    if paper_type in ("conceptual", "scoping"):
+        return REVIEWER_PERSONAS_CONCEPTUAL
+    return REVIEWER_PERSONAS_EMPIRICAL
+
 
 def _detect_journal(topic: str) -> str:
     """Auto-detect appropriate top-tier journal based on topic keywords."""
@@ -99,13 +183,15 @@ def _detect_journal(topic: str) -> str:
         (["software engineering", "code", "programming"],
          "IEEE TSE / ICSE / FSE"),
         (["blockchain", "cryptocurrency", "fintech", "financial technology"],
-         "Journal of Financial Economics / Review of Financial Studies"),
+         "Journal of International Business Studies / Research Policy"),
         (["healthcare", "clinical", "medical", "patient"],
          "The Lancet / NEJM / BMJ"),
         (["psychology", "cognitive", "behavior", "mental"],
          "Psychological Review / Annual Review of Psychology"),
         (["education", "learning", "teaching", "pedagogy"],
          "Review of Educational Research / Educational Researcher"),
+        (["subsidiary", "multinational", "international business", "reverse innovation", "mne", "mne "],
+         "Journal of International Business Studies / Journal of World Business"),
         (["management", "organization", "leadership"],
          "Academy of Management Review / Administrative Science Quarterly"),
         (["marketing", "consumer", "brand"],
@@ -428,6 +514,8 @@ class PeerReviewPipeline:
 
         Returns: {"improved": bool, "cycle1_scores": {...}, "cycle2_scores": {...}, ...}
         """
+        self._paper_type = paper_type
+        self._review_attrs = _get_review_attributes(paper_type)
         ws = self.config.workspace
         output_dir = ws / "output"
 
@@ -468,7 +556,7 @@ class PeerReviewPipeline:
         # ── Cycle 1: Review the draft ─────────────────────────
         if cycle1_consensus is None:
             self._emit("Starting Peer Review Cycle 1...")
-            cycle1_consensus = self._run_review_cycle(paper_md, topic, journal, cycle=1)
+            cycle1_consensus = self._run_review_cycle(paper_md, topic, journal, cycle=1, paper_type=paper_type)
             if not cycle1_consensus:
                 return {"error": "Peer review cycle 1 failed to produce consensus"}
 
@@ -512,7 +600,7 @@ class PeerReviewPipeline:
         revised_md = revised_md_path.read_text(encoding="utf-8") if revised_md_path.exists() else paper_md
 
         self._emit("Starting Peer Review Cycle 2...")
-        cycle2_consensus = self._run_review_cycle(revised_md, topic, journal, cycle=2)
+        cycle2_consensus = self._run_review_cycle(revised_md, topic, journal, cycle=2, paper_type=paper_type)
         if not cycle2_consensus:
             self._clear_checkpoint()
             return self._finalize(topic, paper_type, cycle1_consensus, None, improved=True)
@@ -539,28 +627,31 @@ class PeerReviewPipeline:
 
     def _run_review_cycle(
         self, paper_md: str, topic: str, journal: str, cycle: int,
+        paper_type: str = "review",
     ) -> dict[str, Any] | None:
         """Run one full review cycle (3 rounds)."""
+        review_attrs = _get_review_attributes(paper_type)
+        personas = _get_reviewer_personas(paper_type)
 
         # ── Round 1: Independent reviews ───────────────────────
         self._emit(f"  Round 1: Independent reviews (cycle {cycle})...")
         reviews: list[dict] = []
 
-        for reviewer_id, persona_info in REVIEWER_PERSONAS.items():
+        for reviewer_id, persona_info in personas.items():
             if not self._check_budget():
                 self._emit(f"  Budget limit reached at {persona_info['name']}")
                 break
 
             self._emit(f"    {persona_info['name']} reviewing...")
             prompt = _build_review_prompt(
-                paper_md, persona_info["persona"], journal, topic, REVIEW_ATTRIBUTES,
+                paper_md, persona_info["persona"], journal, topic, review_attrs,
             )
             response_text, usage = self._generate(persona_info["model_key"], prompt)
             parsed = _extract_json(response_text)
             scores = parsed.get("scores", {})
 
             # Validate and fill missing attributes
-            for attr in REVIEW_ATTRIBUTES:
+            for attr in review_attrs:
                 if attr not in scores:
                     scores[attr] = {"score": 50, "improvement": ""}
                 elif not isinstance(scores[attr], dict):
@@ -644,7 +735,7 @@ class PeerReviewPipeline:
         consensus = parsed.get("consensus", {})
 
         # Fill missing attributes with averaged scores from round 1
-        for attr in REVIEW_ATTRIBUTES:
+        for attr in self._review_attrs:
             if attr not in consensus:
                 scores = [r["scores"].get(attr, {}).get("score", 50) for r in reviews]
                 avg = sum(scores) // len(scores) if scores else 50
@@ -790,7 +881,7 @@ class PeerReviewPipeline:
             return False
 
         # Non-regression check
-        for attr in REVIEW_ATTRIBUTES:
+        for attr in self._review_attrs:
             s1 = cycle1.get(attr, 0)
             s2 = cycle2.get(attr, 0)
             if s2 < s1:
@@ -878,7 +969,7 @@ class PeerReviewPipeline:
             "| Attribute | Score | Improvement |",
             "|-----------|-------|-------------|",
         ]
-        for attr in REVIEW_ATTRIBUTES:
+        for attr in self._review_attrs:
             data = cycle1.get(attr, {})
             score = data.get("score", "N/A")
             improvement = data.get("improvement_plan", data.get("improvement", ""))[:100]
@@ -893,7 +984,7 @@ class PeerReviewPipeline:
                 "| Attribute | Score | Change |",
                 "|-----------|-------|--------|",
             ])
-            for attr in REVIEW_ATTRIBUTES:
+            for attr in self._review_attrs:
                 d1 = cycle1.get(attr, {}).get("score", 0)
                 d2 = cycle2.get(attr, {}).get("score", 0)
                 change = d2 - d1
@@ -912,7 +1003,7 @@ class PeerReviewPipeline:
             "## Attributes that Regressed or Stagnated\n",
         ]
         latest = cycle2 or cycle1
-        for attr in REVIEW_ATTRIBUTES:
+        for attr in self._review_attrs:
             d1 = cycle1.get(attr, {}).get("score", 0)
             d2 = latest.get(attr, {}).get("score", 0) if cycle2 else d1
             if d2 <= d1 and cycle2:
@@ -921,7 +1012,7 @@ class PeerReviewPipeline:
                 parts.append(f"Improvement plan: {plan}\n")
 
         parts.append("\n## Recommended Actions\n")
-        for attr in REVIEW_ATTRIBUTES:
+        for attr in self._review_attrs:
             plan = latest.get(attr, {}).get("improvement_plan", "")
             if plan:
                 parts.append(f"- **{attr}**: {plan}")
