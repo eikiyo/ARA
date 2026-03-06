@@ -4,50 +4,133 @@
 # Calls: N/A
 # Imports: N/A
 
-CONCEPTUAL_HYPOTHESIS_PROMPT = """## Framework Ideation Phase — Theoretical Gap Identification
+CONCEPTUAL_HYPOTHESIS_PROMPT = """## Framework Ideation — Gap-Driven Theoretical Framework Generation
 
-Your task is to identify the core theoretical gap and propose a conceptual framework that addresses it. This is NOT hypothesis testing — this is framework BUILDING.
+You are a senior research strategist identifying NOVEL, FEASIBLE theoretical contributions.
+This is NOT hypothesis testing — this is framework BUILDING. You generate frameworks from
+the STRUCTURE of what is known, contradicted, and absent in the evidence base.
 
-### Process
+Your frameworks must pass two tests:
+1. **Novelty test**: "Would an expert believe something different after reading this?"
+2. **Contribution test**: "Does this explain something existing frameworks cannot?"
 
-1. **Map the theoretical landscape**: Which theories/frameworks exist in this space? Where do they conflict, leave gaps, or fail to explain observed phenomena?
+---
 
-2. **Identify the gap**: What does the literature NOT explain? Where do existing frameworks fall short? Be specific — name the exact theories and their limitations.
+### STEP 1: Load Evidence Base (MANDATORY FIRST)
 
-3. **Propose the framework**: Generate 3-5 candidate frameworks that could fill the gap. Each should:
-   - Name the framework (e.g., "Subsidiary-Driven Exploration Model", "Reverse Innovation Typology")
-   - Specify its type: TYPOLOGY (classifies phenomena), PROCESS MODEL (explains how something unfolds over time), or MULTI-LEVEL FRAMEWORK (connects antecedents → mechanisms → outcomes across levels of analysis)
-   - State what it explains that existing frameworks cannot
-   - Identify which theoretical streams it integrates
+Call ALL of these before generating any frameworks:
+- `list_claims()` — ALL extracted claims with theoretical arguments and evidence
+- `list_papers(compact=true)` — full paper inventory
+- `get_risk_of_bias_table()` — evidence quality per paper
+- `get_grade_table()` — GRADE evidence certainty ratings
+- `search_similar(text="<theme>")` per major theoretical stream
+- `read_paper(paper_id=ID, include_fulltext=true)` for the 3-5 foundational papers
 
-4. **Score each framework** using score_hypothesis with these dimensions:
-   - **novelty**: Does this framework genuinely advance theory? (2x weight)
-   - **feasibility**: Can propositions be empirically tested?
-   - **evidence_strength**: How much existing evidence supports the building blocks?
-   - **methodology_fit**: Is there a clear path to validation?
-   - **impact**: If correct, how much does this change the field?
-   - **reproducibility**: Can other researchers build on this?
+---
 
-### Five Questions (MANDATORY for top framework)
+### STEP 2: Four Evidence Maps (MANDATORY before ANY framework)
 
-1. **"What would have to be true for this framework to be wrong?"** — Name the specific theoretical assumption that, if violated, invalidates the framework.
-2. **"Who already knows this, and what do they believe?"** — Name 3+ specific scholars and their positions.
-3. **"What's the mechanism?"** — In ≤2 sentences, what is the core causal logic?
-4. **"What's the weakest point?"** — Which link in the framework has the least evidence?
-5. **"So what?"** — Who changes their behavior or decisions if this framework is correct?
+#### Map 1: THEORY MAP — What frameworks exist
+| Theory/Framework | Key Scholars | What it explains | What it CANNOT explain |
+List the top 5-8 existing theories. The "cannot explain" column is where your contribution lives.
 
-### Novelty Frameworks (label each candidate)
+#### Map 2: ASSUMPTION MAP — What is believed but untested
+| Assumption | Assumed by (papers) | Ever empirically tested? | Testable how? |
+At least 5 assumptions. These become propositions in your framework.
 
-- **INVERSION**: Flips a dominant assumption in the field
-- **MISSING LINK**: Identifies an unstudied connection in a causal chain
-- **MODERATOR**: Finds a hidden boundary condition
-- **CROSS-DOMAIN TRANSFER**: Imports a framework from another field
-- **SYNTHESIS TAXONOMY**: Splits conflated phenomena into distinct types
+#### Map 3: CONTRADICTION MAP — What is disputed
+| Theory A (Scholar) | Theory B (Scholar) | Point of conflict | Resolution? |
+At least 3 theoretical tensions. Every contradiction is a framework opportunity.
 
-### Output
+#### Map 4: ABSENCE MAP — What is never discussed
+- Which theoretical lenses are never applied to this topic?
+- Which levels of analysis are ignored (individual/team/org/industry/institution)?
+- Which mechanisms are proposed but never formalized?
+- Which constructs are used inconsistently across papers?
+At least 5 absences.
 
-For each candidate framework, call score_hypothesis with the framework description and scores.
+---
+
+### STEP 3: Framework Generation
+
+Generate 5-8 candidate frameworks. Each must be one of these types:
+
+- **TYPOLOGY**: Classifies phenomena into distinct types with different mechanisms
+- **PROCESS MODEL**: Explains how something unfolds over stages/phases
+- **MULTI-LEVEL FRAMEWORK**: Connects antecedents → mechanisms → outcomes across
+  levels of analysis (individual, organizational, institutional)
+
+For each framework specify:
+- Framework name (specific, not generic)
+- Type: TYPOLOGY / PROCESS MODEL / MULTI-LEVEL
+- What it explains that existing frameworks cannot
+- Which theoretical streams it integrates
+- Gap source: which map (Theory/Assumption/Contradiction/Absence) generated it
+- Novelty framework label: INVERSION / MISSING_LINK / MODERATOR /
+  CROSS_DOMAIN / MEASUREMENT / TAXONOMY
+
+---
+
+### STEP 4: Scoring
+
+Use `score_hypothesis` for EVERY candidate. Rate 1-10:
+1. **Novelty** (2x weight): Would reviewers say "I haven't seen this framework before"?
+2. **Feasibility**: Can propositions be empirically tested?
+3. **Evidence grounding**: How much existing evidence supports the building blocks?
+4. **Impact**: If correct, how much does this change the field?
+5. **Falsifiability**: Can the framework be clearly proven wrong?
+6. **Methodology clarity**: Is there a clear path to validation?
+
+---
+
+### STEP 5: Five Questions (MANDATORY for top 3 frameworks)
+
+**Q1. "What would have to be true for this framework to be wrong?"**
+Name the specific theoretical assumption that, if violated, invalidates it.
+
+**Q2. "Who already knows this, and what do they believe?"**
+Name 3+ specific scholars and their positions. How does your framework
+challenge or extend their work?
+
+**Q3. "What's the mechanism?"**
+In ≤2 sentences, what is the core causal logic? If you can't state it
+concisely, the framework is too diffuse.
+
+**Q4. "What's the weakest point?"**
+Which link in the framework has the least evidence? Be specific.
+
+**Q5. "So what?"**
+Who changes their behavior or decisions if this framework is correct?
+What does the field stop doing or start doing?
+
+---
+
+### Output Format
+
+For each framework:
+```
+ID: F-{N}
+Type: TYPOLOGY | PROCESS_MODEL | MULTI_LEVEL
+Novelty Framework: INVERSION | MISSING_LINK | MODERATOR | CROSS_DOMAIN | TAXONOMY
+Title: [Framework name]
+Gap source: [Which map — Theory/Assumption/Contradiction/Absence]
+Integrates: [Theory1 + Theory2 + ...]
+Explains what others cannot: [1-2 sentences]
+Key constructs: [list]
+Scores: {novelty: X, feasibility: X, evidence: X, impact: X,
+         falsifiability: X, methodology: X}
+```
+
+Then present Five Questions for top 3.
 Select the top-scoring framework as the paper's core contribution.
+
+---
+
+### Anti-Patterns (REJECT immediately)
+- Frameworks that merely re-label existing constructs
+- "Integrative frameworks" that list theories without explaining the integration mechanism
+- Frameworks so broad they explain everything (and therefore nothing)
+- Novelty score <5 — do not include in final output
 """
 
 CONCEPTUAL_SYNTHESIS_PROMPT = """## Theoretical Synthesis Phase — Framework Data Preparation

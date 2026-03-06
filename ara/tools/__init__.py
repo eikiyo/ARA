@@ -28,9 +28,9 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "critic": ["read_paper", "search_similar", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table"],
     "synthesis": ["list_papers", "list_claims", "read_paper", "search_similar", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section"],
     "protocol": ["list_papers", "write_section"],
-    "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table"],
+    "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table", "generate_prisma_diagram"],
     "advisory_board": ["list_papers", "list_claims", "read_paper", "search_similar", "get_risk_of_bias_table", "get_grade_table", "write_section"],
-    "paper_critic": ["read_paper", "search_similar", "list_claims", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
+    "paper_critic": ["read_paper", "search_similar", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
 }
 
 

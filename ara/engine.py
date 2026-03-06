@@ -812,6 +812,25 @@ class RLMEngine:
             paper_type=paper_type,
         )
 
+        # Substitute config values into prompt template variables
+        _prompt_subs = {
+            "{min_words_abstract}": str(self.config.words_abstract),
+            "{min_words_intro}": str(self.config.words_introduction),
+            "{min_words_lit}": str(self.config.words_literature_review),
+            "{min_words_methods}": str(self.config.words_methods),
+            "{min_words_results}": str(self.config.words_results),
+            "{min_words_discussion}": str(self.config.words_discussion),
+            "{min_words_conclusion}": str(self.config.words_conclusion),
+            "{min_cites_intro}": str(self.config.cites_introduction),
+            "{min_cites_lit}": str(self.config.cites_literature_review),
+            "{min_cites_methods}": str(self.config.cites_methods),
+            "{min_cites_results}": str(self.config.cites_results),
+            "{min_cites_discussion}": str(self.config.cites_discussion),
+            "{min_quality_citations}": str(self.config.min_quality_citations),
+        }
+        for placeholder, value in _prompt_subs.items():
+            system_prompt = system_prompt.replace(placeholder, value)
+
         # Use per-phase step budget if defined
         step_budget = self._phase_step_budgets().get(phase_def["name"], self.config.max_steps_per_call)
 
