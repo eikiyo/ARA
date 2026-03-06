@@ -119,6 +119,15 @@ def _tool_defs_to_gemini(tool_defs: list[dict[str, Any]]) -> list[Any]:
     return [types.Tool(function_declarations=declarations)]
 
 
+# Fallback chains: when primary model is rate limited, try these in order
+_GEMINI_FALLBACK_CHAIN: dict[str, list[str]] = {
+    "gemini-3.1-flash-lite-preview": ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash-lite"],
+    "gemini-3-flash-preview": ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash-lite"],
+    "gemini-3.1-pro-preview": ["gemini-2.5-flash-preview-05-20", "gemini-2.0-flash-lite"],
+    "gemini-2.5-flash-preview-05-20": ["gemini-2.0-flash-lite"],
+}
+
+
 class GeminiModel:
     def __init__(self, model: str, api_key: str):
         from google import genai
@@ -209,7 +218,8 @@ class GeminiModel:
                 if "quota" in error_text or "429" in error_text or "resource_exhausted" in error_text:
                     last_exc = exc
                     wait = min(2 ** attempt * 2, 60)  # 2s, 4s, 8s, 16s, 32s
-                    _log.warning("Rate limited (attempt %d/%d), retrying in %ds...", attempt + 1, _max_retries, wait)
+                    _log.warning("Rate limited on %s (attempt %d/%d), retrying in %ds...",
+                                 self.model, attempt + 1, _max_retries, wait)
                     if on_chunk:
                         on_chunk(f"\n[Rate limited — retrying in {wait}s...]\n")
                     time.sleep(wait)
@@ -223,7 +233,55 @@ class GeminiModel:
                     continue
                 raise ModelError(f"Gemini API error: {exc}") from exc
 
-        raise RateLimitError(f"Rate limited after {_max_retries} retries. Your API quota is exhausted — wait a few minutes and try again.") from last_exc
+        # Primary model exhausted — try fallback chain
+        fallbacks = _GEMINI_FALLBACK_CHAIN.get(self.model, [])
+        for fallback_model in fallbacks:
+            _log.warning("FALLBACK: %s exhausted, trying %s", self.model, fallback_model)
+            if on_chunk:
+                on_chunk(f"\n[Switching to fallback: {fallback_model}]\n")
+            try:
+                text_parts_fb: list[str] = []
+                tool_calls_fb: list[ToolCall] = []
+                usage_fb = TokenUsage()
+                for chunk in self._client.models.generate_content_stream(
+                    model=fallback_model,
+                    contents=contents,
+                    config=config,
+                ):
+                    if chunk.text:
+                        text_parts_fb.append(chunk.text)
+                        if on_chunk:
+                            on_chunk(chunk.text)
+                    if chunk.function_calls:
+                        for fc in chunk.function_calls:
+                            tool_calls_fb.append(ToolCall(
+                                id=f"call_{uuid.uuid4().hex[:12]}",
+                                name=fc.name,
+                                arguments=dict(fc.args) if fc.args else {},
+                            ))
+                    if chunk.usage_metadata:
+                        usage_fb.input_tokens = chunk.usage_metadata.prompt_token_count or 0
+                        usage_fb.output_tokens = chunk.usage_metadata.candidates_token_count or 0
+
+                _log.info("FALLBACK: %s succeeded", fallback_model)
+                return ModelTurn(
+                    text="".join(text_parts_fb),
+                    tool_calls=tool_calls_fb,
+                    usage=usage_fb,
+                )
+            except Exception as fb_exc:
+                fb_error = str(fb_exc).lower()
+                if "quota" in fb_error or "429" in fb_error or "resource_exhausted" in fb_error:
+                    _log.warning("FALLBACK: %s also rate limited, trying next...", fallback_model)
+                    time.sleep(5)
+                    continue
+                _log.warning("FALLBACK: %s failed: %s", fallback_model, fb_exc)
+                continue
+
+        raise RateLimitError(
+            f"All models exhausted: {self.model} + {', '.join(fallbacks) or 'no fallbacks'}. "
+            f"Wait a few minutes and try again."
+        ) from last_exc
 
     def append_user_message(self, conv: Conversation, text: str) -> None:
         conv._messages.append({"role": "user", "text": text})
