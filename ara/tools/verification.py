@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from .http import rate_limited_get, rate_limited_head
+
 _log = logging.getLogger(__name__)
 
 
@@ -34,10 +36,10 @@ def check_retraction(args: dict[str, Any], ctx: dict) -> str:
             })
 
     try:
-        resp = httpx.get(
+        resp = rate_limited_get(
             f"https://api.crossref.org/works/{doi}",
             params={"mailto": "ara-research@example.com"},
-            timeout=15, follow_redirects=True,
+            timeout=15,
         )
         if resp.status_code == 200:
             data = resp.json().get("message", {})
@@ -92,11 +94,11 @@ def get_citation_count(args: dict[str, Any], ctx: dict) -> str:
     headers = {"x-api-key": api_key} if api_key else {}
 
     try:
-        resp = httpx.get(
+        resp = rate_limited_get(
             f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}",
             headers=headers,
             params={"fields": "citationCount,influentialCitationCount,citations.title"},
-            timeout=15, follow_redirects=True,
+            timeout=15,
         )
         if resp.status_code == 200:
             data = resp.json()
@@ -127,9 +129,9 @@ def validate_doi(args: dict[str, Any], ctx: dict) -> str:
         return json.dumps({"error": "DOI is required"})
 
     try:
-        resp = httpx.head(
+        resp = rate_limited_head(
             f"https://doi.org/{doi}",
-            timeout=10, follow_redirects=True,
+            timeout=10,
         )
         valid = resp.status_code < 400
         return json.dumps({

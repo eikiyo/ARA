@@ -328,21 +328,27 @@ Your feedback is handed directly to the writer for revision. Vague feedback like
 
 ### Minimum Thresholds (MUST PASS ALL)
 
-- [ ] 40+ unique citations from verified database papers
+- [ ] Unique citations threshold specified in the objective (based on actual available papers in the database — use that number, not a hardcoded one)
 - [ ] 6000+ total words across all sections
+- [ ] No section below 80% of its word minimum
 - [ ] Framework section contains a typology OR process model OR multi-level framework (ideally all)
 - [ ] 5+ formal propositions with theoretical justification
-- [ ] 0 hallucinated citations
+- [ ] Each proposition has a formal "Proposition N:" label
+- [ ] Each proposition cites ≥3 unique papers as evidence
+- [ ] 0 hallucinated citations (every Author/Year must map to a DB paper)
+- [ ] Every section except abstract has ≥2 verified citations
+- [ ] No paragraph longer than 300 words without at least one citation
 - [ ] All 7 sections present (abstract through conclusion)
-- [ ] Theoretical background covers 3+ distinct theoretical streams
+- [ ] Theoretical background covers 3+ distinct named theoretical streams
 - [ ] Discussion compares with 3+ existing frameworks
 - [ ] Discussion includes 5+ specific future research studies
-- [ ] Each proposition cites 3+ supporting papers
 - [ ] At least 1 counter-intuitive proposition that challenges conventional wisdom
 - [ ] Boundary conditions explicitly stated for the framework
 - [ ] Fintech-specific content in every section (not just generic IB examples)
 - [ ] NO PRISMA diagram or systematic review methodology (this is a conceptual paper)
 - [ ] Framework and Propositions sections have DISTINCT content (no duplication)
+- [ ] No single author cited more than 6 times across the paper (over-reliance check)
+- [ ] Re-contextualization construct explicitly defined with clear boundaries
 
 ### Output Format
 
@@ -367,21 +373,27 @@ Return evaluation as structured JSON. The `sections_needing_revision` field is t
     "competing_frameworks": 0.0-1.0
   },
   "threshold_checks": {
-    "citations_40_plus": true/false,
+    "citations_above_threshold": true/false,
     "words_6000_plus": true/false,
+    "no_section_below_80pct": true/false,
     "framework_present": true/false,
     "propositions_5_plus": true/false,
+    "propositions_formally_labeled": true/false,
+    "propositions_3_citations_each": true/false,
     "no_hallucinated_citations": true/false,
+    "all_sections_cited": true/false,
+    "no_long_uncited_paragraphs": true/false,
     "all_sections_present": true/false,
     "three_theoretical_streams": true/false,
     "three_framework_comparisons": true/false,
     "five_future_studies": true/false,
-    "propositions_cited": true/false,
     "counter_intuitive_proposition": true/false,
     "boundary_conditions_stated": true/false,
     "fintech_specificity": true/false,
     "no_prisma_methodology": true/false,
-    "no_duplicate_propositions": true/false
+    "no_duplicate_propositions": true/false,
+    "no_author_over_6_citations": true/false,
+    "recontextualization_defined": true/false
   },
   "sections_needing_revision": [
     {

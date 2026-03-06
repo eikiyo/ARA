@@ -39,6 +39,8 @@ class ExternalContext:
     rules: list[dict[str, Any]] = field(default_factory=list)
     observations: list[str] = field(default_factory=list)
     turn_history: list[TurnSummary] = field(default_factory=list)
+    claim_count: int = 0
+    papers_with_claims: int = 0
 
 
 @dataclass(slots=True)
@@ -203,10 +205,12 @@ class RLMEngine:
                 "prompt": "hypothesis",
                 "objective": (
                     "Generate 5+ research hypotheses from the evidence on {topic}. "
+                    "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
                     "Score each: novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility. "
                     "For the top hypothesis, specify: methodology (PRISMA/GRADE), "
                     "analysis approach, quality assessment framework (JBI/Newcastle-Ottawa). "
-                    "Use score_hypothesis to evaluate each one."
+                    "Use score_hypothesis to evaluate each one. "
+                    "Ground every hypothesis in specific claims from the database — do NOT hypothesize beyond the evidence."
                 ),
             },
             {
@@ -214,6 +218,7 @@ class RLMEngine:
                 "prompt": "critic",
                 "objective": (
                     "FIRST: Call list_papers(compact=true) to review the evidence base. "
+                    "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
                     "Read 3-5 key papers using read_paper() to ground your evaluation. "
                     "THEN evaluate the top hypothesis across 8 dimensions. "
                     "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
@@ -225,7 +230,8 @@ class RLMEngine:
                 "name": "synthesis",
                 "prompt": "synthesis",
                 "objective": (
-                    "Prepare structured data for the writer. Build these outputs: "
+                    "Prepare structured data for the writer. You have {claim_count} claims from "
+                    "{papers_with_claims} deeply-read papers. Build these outputs: "
                     "(1) Study characteristics table with author names, (2) Evidence synthesis "
                     "table with GRADE ratings, (3) Risk of bias assessment, "
                     "(4) PRISMA flow numbers, (5) Citation map by theme with (Author, Year), "
@@ -323,10 +329,12 @@ class RLMEngine:
                 "prompt": "hypothesis",
                 "objective": (
                     "Identify the core theoretical gap and propose 3-5 candidate frameworks for: {topic}. "
+                    "You have {claim_count} theoretical claims from {papers_with_claims} deeply-read papers. "
                     "Each framework should be a TYPOLOGY, PROCESS MODEL, or MULTI-LEVEL FRAMEWORK. "
                     "Score each: novelty (2x weight), feasibility, evidence_strength, methodology_fit, "
                     "impact, reproducibility. Answer the Five Questions for the top framework. "
-                    "Use score_hypothesis to evaluate each one."
+                    "Use score_hypothesis to evaluate each one. "
+                    "Ground every framework in specific claims from the database — do NOT theorize beyond the evidence."
                 ),
             },
             {
@@ -334,6 +342,7 @@ class RLMEngine:
                 "prompt": "critic",
                 "objective": (
                     "FIRST: Call list_papers(compact=true) to review the theoretical evidence base. "
+                    "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
                     "Read 3-5 key theoretical papers using read_paper() to ground your evaluation. "
                     "THEN evaluate the top framework across 8 dimensions. "
                     "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
@@ -345,7 +354,9 @@ class RLMEngine:
                 "name": "synthesis",
                 "prompt": "synthesis",
                 "objective": (
-                    "Prepare structured theoretical data for the writer. Build these outputs: "
+                    "Prepare structured theoretical data for the writer. "
+                    "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
+                    "Build these outputs: "
                     "(1) Theoretical streams table with author names and core arguments, "
                     "(2) Theoretical tension map showing conflicts/gaps between streams, "
                     "(3) Construct definitions table, (4) Proposition evidence map with supporting/opposing papers, "
@@ -567,49 +578,83 @@ class RLMEngine:
                     on_event(StepEvent("error", data=f"Phase {name} failed: {exc}", depth=0))
                 # Continue to next phase — don't stop the whole pipeline
 
-            # After deep_read: check claim count, re-run if insufficient
+            # After deep_read: run batched continuation until targets met
             if name == "deep_read" and db and session_id:
                 claims = db.get_claims(session_id)
                 papers_with_claims = len(set(c["paper_id"] for c in claims))
-                _log.info("PIPELINE: Deep read produced %d claims from %d papers", len(claims), papers_with_claims)
+                _log.info("PIPELINE: Deep read batch 1 produced %d claims from %d papers", len(claims), papers_with_claims)
 
-                # Re-run deep_read up to 2 more times if insufficient
-                for retry in range(2):
+                # Batched deep_read: keep launching batches of 15 papers until targets met
+                _BATCH_SIZE = 15
+                _MAX_BATCHES = 12  # 12 batches × 15 papers = 180 papers max
+                _BATCH_COOLDOWN = 15  # seconds between batches for rate limit recovery
+
+                for batch_num in range(1, _MAX_BATCHES + 1):
                     if len(claims) >= self.config.min_claims and papers_with_claims >= self.config.min_deep_read_papers:
+                        _log.info("PIPELINE: Deep read targets met (%d claims, %d papers)", len(claims), papers_with_claims)
                         break
                     if self.cancel_flag.is_set():
                         break
-                    _log.warning(
-                        "PIPELINE: Deep read insufficient (%d claims from %d papers, need %d from %d). Retry %d/2",
-                        len(claims), papers_with_claims, self.config.min_claims, self.config.min_deep_read_papers, retry + 1,
+
+                    _log.info(
+                        "PIPELINE: Deep read batch %d/%d — %d claims from %d papers so far (need %d from %d)",
+                        batch_num + 1, _MAX_BATCHES + 1, len(claims), papers_with_claims,
+                        self.config.min_claims, self.config.min_deep_read_papers,
                     )
                     if on_event:
-                        on_event(StepEvent("text", data=f"Deep read retry {retry+1}: {len(claims)} claims from {papers_with_claims} papers — need more", depth=0))
+                        on_event(StepEvent("text", data=(
+                            f"Deep read batch {batch_num + 1}: {len(claims)} claims from "
+                            f"{papers_with_claims} papers — processing next {_BATCH_SIZE}"
+                        ), depth=0))
 
-                    # Build objective that tells LLM what's already done
-                    retry_objective = (
+                    # Cooldown between batches to let rate limits recover
+                    if batch_num > 0:
+                        _log.info("PIPELINE: Cooling down %ds between deep_read batches", _BATCH_COOLDOWN)
+                        time.sleep(_BATCH_COOLDOWN)
+
+                    batch_objective = (
                         f"CONTINUE extracting claims from papers about {topic}. "
                         f"You have {len(claims)} claims from {papers_with_claims} papers so far. "
                         f"Target: {self.config.min_claims}+ claims from {self.config.min_deep_read_papers}+ papers. "
                         f"Call list_papers(selected_only=true) to see ALL selected papers. "
-                        f"Skip papers you already processed. Process the REMAINING papers. "
+                        f"Skip papers you already processed. Process the NEXT {_BATCH_SIZE} unprocessed papers. "
                         f"For each: read_paper → extract_claims → assess_risk_of_bias. "
-                        f"DO NOT STOP until you have processed ALL selected papers."
+                        f"Stop after processing {_BATCH_SIZE} papers — another batch will follow."
                     )
-                    retry_phase = {
+                    batch_phase = {
                         "name": "deep_read",
                         "prompt": "analyst_deep_read",
-                        "objective": retry_objective,
+                        "objective": batch_objective,
                     }
                     try:
-                        self._pipeline_run_phase(retry_phase, topic, paper_type, context, on_event)
+                        self._pipeline_run_phase(batch_phase, topic, paper_type, context, on_event)
                     except Exception as exc:
-                        _log.exception("PIPELINE: Deep read retry failed: %s", exc)
+                        _log.exception("PIPELINE: Deep read batch %d failed: %s", batch_num + 1, exc)
 
-                    # Recount
+                    # Recount after each batch
+                    prev_claims = len(claims)
                     claims = db.get_claims(session_id)
                     papers_with_claims = len(set(c["paper_id"] for c in claims))
-                    _log.info("PIPELINE: After retry %d: %d claims from %d papers", retry + 1, len(claims), papers_with_claims)
+                    new_claims = len(claims) - prev_claims
+                    _log.info("PIPELINE: Batch %d done: +%d claims, total %d from %d papers",
+                              batch_num + 1, new_claims, len(claims), papers_with_claims)
+
+                    # If a batch produced 0 new claims, increase cooldown (likely rate limited)
+                    if new_claims == 0:
+                        extra_cooldown = 45
+                        _log.warning("PIPELINE: Batch %d produced 0 claims — extra cooldown %ds", batch_num + 1, extra_cooldown)
+                        time.sleep(extra_cooldown)
+
+                # HARD GATE: If still 0 claims, this is fatal
+                if len(claims) == 0:
+                    _log.error("PIPELINE: FATAL — 0 claims after all deep_read batches. Cannot produce a credible paper.")
+                    if on_event:
+                        on_event(StepEvent("error", data="FATAL: 0 claims extracted. Pipeline cannot continue without evidence.", depth=0))
+                    break
+
+                # Store claim/paper counts in context for downstream phases
+                context.claim_count = len(claims)
+                context.papers_with_claims = papers_with_claims
 
                 if paper_type != "conceptual":
                     self._finalize_prisma_exclusions(db, session_id)
@@ -624,6 +669,10 @@ class RLMEngine:
             self._pipeline_writer(topic, paper_type, context, on_event)
             if db and session_id:
                 db.save_phase_checkpoint(session_id, "writer")
+
+        # Pre-critic programmatic validation — fix obvious failures before LLM critic
+        if "paper_critic" not in completed and not self.cancel_flag.is_set():
+            self._pre_critic_validation(topic, paper_type, context, on_event)
 
         # Paper critic
         if "paper_critic" not in completed and not self.cancel_flag.is_set():
@@ -653,6 +702,8 @@ class RLMEngine:
             min_deep_read_papers=self.config.min_deep_read_papers,
             min_papers=self.config.min_papers,
             search_start_year=self.config.search_start_year,
+            claim_count=context.claim_count,
+            papers_with_claims=context.papers_with_claims,
         )
 
         # Reset search state for search phases
@@ -835,8 +886,194 @@ class RLMEngine:
                 phase="writer",
             )
             _log.info("PIPELINE WRITER: Section %s done — %d chars", section_name, len(result))
+
+            # Inline section critic — programmatic check, rewrite if failed
+            section_issues = self._check_section_quality(section_name, sections_dir, context)
+            if section_issues and not self.cancel_flag.is_set():
+                _log.warning("PIPELINE WRITER: Section %s failed inline checks: %s", section_name, section_issues)
+                if on_event:
+                    on_event(StepEvent("text", data=f"Section {section_name} needs rewrite: {section_issues[0]}", depth=0))
+
+                rewrite_objective = (
+                    f"REWRITE the '{section_name}' section. The following issues were found:\n"
+                    + "\n".join(f"- {issue}" for issue in section_issues) + "\n\n"
+                    f"Read the current version, fix ALL issues, and save using "
+                    f"write_section(section='{section_name}', content=YOUR_TEXT). "
+                    f"Call list_papers first to find correct (Author, Year) citations. "
+                    f"Do NOT shorten the section — only expand and fix."
+                )
+                self._solve_recursive(
+                    objective=rewrite_objective,
+                    context=context,
+                    depth=self.config.max_depth,
+                    on_event=on_event,
+                    system_prompt_override=system_prompt,
+                    phase="writer",
+                )
+                _log.info("PIPELINE WRITER: Section %s rewrite complete", section_name)
+
             if on_event:
                 on_event(StepEvent("subtask_end", data=f"Section {section_name} done", depth=0))
+
+    def _check_section_quality(
+        self, section_name: str, sections_dir: Path, context: ExternalContext,
+    ) -> list[str]:
+        """Programmatic section quality check — returns list of issues (empty = pass)."""
+        import re as _re
+        from .tools.writing import _extract_citations_from_text, _verify_citation_against_db
+
+        section_file = sections_dir / f"{section_name}.md"
+        if not section_file.exists():
+            return [f"Section file '{section_name}.md' was not saved"]
+
+        content = section_file.read_text(encoding="utf-8")
+        word_count = len(content.split())
+        issues: list[str] = []
+
+        # 1. Word count check
+        cfg = self.config
+        min_words_map = {
+            "abstract": cfg.words_abstract, "introduction": cfg.words_introduction,
+            "literature_review": cfg.words_literature_review, "methods": cfg.words_methods,
+            "results": cfg.words_results, "discussion": cfg.words_discussion,
+            "conclusion": cfg.words_conclusion,
+            "theoretical_background": cfg.words_theoretical_background,
+            "framework": cfg.words_framework, "propositions": cfg.words_propositions,
+        }
+        min_words = min_words_map.get(section_name, 0)
+        if min_words > 0 and word_count < int(min_words * 0.8):
+            issues.append(f"Too short: {word_count} words (need {min_words}+, hard floor {int(min_words * 0.8)})")
+
+        # 2. Citation count check (skip abstract/conclusion/protocol)
+        if section_name not in ("abstract", "conclusion", "protocol"):
+            citations = _extract_citations_from_text(content)
+            if len(citations) == 0:
+                issues.append("Zero citations — every body section must cite papers from the database")
+            elif len(citations) < 3 and section_name not in ("methods",):
+                issues.append(f"Only {len(citations)} citations — need at least 3 for this section")
+
+            # 3. Citation verification — check >50% are real
+            db = self.tools.db
+            session_id = self.tools.session_id
+            if db and session_id and citations:
+                verified = sum(
+                    1 for a, y in citations
+                    if _verify_citation_against_db(a, y, db, session_id).get("verified")
+                )
+                if len(citations) > 0 and verified / len(citations) < 0.5:
+                    issues.append(
+                        f"Citation integrity: only {verified}/{len(citations)} verified in DB. "
+                        f"Use list_papers to find real (Author, Year) pairs."
+                    )
+
+        # 4. Citation density — no paragraph >300 words without a citation
+        if section_name not in ("abstract", "conclusion", "protocol"):
+            paragraphs = [p.strip() for p in content.split("\n\n") if len(p.strip()) > 50]
+            long_uncited = 0
+            for para in paragraphs:
+                para_words = len(para.split())
+                para_cites = _extract_citations_from_text(para)
+                if para_words > 300 and len(para_cites) == 0:
+                    long_uncited += 1
+            if long_uncited > 0:
+                issues.append(f"{long_uncited} paragraph(s) over 300 words with no citations")
+
+        # 5. Duplication check — compare with other sections (>40% overlap = problem)
+        if sections_dir.exists():
+            content_words = set(content.lower().split())
+            for other_file in sections_dir.iterdir():
+                if other_file.suffix == ".md" and other_file.stem != section_name and other_file.stat().st_size > 200:
+                    other_words = set(other_file.read_text(encoding="utf-8").lower().split())
+                    if content_words and other_words:
+                        overlap = len(content_words & other_words) / min(len(content_words), len(other_words))
+                        if overlap > 0.6:
+                            issues.append(f"High overlap ({overlap:.0%}) with '{other_file.stem}' — likely duplication")
+
+        return issues
+
+    def _pre_critic_validation(
+        self, topic: str, paper_type: str,
+        context: ExternalContext, on_event: StepCallback | None,
+    ) -> None:
+        """Programmatic pre-critic scan — fix obvious failures before wasting an LLM critic call."""
+        from pathlib import Path
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        if not sections_dir.exists():
+            _log.warning("PRE-CRITIC: No sections directory — skipping validation")
+            return
+
+        # Gather all section files
+        section_files = {f.stem: f for f in sections_dir.iterdir() if f.suffix == ".md" and f.stat().st_size > 50}
+
+        # Determine expected sections
+        if paper_type == "conceptual":
+            expected = {"abstract", "introduction", "theoretical_background", "framework", "propositions", "discussion", "conclusion"}
+        else:
+            expected = {"abstract", "introduction", "literature_review", "methods", "results", "discussion", "conclusion"}
+
+        missing = expected - set(section_files.keys())
+        if missing:
+            _log.warning("PRE-CRITIC: Missing sections: %s", missing)
+
+        # Check each existing section and collect failures
+        failing_sections: list[tuple[str, list[str]]] = []
+        total_words = 0
+        total_citations: set[tuple[str, str]] = set()
+
+        from .tools.writing import _extract_citations_from_text
+
+        for section_name in expected:
+            if section_name not in section_files:
+                continue
+            issues = self._check_section_quality(section_name, sections_dir, context)
+            content = section_files[section_name].read_text(encoding="utf-8")
+            total_words += len(content.split())
+            total_citations.update(_extract_citations_from_text(content))
+            if issues:
+                failing_sections.append((section_name, issues))
+
+        _log.info("PRE-CRITIC: total_words=%d, unique_citations=%d, failing_sections=%d/%d",
+                   total_words, len(total_citations), len(failing_sections), len(expected))
+
+        if not failing_sections:
+            _log.info("PRE-CRITIC: All sections pass programmatic checks — proceeding to LLM critic")
+            return
+
+        # Auto-rewrite failing sections (max 3 to avoid infinite loop)
+        if on_event:
+            on_event(StepEvent("text", data=f"Pre-critic: {len(failing_sections)} sections need fixes before critic review", depth=0))
+
+        system_prompt = build_phase_system_prompt(
+            phase="writer", topic=topic, rules=context.rules,
+            paper_type=paper_type,
+        )
+
+        for section_name, issues in failing_sections[:3]:
+            if self.cancel_flag.is_set():
+                break
+            _log.info("PRE-CRITIC: Auto-rewriting section '%s' — issues: %s", section_name, issues)
+            if on_event:
+                on_event(StepEvent("subtask_start", data=f"Pre-critic fix: {section_name}", depth=0))
+
+            rewrite_objective = (
+                f"REWRITE the '{section_name}' section to fix these issues found by automated checks:\n"
+                + "\n".join(f"- {issue}" for issue in issues) + "\n\n"
+                f"Read the current version with list_papers, fix ALL issues, and save using "
+                f"write_section(section='{section_name}', content=YOUR_TEXT). "
+                f"Call list_papers first to find correct (Author, Year) citations. "
+                f"Do NOT shorten the section — only expand and fix."
+            )
+            self._solve_recursive(
+                objective=rewrite_objective,
+                context=context,
+                depth=self.config.max_depth,
+                on_event=on_event,
+                system_prompt_override=system_prompt,
+                phase="writer",
+            )
+            if on_event:
+                on_event(StepEvent("subtask_end", data=f"Pre-critic fix done: {section_name}", depth=0))
 
     def _pipeline_paper_critic(
         self, topic: str, paper_type: str,
@@ -847,6 +1084,24 @@ class RLMEngine:
             phase="paper_critic", topic=topic, rules=context.rules,
             paper_type=paper_type,
         )
+
+        # Pre-check: count actually available citable papers and set dynamic threshold
+        db = self.tools.db
+        session_id = self.tools.session_id
+        available_citations = 0
+        if db and session_id:
+            try:
+                # Count papers with claims (these are the ones the writer can actually cite)
+                available_citations = db._conn.execute(
+                    "SELECT COUNT(DISTINCT paper_id) FROM claims WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()[0]
+            except Exception:
+                pass
+        # Dynamic threshold: 60% of available papers, but at least 15 and at most the configured max
+        dynamic_citation_min = max(15, min(self.config.min_quality_citations, int(available_citations * 0.6)))
+        _log.info("PIPELINE CRITIC: available_citations=%d, dynamic_threshold=%d (config=%d)",
+                   available_citations, dynamic_citation_min, self.config.min_quality_citations)
 
         for cycle in range(self.config.paper_critic_max_revisions + 1):
             if self.cancel_flag.is_set():
@@ -860,7 +1115,8 @@ class RLMEngine:
                 objective = (
                     "Evaluate the complete conceptual paper draft against AMJ/JIBS/SMJ standards. "
                     "Call generate_quality_audit to get the scorecard. Score 12 dimensions. "
-                    f"Check ALL minimum thresholds ({self.config.min_quality_citations}+ citations, "
+                    f"The database has {available_citations} citable papers with extracted claims. "
+                    f"Check ALL minimum thresholds ({dynamic_citation_min}+ unique citations, "
                     f"{self.config.min_paper_words}+ words, "
                     "all sections present, 5+ propositions, 3+ theoretical streams, "
                     "3+ framework comparisons, 5+ future research studies, boundary conditions). "
@@ -874,7 +1130,8 @@ class RLMEngine:
                 objective = (
                     "Evaluate the complete paper draft against Nature/Lancet systematic review standards. "
                     "Call generate_quality_audit to get the scorecard. Score 10 dimensions. "
-                    f"Check ALL minimum thresholds ({self.config.min_cited}+ citations, "
+                    f"The database has {available_citations} citable papers with extracted claims. "
+                    f"Check ALL minimum thresholds ({dynamic_citation_min}+ unique citations, "
                     f"{self.config.min_paper_words}+ words, {self.config.min_quality_tables}+ tables, "
                     "all sections present, structured abstract, PRISMA in methods, limitations, "
                     "3+ review comparisons, 3+ future questions). "

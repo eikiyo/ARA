@@ -167,16 +167,32 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
     warnings: list[str] = []
     errors: list[str] = []
 
-    # Check minimum word count (from config if available)
+    # Check minimum word count — hard reject if below 80% of minimum
     min_words = _get_min_words(ctx).get(section_key, 0)
     if min_words > 0 and word_count < min_words:
-        warnings.append(
-            f"Section '{section}' has {word_count} words, minimum is {min_words}. "
-            f"Consider expanding by {min_words - word_count} words."
+        if word_count < int(min_words * 0.8):
+            errors.append(
+                f"WORD COUNT REJECTION: section '{section}' has {word_count} words, "
+                f"minimum is {min_words} (hard floor: {int(min_words * 0.8)}). "
+                f"Write at least {min_words - word_count} more words."
+            )
+        else:
+            warnings.append(
+                f"Section '{section}' has {word_count} words, target is {min_words}. "
+                f"Consider expanding by {min_words - word_count} words."
+            )
+
+    # Hard reject if section has 0 citations (except abstract and conclusion)
+    citations_in_text = _extract_citations_from_text(content)
+    if section_key not in ("abstract", "conclusion", "protocol") and len(citations_in_text) == 0:
+        errors.append(
+            f"ZERO CITATIONS: section '{section}' has no (Author, Year) citations. "
+            f"Every section except abstract/conclusion must cite papers from the database. "
+            f"Call list_papers first, then cite using (Author, Year) format."
         )
 
-    # Citation verification (3-tier)
-    citations_found = _extract_citations_from_text(content)
+    # Citation verification (3-tier) — reuse citations already extracted above
+    citations_found = citations_in_text if citations_in_text else _extract_citations_from_text(content)
     verified_count = 0
     unverified: list[str] = []
     stripped: list[str] = []

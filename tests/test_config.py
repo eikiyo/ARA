@@ -15,7 +15,7 @@ def test_default_config():
     assert cfg.max_tool_calls_per_turn == 1
     assert cfg.approval_gates is True
     assert cfg.google_api_key is None
-    assert cfg.min_papers == 300
+    assert cfg.min_papers == 400
     assert cfg.min_cited == 60
     assert cfg.min_paper_words == 6000
 

@@ -121,18 +121,24 @@ Your feedback goes directly to the writer. Vague feedback wastes a revision cycl
 
 ### Minimum Thresholds (MUST PASS ALL)
 
-- [ ] 60+ unique citations from verified database papers
+- [ ] Unique citations threshold specified in the objective (based on actual available papers in the database — use that number, not a hardcoded one)
 - [ ] 6000+ total words across all sections
+- [ ] No section below 80% of its word minimum
 - [ ] 2+ data tables present (study characteristics + evidence synthesis minimum)
 - [ ] 0 hallucinated citations (every Author/Year must map to a DB paper)
+- [ ] Every section except abstract has ≥2 verified citations
+- [ ] No paragraph longer than 300 words without at least one citation
 - [ ] All 8 sections present (abstract through references)
 - [ ] Abstract is structured (Background/Objective/Methods/Results/Conclusion)
+- [ ] Introduction ends with a clear research question or objective statement
 - [ ] Methods section includes PRISMA flow numbers
+- [ ] Discussion opens by restating key findings (not new analysis)
 - [ ] Discussion includes limitations subsection with SPECIFIC limitations (not generic disclaimers)
 - [ ] Limitations reference the hypothesis's falsification conditions and weakest points
 - [ ] Discussion compares with 3+ existing reviews
 - [ ] Discussion includes causal inference analysis with mechanism and confounders
 - [ ] No single study cited more than 8 times across the paper (evidence concentration check)
+- [ ] No single author cited more than 6 times across the paper (over-reliance check)
 - [ ] Results section: 70%+ of paragraphs contain at least one quantitative value (effect size, CI, OR, N, or %)
 - [ ] Results includes geographic heterogeneity comparison (not just listing countries)
 - [ ] Single-study findings use hedging language ("one study found...", NOT "evidence shows...")
@@ -161,7 +167,7 @@ Return evaluation as structured JSON:
     "confidence_calibration": 0.0-1.0
   },
   "threshold_checks": {
-    "citations_40_plus": true/false,
+    "citations_above_threshold": true/false,
     "words_6000_plus": true/false,
     "tables_2_plus": true/false,
     "no_hallucinated_citations": true/false,

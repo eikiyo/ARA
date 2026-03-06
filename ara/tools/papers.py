@@ -15,6 +15,8 @@ from typing import Any
 
 import httpx
 
+from .http import rate_limited_get
+
 _log = logging.getLogger(__name__)
 _MAX_DOWNLOAD_BYTES = 10_000_000  # 10MB limit for fulltext downloads
 _MAX_FULLTEXT_CHARS = 25000  # Store up to ~5 pages of full text for deep analysis
@@ -79,10 +81,10 @@ def fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     pdf_url = None
     is_oa = False
     try:
-        resp = httpx.get(
+        resp = rate_limited_get(
             f"https://api.unpaywall.org/v2/{doi}",
             params={"email": "ara-research@example.com"},
-            timeout=15, follow_redirects=True,
+            timeout=15,
         )
         if resp.status_code == 200:
             data = resp.json()
