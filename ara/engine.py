@@ -646,9 +646,9 @@ class RLMEngine:
                                 return
                         self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
 
-                    # Fire fetch+embed in background, don't block pipeline on them
-                    _th.Thread(target=_run_fetch, daemon=True).start()
-                    _th.Thread(target=_run_embed, daemon=True).start()
+                    # Run fetch+embed synchronously — deep_read needs full texts
+                    _run_fetch()
+                    _run_embed()
 
                     # Run deep_read synchronously — it gates the pipeline
                     if run_deep_read:
@@ -1262,22 +1262,26 @@ class RLMEngine:
             (p for p in self._get_pipeline_phases() if p["name"] == "deep_read"), None
         )
 
-        def _run_fetch_and_embed_phase():
-            self._pipeline_fetch_texts(on_event)
-            self._pipeline_embed(on_event)
+        # Run embedding generation in background (non-daemon, joined later)
+        _embed_thread = None
+        if papers_needing_embed:
+            def _run_embedding_generation():
+                try:
+                    self._embedding_triage_generate(papers_needing_embed, db)
+                except Exception as exc:
+                    _log.warning("Embedding generation failed: %s", exc)
+            _embed_thread = _th.Thread(target=_run_embedding_generation)
+            _embed_thread.start()
 
-        def _run_embedding_generation():
-            if papers_needing_embed:
-                self._embedding_triage_generate(papers_needing_embed, db)
+        # Run fetch synchronously — deep_read needs the full texts
+        self._pipeline_fetch_texts(on_event)
+        self._pipeline_embed(on_event)
 
-        # Fire fetch+embed+embedding_gen in background daemon threads
-        _bg1 = _th.Thread(target=_run_fetch_and_embed_phase, daemon=True)
-        _bg2 = _th.Thread(target=_run_embedding_generation, daemon=True)
-        _bg1.start()
-        _bg2.start()
+        # Wait for embedding generation to finish before deep_read
+        if _embed_thread is not None:
+            _embed_thread.join(timeout=120)
 
         # Deep_read runs synchronously — it gates the pipeline
-        time.sleep(5)  # Brief delay so some full texts land first
         if deep_read_def and deep_read_def.get("objective"):
             self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
 
