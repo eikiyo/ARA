@@ -112,6 +112,52 @@ _CITATION_PATTERN = re.compile(
 )
 
 
+def _resolve_citations_openalex(unmatched: list[tuple[str, str]]) -> list[dict]:
+    """Resolve unmatched citations via OpenAlex API (free, no key needed).
+
+    Returns list of paper dicts compatible with the reference generator.
+    """
+    import urllib.request
+    import urllib.parse
+
+    resolved = []
+    for author_frag, year in unmatched[:40]:  # Cap at 40 to avoid rate limits
+        try:
+            # Clean author fragment for search
+            clean_author = author_frag.replace(" et al.", "").replace(" et al", "").strip()
+            query = urllib.parse.quote(f"{clean_author} {year}")
+            url = f"https://api.openalex.org/works?search={query}&filter=publication_year:{year}&per_page=1"
+            req = urllib.request.Request(url, headers={"User-Agent": "ARA/1.0 (academic research tool)"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read())
+                results = data.get("results", [])
+                if results:
+                    work = results[0]
+                    # Verify author surname match
+                    authorships = work.get("authorships", [])
+                    author_names = []
+                    match_found = False
+                    for a in authorships:
+                        name = a.get("author", {}).get("display_name", "")
+                        author_names.append(name)
+                        if clean_author.lower() in name.lower() or any(
+                            t in name.lower() for t in _normalize_author(clean_author) if len(t) > 2
+                        ):
+                            match_found = True
+                    if match_found and author_names:
+                        doi = (work.get("doi") or "").replace("https://doi.org/", "")
+                        resolved.append({
+                            "paper_id": f"openalex_{work.get('id', '').split('/')[-1]}",
+                            "title": work.get("title", "Untitled"),
+                            "authors": author_names,
+                            "year": work.get("publication_year", year),
+                            "doi": doi,
+                        })
+        except Exception:
+            continue  # Skip on timeout/error — don't block reference generation
+    return resolved
+
+
 def _extract_citations_from_text(text: str) -> list[tuple[str, str]]:
     """Extract all (Author, Year) citation tuples from text."""
     results = []
@@ -263,22 +309,15 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
             else:
                 unverified.append(f"({author}, {year})")
 
-        # Calculate unverified ratio
-        total_citations = len(citations_found)
-        if total_citations > 0:
-            unverified_ratio = len(unverified) / total_citations
-            if unverified_ratio > 0.2:
-                errors.append(
-                    f"CITATION INTEGRITY FAILURE: {len(unverified)}/{total_citations} citations "
-                    f"({unverified_ratio:.0%}) could not be verified in the database. "
-                    f"Unverified: {', '.join(unverified[:10])}. "
-                    f"Rewrite this section using ONLY papers from the database."
-                )
-            elif unverified:
-                warnings.append(
-                    f"{len(unverified)} citation(s) not found in database: {', '.join(unverified[:5])}. "
-                    f"These should be removed or replaced with verified sources."
-                )
+        # Zero tolerance: ANY unverified citation is a hard reject
+        if unverified:
+            errors.append(
+                f"CITATION INTEGRITY FAILURE: {len(unverified)}/{len(citations_found)} citations "
+                f"could not be verified in the database. "
+                f"Unverified: {', '.join(unverified[:10])}. "
+                f"Remove ALL unverified citations and replace with papers from list_papers(). "
+                f"ONLY cite papers that exist in the database — do NOT use your training knowledge."
+            )
 
     # Check minimum citation density (from config if available)
     min_cites = _get_min_citations(ctx).get(section_key, 0)
@@ -419,17 +458,33 @@ def get_citations(args: dict[str, Any], ctx: dict) -> str:
                 cites = _extract_citations_from_text(f.read_text(encoding="utf-8"))
                 in_text_citations.update(cites)
 
-    # Get all papers from DB, then filter to only those actually cited in-text
-    all_papers = db.get_cited_papers(session_id)
-    if not all_papers:
-        # Fallback: get all papers
-        rows = db._conn.execute(
-            "SELECT paper_id, title, authors, year, doi FROM papers WHERE session_id = ?",
-            (session_id,),
-        ).fetchall()
-        all_papers = [dict(r) for r in rows]
-        for p in all_papers:
-            p["authors"] = json.loads(p.get("authors") or "[]")
+    # Get ALL papers from DB — not just those with claims
+    # The writer cites papers from the full corpus, not just deeply-read ones
+    rows = db._conn.execute(
+        "SELECT paper_id, title, authors, year, doi FROM papers WHERE session_id = ? "
+        "ORDER BY citation_count DESC",
+        (session_id,),
+    ).fetchall()
+    all_papers = [dict(r) for r in rows]
+    for p in all_papers:
+        p["authors"] = json.loads(p.get("authors") or "[]")
+
+    # Also check central DB for papers not in this session (foundational works)
+    central_db = ctx.get("central_db")
+    if central_db:
+        try:
+            central_rows = central_db._conn.execute(
+                "SELECT paper_id, title, authors, year, doi FROM papers "
+                "ORDER BY citation_count DESC LIMIT 2000"
+            ).fetchall()
+            central_ids = {p["paper_id"] for p in all_papers}
+            for cr in central_rows:
+                cd = dict(cr)
+                if cd["paper_id"] not in central_ids:
+                    cd["authors"] = json.loads(cd.get("authors") or "[]")
+                    all_papers.append(cd)
+        except Exception as exc:
+            _log.warning("REFERENCES: Central DB lookup failed: %s", exc)
 
     # Filter papers to only those matching in-text citations
     # Build a fast lookup: normalized author surname fragments → paper
@@ -468,9 +523,15 @@ def get_citations(args: dict[str, Any], ctx: dict) -> str:
                 unmatched_citations.append((author_frag, cite_year))
 
         if unmatched_citations:
-            _log.warning("REFERENCES: %d in-text citations unmatched: %s",
+            _log.warning("REFERENCES: %d in-text citations unmatched in DB: %s",
                          len(unmatched_citations),
-                         ", ".join(f"({a}, {y})" for a, y in unmatched_citations[:10]))
+                         ", ".join(f"({a}, {y})" for a, y in unmatched_citations[:15]))
+            # Resolve unmatched citations via OpenAlex API (free, no key needed)
+            _resolved_external = _resolve_citations_openalex(unmatched_citations)
+            if _resolved_external:
+                papers.extend(_resolved_external)
+                _log.info("REFERENCES: Resolved %d/%d unmatched citations via OpenAlex",
+                          len(_resolved_external), len(unmatched_citations))
     if not papers:
         papers = all_papers  # Fallback if no matches
 

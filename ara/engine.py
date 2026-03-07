@@ -573,6 +573,10 @@ class RLMEngine:
                 "(c) Construct definitions (already in theoretical_background). "
                 "(d) Framework re-description (already in framework section). "
                 "(e) Gap restatement (already in introduction). "
+                "(f) New propositions or re-labeled propositions — propositions are ONLY in the propositions section. "
+                "Do NOT introduce P1, P2, etc. in this section. REFER to propositions by their original labels. "
+                "(g) New construct names — use ONLY the construct names established in theoretical_background "
+                "and framework. Do NOT invent alternative names for the same concepts. "
                 "WHAT TO INCLUDE: "
                 "(1) How the framework resolves the theoretical tensions from the lit review — "
                 "in prose, not tables. Start with 'This paper developed...' "
@@ -2824,6 +2828,22 @@ class RLMEngine:
         if min_words > 0 and word_count < int(min_words * 0.8):
             issues.append(f"Too short: {word_count} words (need {min_words}+, hard floor {int(min_words * 0.8)})")
 
+        # 1b. Word count MAXIMUM — enforce hard ceiling at 2x minimum (prevent bloat)
+        max_words_map = {
+            "abstract": 350, "introduction": 1200, "methodology": 700,
+            "literature_review": 2500, "methods": 1500,
+            "results": 2000, "discussion": 1500,
+            "conclusion": 500,
+            "theoretical_background": 2500, "framework": 2000, "propositions": 1800,
+        }
+        max_words = max_words_map.get(section_name, 0)
+        if max_words > 0 and word_count > max_words:
+            issues.append(
+                f"Too long: {word_count} words (max {max_words}). "
+                f"Cut {word_count - max_words} words. Remove redundant arguments, "
+                f"condense examples, eliminate hedging. Be direct and concise."
+            )
+
         # 2. Citation count check (skip abstract/conclusion/protocol)
         if section_name not in ("abstract", "conclusion", "protocol"):
             citations = _extract_citations_from_text(content)
@@ -2978,6 +2998,42 @@ class RLMEngine:
                     f"Keep only the sharpest, most novel ones. Depth over breadth. "
                     f"Drop any that restate well-established findings."
                 )
+
+        # 13. Discussion must NOT contain new propositions (P1, P2, Proposition 1, etc.)
+        if section_name == "discussion":
+            disc_props = _re.findall(
+                r'(?:^|\n)\s*\*?\*?(?:Proposition|P)\s*\d+\s*[:.]',
+                content, _re.IGNORECASE,
+            )
+            if disc_props:
+                issues.append(
+                    f"Discussion contains {len(disc_props)} proposition labels (P1, P2, etc.) — "
+                    f"propositions belong ONLY in the propositions section. "
+                    f"REFER to existing propositions by label, do NOT define new ones here."
+                )
+
+        # 14. Construct naming consistency — check this section against theoretical_background
+        if section_name in ("framework", "discussion", "propositions"):
+            tb_file = sections_dir / "theoretical_background.md"
+            if tb_file.exists():
+                tb_content = tb_file.read_text(encoding="utf-8")
+                # Extract italicized constructs from both sections
+                tb_constructs = set(c.strip() for c in _re.findall(r'\*([A-Z][^*]{3,50})\*', tb_content))
+                sec_constructs = set(c.strip() for c in _re.findall(r'\*([A-Z][^*]{3,50})\*', content))
+                # Find constructs in this section that don't appear in theoretical_background
+                new_constructs = sec_constructs - tb_constructs
+                # Filter out common false positives (short strings, section names)
+                new_constructs = {c for c in new_constructs if len(c) > 10 and c.lower() not in (
+                    "theoretical background", "literature review", "research question",
+                    "future research", "practical implications",
+                )}
+                if len(new_constructs) >= 2:
+                    issues.append(
+                        f"Construct naming drift: {section_name} introduces {len(new_constructs)} "
+                        f"new construct names not in theoretical_background: "
+                        f"{', '.join(sorted(new_constructs)[:4])}. "
+                        f"Use the EXACT construct names from theoretical_background."
+                    )
 
         return issues
 
@@ -3512,6 +3568,60 @@ class RLMEngine:
                             '', bib_text, flags=_rre.DOTALL
                         )
                 bib_file.write_text(bib_text.strip() + "\n", encoding="utf-8")
+
+        # 6. Hallucination scrubber — strip in-text citations that have NO reference after all resolution attempts
+        #    Re-check dangling citations against the (now updated) reference list
+        if dangling_in_text:
+            # Reload reference list after DB additions
+            updated_apa = apa_file.read_text(encoding="utf-8")
+            updated_refs: list[tuple[str, str]] = []
+            for m in _rre.finditer(r'^([^(]+?)\s*\((\d{4})\)', updated_apa, _rre.MULTILINE):
+                surname = m.group(1).split(",")[0].strip().split()[-1].lower() if m.group(1).strip() else ""
+                updated_refs.append((surname, m.group(2)))
+
+            still_dangling: list[tuple[str, str]] = []
+            for author_frag, year in dangling_in_text:
+                cite_tokens = _normalize_author(author_frag)
+                resolved = False
+                for ref_surname, ref_year in updated_refs:
+                    if ref_year != year and not (ref_year.isdigit() and year.isdigit() and abs(int(ref_year) - int(year)) <= 1):
+                        continue
+                    if any(ct == ref_surname or ref_surname.startswith(ct) or ct.startswith(ref_surname) for ct in cite_tokens if len(ct) > 2):
+                        resolved = True
+                        break
+                if not resolved:
+                    still_dangling.append((author_frag, year))
+
+            if still_dangling:
+                _log.warning("RECONCILE HALLUCINATION: %d citations unresolvable — stripping from text: %s",
+                             len(still_dangling),
+                             ", ".join(f"({a}, {y})" for a, y in still_dangling[:15]))
+                # Strip these citations from section files
+                stripped_total = 0
+                for f in sections_dir.iterdir():
+                    if f.suffix == ".md" and f.is_file() and f.stem not in ("writing_brief", "synthesis_data", "protocol"):
+                        content = f.read_text(encoding="utf-8")
+                        original = content
+                        for author_frag, year in still_dangling:
+                            # Remove parenthetical: (Author, Year) or (Author & Other, Year)
+                            content = _rre.sub(
+                                rf'\(\s*{_rre.escape(author_frag)}(?:\s*(?:,|;)\s*{year}|,?\s*{year})\s*\)',
+                                '', content
+                            )
+                            # Remove narrative: Author (Year) or Author et al. (Year)
+                            content = _rre.sub(
+                                rf'{_rre.escape(author_frag)}\s*\({year}\)',
+                                '', content
+                            )
+                        # Clean up artifacts: double spaces, orphaned semicolons in citation groups
+                        content = _rre.sub(r'\(\s*;\s*', '(', content)
+                        content = _rre.sub(r';\s*\)', ')', content)
+                        content = _rre.sub(r'\(\s*\)', '', content)
+                        content = _rre.sub(r'  +', ' ', content)
+                        if content != original:
+                            f.write_text(content, encoding="utf-8")
+                            stripped_total += 1
+                _log.info("RECONCILE HALLUCINATION: Stripped unverified citations from %d section files", stripped_total)
 
         if not dangling_in_text and not uncited_refs:
             _log.info("RECONCILE: Perfect match — all in-text citations have references and vice versa")
