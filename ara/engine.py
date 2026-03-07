@@ -12,7 +12,7 @@ import math
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading as _th
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -647,10 +647,8 @@ class RLMEngine:
                         self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
 
                     # Fire fetch+embed in background, don't block pipeline on them
-                    bg_pool = ThreadPoolExecutor(max_workers=2)
-                    fetch_fut = bg_pool.submit(_run_fetch)
-                    embed_fut = bg_pool.submit(_run_embed)
-                    bg_pool.shutdown(wait=False)  # Don't wait — let them run in background
+                    _th.Thread(target=_run_fetch, daemon=True).start()
+                    _th.Thread(target=_run_embed, daemon=True).start()
 
                     # Run deep_read synchronously — it gates the pipeline
                     if run_deep_read:
@@ -703,13 +701,12 @@ class RLMEngine:
                         def _run_verifier():
                             self._pipeline_run_phase(verifier_def, topic, paper_type, context, on_event)
 
-                        with ThreadPoolExecutor(max_workers=2) as pool:
-                            futures = [pool.submit(_run_protocol), pool.submit(_run_verifier)]
-                            for fut in as_completed(futures):
-                                try:
-                                    fut.result()
-                                except Exception as exc:
-                                    _log.exception("PIPELINE: Parallel phase failed: %s", exc)
+                        t1 = _th.Thread(target=_run_protocol)
+                        t2 = _th.Thread(target=_run_verifier)
+                        t1.start()
+                        t2.start()
+                        t1.join()
+                        t2.join()
 
                         # Mark verifier as completed so it's skipped in the main loop
                         if db and session_id:
@@ -738,7 +735,7 @@ class RLMEngine:
                     db, session_id,
                 )
                 # Start brancher in parallel with re-embed if we have enough claims
-                brancher_future = None
+                _brancher_thread = None
                 brancher_def = next(
                     (p for p in self._get_pipeline_phases() if p["name"] == "brancher"), None
                 )
@@ -748,10 +745,11 @@ class RLMEngine:
                     _log.info("PIPELINE: Starting brancher in parallel with re-embed")
                     if on_event:
                         on_event(StepEvent("text", data="Starting brancher + re-embed in parallel", depth=0))
-                    _brancher_pool = ThreadPoolExecutor(max_workers=1)
-                    brancher_future = _brancher_pool.submit(
-                        self._pipeline_run_phase, brancher_def, topic, paper_type, context, on_event
+                    _brancher_thread = _th.Thread(
+                        target=self._pipeline_run_phase,
+                        args=(brancher_def, topic, paper_type, context, on_event),
                     )
+                    _brancher_thread.start()
 
                 # Deduplicate claims
                 self._deduplicate_claims(db, session_id)
@@ -761,14 +759,12 @@ class RLMEngine:
                     self._finalize_prisma_exclusions(db, session_id)
 
                 # Wait for brancher if it was started in parallel
-                if brancher_future is not None:
-                    try:
-                        brancher_future.result(timeout=600)
+                if _brancher_thread is not None:
+                    _brancher_thread.join(timeout=600)
+                    if _brancher_thread.is_alive():
+                        _log.warning("PIPELINE: Parallel brancher timed out after 600s")
+                    else:
                         _log.info("PIPELINE: Parallel brancher completed")
-                    except Exception as exc:
-                        _log.exception("PIPELINE: Parallel brancher failed: %s", exc)
-                    finally:
-                        _brancher_pool.shutdown(wait=False)
                     if db and session_id:
                         db.save_phase_checkpoint(session_id, "brancher")
                     completed.add("brancher")
@@ -1275,7 +1271,6 @@ class RLMEngine:
                 self._embedding_triage_generate(papers_needing_embed, db)
 
         # Fire fetch+embed+embedding_gen in background daemon threads
-        import threading as _th
         _bg1 = _th.Thread(target=_run_fetch_and_embed_phase, daemon=True)
         _bg2 = _th.Thread(target=_run_embedding_generation, daemon=True)
         _bg1.start()
