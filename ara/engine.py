@@ -704,30 +704,30 @@ class RLMEngine:
                     self._pipeline_embed(on_event)
                 elif name == "fetch_texts":
                     self._pipeline_fetch_texts(on_event)
+                elif name == "scout":
+                    # Programmatic scout — no LLM needed
+                    self._pipeline_scout_programmatic(topic, paper_type, context, on_event)
                 elif name == "snowball":
                     self._pipeline_snowball(topic, on_event)
                 elif name == "triage":
                     self._pipeline_triage_parallel(topic, paper_type, context, on_event, completed)
-                elif name == "protocol" and "verifier" not in completed:
-                    # Bulk pre-populate verification flags from central DB
-                    central_db = self.tools.central_db
-                    if central_db and db and session_id:
-                        self._prepopulate_verification_flags(central_db, db, session_id)
-                    # Run protocol + verifier concurrently — they're independent
-                    verifier_def = next(
-                        (p for p in self._get_pipeline_phases() if p["name"] == "verifier"), None
-                    )
-                    if verifier_def:
-                        _log.info("PIPELINE: Running protocol then verifier (sequential)")
-                        self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
-                        self._pipeline_run_phase(verifier_def, topic, paper_type, context, on_event)
-
-                        # Mark verifier as completed so it's skipped in the main loop
+                elif name == "protocol":
+                    # Programmatic protocol + verifier — no LLM needed
+                    self._pipeline_protocol_template(topic, paper_type, on_event)
+                    if "verifier" not in completed:
+                        self._pipeline_verify_batch(on_event)
                         if db and session_id:
                             db.save_phase_checkpoint(session_id, "verifier")
                         completed.add("verifier")
-                    else:
-                        self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
+                elif name == "verifier":
+                    # Already handled with protocol above, but handle standalone case
+                    self._pipeline_verify_batch(on_event)
+                elif name == "brancher":
+                    # Programmatic brancher — already handled after deep_read in most cases
+                    self._pipeline_brancher_programmatic(topic, on_event)
+                elif name == "synthesis":
+                    # Programmatic synthesis — tables from DB + short LLM narrative
+                    self._pipeline_synthesis_programmatic(topic, paper_type, context, on_event)
                 else:
                     self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
             except RateLimitError as exc:
@@ -748,22 +748,14 @@ class RLMEngine:
                     deep_read_def_inline, topic, paper_type, context, on_event,
                     db, session_id,
                 )
-                # Start brancher in parallel with re-embed if we have enough claims
-                _brancher_thread = None
-                brancher_def = next(
-                    (p for p in self._get_pipeline_phases() if p["name"] == "brancher"), None
-                )
+                # Run programmatic brancher after deep_read (no threading needed — it's fast)
                 claims = db.get_claims(session_id)
-                if (brancher_def and "brancher" not in completed
+                if ("brancher" not in completed
                         and len(claims) >= 50 and not self.cancel_flag.is_set()):
-                    _log.info("PIPELINE: Starting brancher in parallel with re-embed")
-                    if on_event:
-                        on_event(StepEvent("text", data="Starting brancher + re-embed in parallel", depth=0))
-                    _brancher_thread = _th.Thread(
-                        target=self._pipeline_run_phase,
-                        args=(brancher_def, topic, paper_type, context, on_event),
-                    )
-                    _brancher_thread.start()
+                    self._pipeline_brancher_programmatic(topic, on_event)
+                    if db and session_id:
+                        db.save_phase_checkpoint(session_id, "brancher")
+                    completed.add("brancher")
 
                 # Deduplicate claims
                 self._deduplicate_claims(db, session_id)
@@ -771,17 +763,6 @@ class RLMEngine:
                 paper_cfg = get_paper_config(paper_type)
                 if paper_cfg.requires_prisma:
                     self._finalize_prisma_exclusions(db, session_id)
-
-                # Wait for brancher if it was started in parallel
-                if _brancher_thread is not None:
-                    _brancher_thread.join(timeout=600)
-                    if _brancher_thread.is_alive():
-                        _log.warning("PIPELINE: Parallel brancher timed out after 600s")
-                    else:
-                        _log.info("PIPELINE: Parallel brancher completed")
-                    if db and session_id:
-                        db.save_phase_checkpoint(session_id, "brancher")
-                    completed.add("brancher")
 
             # C. Critic rejection loop — if critic rejected, re-run hypothesis with feedback
             if name == "critic" and db and session_id:
@@ -946,6 +927,27 @@ class RLMEngine:
         # Use per-phase step budget if defined
         step_budget = self._phase_step_budgets().get(phase_def["name"], self.config.max_steps_per_call)
 
+        # #7: Pre-filter no-content papers before deep_read to save LLM steps
+        if phase_def["name"] == "deep_read" and self.tools.db and self.tools.session_id:
+            try:
+                # Mark papers with no full text AND no abstract as not needing deep_read
+                no_content = self.tools.db._conn.execute(
+                    "SELECT paper_id FROM papers WHERE session_id = ? AND selected_for_deep_read = 1 "
+                    "AND (full_text IS NULL OR full_text = '') "
+                    "AND (abstract IS NULL OR abstract = '' OR length(abstract) < 50)",
+                    (self.tools.session_id,),
+                ).fetchall()
+                if no_content:
+                    pids = [r["paper_id"] for r in no_content]
+                    self.tools.db._conn.execute(
+                        f"UPDATE papers SET selected_for_deep_read = 0 WHERE paper_id IN ({','.join('?' * len(pids))})",
+                        pids,
+                    )
+                    self.tools.db._conn.commit()
+                    _log.info("DEEP_READ: Pre-filtered %d papers with no text/abstract — saving LLM steps", len(pids))
+            except Exception as exc:
+                _log.warning("DEEP_READ: Pre-filter failed: %s", exc)
+
         # Dynamic budget for deep_read: scale with papers that actually need processing
         if phase_def["name"] == "deep_read" and self.tools.db and self.tools.session_id:
             try:
@@ -1070,6 +1072,495 @@ class RLMEngine:
         # Store claim/paper counts in context for downstream phases
         context.claim_count = len(claims)
         context.papers_with_claims = papers_with_claims
+
+    # ── Programmatic phases (no LLM) ─────────────────────────────
+
+    def _pipeline_scout_programmatic(
+        self, topic: str, paper_type: str, context: ExternalContext,
+        on_event: StepCallback | None,
+    ) -> None:
+        """Programmatic scout: generate query variants and call search_all for each."""
+        _log.info("PIPELINE: Programmatic scout — generating query variants")
+        if on_event:
+            on_event(StepEvent("subtask_start", data="Scout: programmatic multi-query search", depth=0))
+
+        # Generate query variants from the topic
+        base = topic.strip()
+        queries = [base]
+        # Variant 1: quoted core phrase
+        words = base.split()
+        if len(words) > 3:
+            queries.append(f'"{" ".join(words[:4])}" {" ".join(words[4:])}')
+        # Variant 2: broader — first 3 key nouns
+        stop = {"the", "of", "in", "and", "a", "an", "for", "on", "to", "with", "from", "by", "as", "is", "are", "at"}
+        key_words = [w for w in words if w.lower() not in stop and len(w) > 2][:5]
+        if key_words and len(key_words) >= 2:
+            queries.append(" ".join(key_words))
+        # Variant 3: add "systematic review" or "framework" depending on paper type
+        if paper_type == "conceptual":
+            queries.append(f"{base} theoretical framework")
+            queries.append(f"{base} conceptual model propositions")
+        else:
+            queries.append(f"{base} systematic review")
+            queries.append(f"{base} meta-analysis")
+
+        # Special authors as query
+        if self.config.special_authors:
+            for author in self.config.special_authors.split(",")[:3]:
+                author = author.strip()
+                if author:
+                    queries.append(f"{author} {' '.join(key_words[:3])}")
+
+        # Deduplicate
+        seen = set()
+        unique_queries = []
+        for q in queries:
+            q_lower = q.lower().strip()
+            if q_lower not in seen:
+                seen.add(q_lower)
+                unique_queries.append(q)
+
+        _log.info("PIPELINE SCOUT: %d unique queries: %s", len(unique_queries), unique_queries)
+
+        total_found = 0
+        for i, query in enumerate(unique_queries):
+            if self.cancel_flag.is_set():
+                break
+            # Check if we already have enough papers
+            if self.tools.db and self.tools.session_id:
+                existing = self.tools.db.paper_count(self.tools.session_id)
+                if existing >= self.config.min_papers:
+                    _log.info("PIPELINE SCOUT: Target reached (%d papers) — stopping", existing)
+                    break
+
+            _log.info("PIPELINE SCOUT: Query %d/%d: %s", i + 1, len(unique_queries), query[:80])
+            if on_event:
+                on_event(StepEvent("text", data=f"Scout query {i+1}/{len(unique_queries)}: {query[:60]}", depth=0))
+
+            result = self.tools.dispatch("search_all", {"query": query, "limit": 30})
+            try:
+                data = json.loads(result)
+                total_found += data.get("total", 0)
+            except Exception:
+                pass
+
+        # Run snowball after search
+        self._pipeline_snowball(topic, on_event)
+
+        final_count = self.tools.db.paper_count(self.tools.session_id) if self.tools.db and self.tools.session_id else 0
+        _log.info("PIPELINE SCOUT: Complete — %d papers in DB", final_count)
+        if on_event:
+            on_event(StepEvent("subtask_end", data=f"Scout complete: {final_count} papers", depth=0))
+
+    def _pipeline_protocol_template(
+        self, topic: str, paper_type: str,
+        on_event: StepCallback | None,
+    ) -> None:
+        """Generate research protocol from template — no LLM needed."""
+        _log.info("PIPELINE: Generating protocol from template")
+        if on_event:
+            on_event(StepEvent("text", data="Generating research protocol (template)...", depth=0))
+
+        c = self.config
+        import datetime
+        current_year = datetime.datetime.now().year
+
+        if paper_type == "conceptual":
+            protocol = (
+                f"# Research Protocol\n\n"
+                f"## Title\n{topic}\n\n"
+                f"## Paper Type\nConceptual/Theoretical Paper\n\n"
+                f"## Research Questions\n"
+                f"1. What are the key theoretical streams relevant to {topic}?\n"
+                f"2. What framework best integrates the identified theoretical tensions?\n"
+                f"3. What testable propositions emerge from the integrative framework?\n\n"
+                f"## Theoretical Streams\n"
+                f"To be identified during literature analysis phase.\n\n"
+                f"## Framework Development Approach\n"
+                f"- Typology development\n- Process model construction\n"
+                f"- Multi-level framework integration\n- Proposition derivation\n\n"
+                f"## Inclusion Criteria\n"
+                f"- Published between {c.search_start_year} and {current_year}\n"
+                f"- Peer-reviewed journal articles, book chapters, and conference proceedings\n"
+                f"- Directly relevant to the theoretical domain of {topic}\n"
+                f"- Written in English\n\n"
+                f"## Exclusion Criteria\n"
+                f"- Non-peer-reviewed sources (blogs, news articles, opinion pieces)\n"
+                f"- Studies outside the date range\n"
+                f"- Retracted publications\n"
+                f"- Purely descriptive or atheoretical papers\n\n"
+                f"## Search Strategy\n"
+                f"- Databases: Semantic Scholar, OpenAlex, CrossRef, arXiv, PubMed, CORE, DBLP, Europe PMC, BASE\n"
+                f"- AI-automated relevance screening (embedding similarity threshold: {c.triage_select_threshold})\n"
+                f"- Reference snowballing of top-cited papers\n\n"
+                f"## Analysis Approach\n"
+                f"- Thematic analysis of theoretical arguments\n"
+                f"- Construct identification and definition\n"
+                f"- Evidence quality assessment (GRADE framework)\n"
+                f"- Framework synthesis and proposition development\n"
+            )
+        else:
+            protocol = (
+                f"# Research Protocol — Systematic Literature Review\n\n"
+                f"## Title\n{topic}\n\n"
+                f"## Paper Type\nSystematic Literature Review\n\n"
+                f"## Research Questions\n"
+                f"1. What is the current state of evidence on {topic}?\n"
+                f"2. What methodological approaches have been used?\n"
+                f"3. What gaps exist in the current literature?\n\n"
+                f"## PICO Framework\n"
+                f"- **Population**: To be defined based on topic scope\n"
+                f"- **Intervention/Exposure**: {topic}\n"
+                f"- **Comparison**: Alternative approaches or absence of intervention\n"
+                f"- **Outcome**: Key dependent variables identified during search\n\n"
+                f"## Inclusion Criteria\n"
+                f"- Published between {c.search_start_year} and {current_year}\n"
+                f"- Peer-reviewed empirical studies\n"
+                f"- Directly relevant to {topic}\n"
+                f"- Written in English\n\n"
+                f"## Exclusion Criteria\n"
+                f"- Non-peer-reviewed sources\n- Studies outside the date range\n"
+                f"- Retracted publications\n- Conference abstracts without full text\n\n"
+                f"## Search Strategy\n"
+                f"- Databases: Semantic Scholar, OpenAlex, CrossRef, arXiv, PubMed, CORE, DBLP, Europe PMC, BASE\n"
+                f"- AI-automated relevance screening (embedding similarity threshold: {c.triage_select_threshold})\n"
+                f"- Reference snowballing of top {c.snowball_top_papers} cited papers\n\n"
+                f"## Quality Assessment\n"
+                f"- Risk of bias assessment (JBI Critical Appraisal tools)\n"
+                f"- GRADE evidence certainty ratings\n"
+                f"- AI-assisted screening — single automated reviewer with programmatic validation\n\n"
+                f"## Data Extraction\n"
+                f"- Structured claim extraction with supporting quotes\n"
+                f"- Quantitative data: sample size, effect size, p-value, CI\n"
+                f"- Study characteristics: design, population, country, year range\n\n"
+                f"## Synthesis Approach\n"
+                f"- Thematic narrative synthesis\n- Evidence quality matrix\n"
+                f"- PRISMA flow diagram\n"
+            )
+
+        # Save protocol
+        ws = c.workspace
+        sections_dir = ws / c.session_root_dir / "output" / "sections"
+        sections_dir.mkdir(parents=True, exist_ok=True)
+        protocol_file = sections_dir / "protocol.md"
+        protocol_file.write_text(protocol, encoding="utf-8")
+        _log.info("PIPELINE: Protocol saved (%d chars)", len(protocol))
+        if on_event:
+            on_event(StepEvent("subtask_end", data="Protocol generated (template)", depth=0))
+
+    def _pipeline_verify_batch(self, on_event: StepCallback | None) -> None:
+        """Batch verify all papers programmatically — no LLM needed."""
+        db = self.tools.db
+        session_id = self.tools.session_id
+        if not db or not session_id:
+            return
+
+        _log.info("PIPELINE: Running batch verification (programmatic)")
+        if on_event:
+            on_event(StepEvent("text", data="Verifying papers (batch — DOI, retraction, citations)...", depth=0))
+
+        # Pre-populate from central DB first
+        central_db = self.tools.central_db
+        if central_db:
+            self._prepopulate_verification_flags(central_db, db, session_id)
+
+        # Get papers that still need verification
+        rows = db._conn.execute(
+            "SELECT paper_id, doi FROM papers "
+            "WHERE session_id = ? AND doi IS NOT NULL "
+            "AND (doi_valid = 0 OR retraction_checked = 0 OR citation_verified = 0)",
+            (session_id,),
+        ).fetchall()
+
+        if not rows:
+            _log.info("PIPELINE VERIFY: All papers already verified")
+            if on_event:
+                on_event(StepEvent("subtask_end", data="All papers already verified", depth=0))
+            return
+
+        _log.info("PIPELINE VERIFY: %d papers need verification", len(rows))
+        from .tools import verification
+        ctx = {
+            "db": db, "session_id": session_id,
+            "central_db": central_db,
+        }
+
+        verified = 0
+        retracted = 0
+        for i, row in enumerate(rows):
+            if self.cancel_flag.is_set():
+                break
+            doi = row["doi"]
+            if not doi:
+                continue
+
+            # Validate DOI
+            verification.validate_doi({"doi": doi}, ctx)
+            # Check retraction
+            ret_result = verification.check_retraction({"doi": doi}, ctx)
+            try:
+                if json.loads(ret_result).get("retracted"):
+                    retracted += 1
+            except Exception:
+                pass
+            # Get citation count
+            verification.get_citation_count({"doi": doi}, ctx)
+            verified += 1
+
+            if (i + 1) % 50 == 0:
+                _log.info("PIPELINE VERIFY: %d/%d papers verified", i + 1, len(rows))
+
+        _log.info("PIPELINE VERIFY: Complete — %d verified, %d retracted", verified, retracted)
+        if on_event:
+            on_event(StepEvent("subtask_end", data=f"Verified {verified} papers ({retracted} retracted)", depth=0))
+
+    def _pipeline_brancher_programmatic(
+        self, topic: str, on_event: StepCallback | None,
+    ) -> None:
+        """Programmatic brancher: generate cross-domain queries from claim keywords."""
+        db = self.tools.db
+        session_id = self.tools.session_id
+        if not db or not session_id:
+            return
+
+        _log.info("PIPELINE: Programmatic brancher — cross-domain search")
+        if on_event:
+            on_event(StepEvent("subtask_start", data="Brancher: programmatic cross-domain search", depth=0))
+
+        # Extract top keywords from claims for cross-domain queries
+        claims = db.get_claims(session_id)
+        claim_keywords: dict[str, int] = {}
+        stop = {"the", "of", "in", "and", "a", "an", "for", "on", "to", "with", "from", "by",
+                "as", "is", "are", "at", "this", "that", "their", "these", "it", "was", "were",
+                "be", "been", "have", "has", "or", "not", "but", "can", "may", "which", "more",
+                "between", "also", "such", "than", "other", "our", "we", "they", "its", "who"}
+        for c in claims:
+            words = c.get("claim_text", "").lower().split()
+            for w in words:
+                w = w.strip(".,;:()[]\"'")
+                if len(w) > 3 and w not in stop and w.isalpha():
+                    claim_keywords[w] = claim_keywords.get(w, 0) + 1
+
+        # Top 20 claim keywords by frequency
+        top_kw = sorted(claim_keywords.items(), key=lambda x: -x[1])[:20]
+        kw_list = [k for k, _ in top_kw]
+        _log.info("PIPELINE BRANCHER: Top keywords from %d claims: %s", len(claims), kw_list[:10])
+
+        # Topic words for combining
+        topic_words = [w for w in topic.lower().split() if len(w) > 3 and w not in stop][:4]
+
+        # Generate cross-domain queries
+        domain_expansions = [
+            ("adjacent", ["management", "organizational behavior", "strategy", "innovation"]),
+            ("methodology", ["mixed methods", "longitudinal study", "case study", "experiment"]),
+            ("practitioner", ["industry report", "business practice", "implementation"]),
+            ("policy", ["regulation", "governance", "institutional"]),
+            ("contradictory", ["failure", "limitation", "contradiction", "challenge"]),
+        ]
+
+        queries = []
+        # Keyword-based cross-domain
+        for kw in kw_list[:6]:
+            queries.append(f"{kw} {' '.join(topic_words[:2])} theoretical framework")
+        # Domain expansion
+        for domain_type, expansions in domain_expansions:
+            for expansion in expansions[:1]:  # 1 query per domain type
+                queries.append(f"{' '.join(topic_words[:3])} {expansion}")
+
+        # Deduplicate
+        seen = set()
+        unique = []
+        for q in queries:
+            q_lower = q.lower().strip()
+            if q_lower not in seen:
+                seen.add(q_lower)
+                unique.append(q)
+
+        _log.info("PIPELINE BRANCHER: %d cross-domain queries", len(unique))
+
+        total_new = 0
+        for i, query in enumerate(unique[:12]):  # cap at 12 queries
+            if self.cancel_flag.is_set():
+                break
+            _log.info("PIPELINE BRANCHER: Query %d/%d: %s", i + 1, min(len(unique), 12), query[:80])
+            result = self.tools.dispatch("search_all", {"query": query, "limit": 15})
+            try:
+                data = json.loads(result)
+                total_new += data.get("total", 0)
+            except Exception:
+                pass
+
+        # Save brancher summary
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        sections_dir.mkdir(parents=True, exist_ok=True)
+        brancher_summary = (
+            f"# Brancher Phase — Cross-Domain Search Results\n\n"
+            f"## Queries Executed ({len(unique[:12])})\n"
+            + "\n".join(f"- {q}" for q in unique[:12]) + "\n\n"
+            f"## Results\n"
+            f"- {total_new} new papers found across cross-domain queries\n"
+            f"- Top claim keywords used: {', '.join(kw_list[:10])}\n"
+        )
+        (sections_dir / "brancher.md").write_text(brancher_summary, encoding="utf-8")
+
+        _log.info("PIPELINE BRANCHER: Complete — %d new papers", total_new)
+        if on_event:
+            on_event(StepEvent("subtask_end", data=f"Brancher complete: {total_new} cross-domain papers", depth=0))
+
+    def _pipeline_synthesis_programmatic(
+        self, topic: str, paper_type: str, context: ExternalContext,
+        on_event: StepCallback | None,
+    ) -> None:
+        """Programmatic synthesis: build structured tables from DB, then short LLM narrative."""
+        db = self.tools.db
+        session_id = self.tools.session_id
+        if not db or not session_id:
+            return
+
+        _log.info("PIPELINE: Programmatic synthesis — building data tables from DB")
+        if on_event:
+            on_event(StepEvent("subtask_start", data="Synthesis: building structured data tables", depth=0))
+
+        claims = db.get_claims(session_id)
+        papers_with_claims = set(c["paper_id"] for c in claims)
+
+        # 1. Study characteristics table
+        study_table = "| Paper ID | Authors | Year | Design | Population | Country |\n|---|---|---|---|---|---|\n"
+        paper_rows = db._conn.execute(
+            "SELECT paper_id, title, authors, year FROM papers "
+            "WHERE session_id = ? AND paper_id IN ({}) "
+            "ORDER BY citation_count DESC LIMIT 50".format(
+                ",".join("?" * len(papers_with_claims))
+            ),
+            [session_id] + list(papers_with_claims),
+        ).fetchall() if papers_with_claims else []
+
+        for r in paper_rows:
+            try:
+                authors_list = json.loads(r["authors"] or "[]")
+                first_author = authors_list[0] if authors_list else "Unknown"
+                if isinstance(first_author, dict):
+                    first_author = first_author.get("name", first_author.get("family", "Unknown"))
+            except Exception:
+                first_author = "Unknown"
+            # Find study design from claims
+            paper_claims = [c for c in claims if c["paper_id"] == r["paper_id"]]
+            design = next((c.get("study_design", "") for c in paper_claims if c.get("study_design")), "")
+            population = next((c.get("population", "") for c in paper_claims if c.get("population")), "")
+            country = next((c.get("country", "") for c in paper_claims if c.get("country")), "")
+            study_table += f"| {r['paper_id']} | {first_author} | {r['year']} | {design[:30]} | {population[:30]} | {country[:20]} |\n"
+
+        # 2. Evidence synthesis by claim type
+        claims_by_type: dict[str, list] = {}
+        for c in claims:
+            ct = c.get("claim_type", "finding")
+            claims_by_type.setdefault(ct, []).append(c)
+        evidence_table = "## Evidence Summary by Type\n\n"
+        for ct, ct_claims in sorted(claims_by_type.items()):
+            evidence_table += f"### {ct.title()} ({len(ct_claims)} claims)\n"
+            for c in ct_claims[:10]:
+                evidence_table += f"- {c.get('claim_text', '')[:150]} (paper_id={c.get('paper_id')}, conf={c.get('confidence', '')})\n"
+            evidence_table += "\n"
+
+        # 3. Citation map by theme (top keywords → papers)
+        keyword_papers: dict[str, set] = {}
+        for c in claims:
+            text = c.get("claim_text", "").lower()
+            for kw in text.split():
+                kw = kw.strip(".,;:()[]\"'")
+                if len(kw) > 5 and kw.isalpha():
+                    keyword_papers.setdefault(kw, set()).add(c.get("paper_id", 0))
+        # Top 15 themes by paper coverage
+        top_themes = sorted(keyword_papers.items(), key=lambda x: -len(x[1]))[:15]
+        citation_map = "## Citation Map by Theme\n\n"
+        for theme, pids in top_themes:
+            citation_map += f"- **{theme}**: {len(pids)} papers (IDs: {', '.join(str(p) for p in list(pids)[:8])})\n"
+
+        # 4. PRISMA numbers
+        total_papers = db.paper_count(session_id)
+        selected = db._conn.execute(
+            "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
+            (session_id,),
+        ).fetchone()[0]
+        prisma = (
+            f"## PRISMA Flow Numbers\n"
+            f"- Records identified: {total_papers}\n"
+            f"- Records screened: {total_papers}\n"
+            f"- Full-text assessed: {selected}\n"
+            f"- Included in synthesis: {len(papers_with_claims)}\n"
+        )
+
+        # 5. RoB summary
+        rob_table = ""
+        try:
+            rob_result = self.tools.dispatch("get_risk_of_bias_table", {})
+            rob_data = json.loads(rob_result)
+            if rob_data.get("table"):
+                rob_table = f"## Risk of Bias Summary\n\n{rob_data['table']}\n"
+        except Exception:
+            pass
+
+        # 6. GRADE summary
+        grade_table = ""
+        try:
+            grade_result = self.tools.dispatch("get_grade_table", {})
+            grade_data = json.loads(grade_result)
+            if grade_data.get("table"):
+                grade_table = f"## GRADE Evidence Ratings\n\n{grade_data['table']}\n"
+        except Exception:
+            pass
+
+        # Combine all synthesis data
+        synthesis_output = (
+            f"# Synthesis Data — Structured Tables\n\n"
+            f"## Study Characteristics\n\n{study_table}\n\n"
+            f"{evidence_table}\n"
+            f"{citation_map}\n\n"
+            f"{prisma}\n\n"
+            f"{rob_table}\n"
+            f"{grade_table}\n"
+        )
+
+        # Save synthesis data
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        sections_dir.mkdir(parents=True, exist_ok=True)
+        (sections_dir / "synthesis_data.md").write_text(synthesis_output, encoding="utf-8")
+        _log.info("PIPELINE SYNTHESIS: Saved programmatic synthesis_data.md (%d chars)", len(synthesis_output))
+
+        # Short LLM call for narrative synthesis + proposition revision (10 steps)
+        _log.info("PIPELINE SYNTHESIS: Running short LLM call for narrative synthesis")
+        narrative_objective = (
+            f"You are the synthesis agent for a research paper on: {topic}.\n"
+            f"The structured data tables have been pre-built. Your job is to:\n"
+            f"1. Read the synthesis_data.md file in sections/\n"
+            f"2. Write a NARRATIVE synthesis (not tables — those are done) identifying:\n"
+            f"   - Key thematic clusters across {len(claims)} claims from {len(papers_with_claims)} papers\n"
+            f"   - Theoretical tensions and contradictions\n"
+            f"   - Revised proposition set (drop established-knowledge items, merge redundant ones)\n"
+            f"   - Evidence quality assessment narrative\n"
+            f"3. Save using write_section(section='synthesis', content=YOUR_NARRATIVE)\n"
+            f"Keep it under 2000 words. Focus on insights, not data listing."
+        )
+
+        system_prompt = build_phase_system_prompt(
+            phase="synthesis", topic=topic, rules=context.rules,
+            paper_type=paper_type,
+        )
+        self._solve_recursive(
+            objective=narrative_objective,
+            context=context,
+            depth=self.config.max_depth,
+            on_event=on_event,
+            system_prompt_override=system_prompt,
+            phase="synthesis",
+            max_steps=15,  # Short — tables are already built
+        )
+
+        _log.info("PIPELINE SYNTHESIS: Complete")
+        if on_event:
+            on_event(StepEvent("subtask_end", data="Synthesis complete", depth=0))
 
     def _pipeline_fetch_texts(self, on_event: StepCallback | None) -> None:
         """Batch fetch full text from 6 sources — no LLM needed."""
@@ -1820,10 +2311,46 @@ class RLMEngine:
                     f"propositions that were dropped by the synthesis/critic phases.\n"
                 )
 
-            # F. Inject pre-loaded claims/papers to avoid repeated tool calls per section
+            # F+9. Inject pre-loaded claims/papers + section-specific relevance filtering
             data_injection = ""
+
+            # Section-specific claim type filtering
+            _section_claim_types = {
+                "introduction": {"gap", "finding", "theory"},
+                "theoretical_background": {"theory", "finding", "method"},
+                "literature_review": {"finding", "theory", "gap"},
+                "framework": {"theory", "finding", "gap"},
+                "propositions": {"theory", "finding", "gap"},
+                "methods": {"method"},
+                "results": {"finding", "method"},
+                "discussion": {"finding", "gap", "limitation", "theory"},
+                "conclusion": {"gap", "finding"},
+                "abstract": set(),  # All types for abstract
+            }
+            relevant_types = _section_claim_types.get(section_name, set())
+
             if cached_claims_summary:
-                data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
+                if relevant_types and db and session_id:
+                    # Filter claims to section-relevant types
+                    try:
+                        relevant_claims = [
+                            c for c in db.get_claims(session_id)
+                            if c.get("claim_type", "finding") in relevant_types
+                        ][:40]
+                        if relevant_claims:
+                            section_claims = f"RELEVANT EVIDENCE for {section_name} ({len(relevant_claims)} claims):\n"
+                            for c in relevant_claims:
+                                section_claims += (
+                                    f"- [{c.get('claim_type', 'finding')}] {c.get('claim_text', '')[:120]} "
+                                    f"(paper_id={c.get('paper_id')}, conf={c.get('confidence', '')})\n"
+                                )
+                            data_injection += f"\n\n{section_claims}\n"
+                        else:
+                            data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
+                    except Exception:
+                        data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
+                else:
+                    data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
             if cached_papers_summary:
                 data_injection += f"\n{cached_papers_summary[:4000]}\n"
 
@@ -1833,8 +2360,6 @@ class RLMEngine:
                 f"{brief_instruction}"
                 f"{synthesis_instruction}"
                 f"{data_injection}"
-                f"Use search_similar(text='<section theme>') to find the most relevant papers for this section. "
-                f"For the 2-3 most important papers in this section, call read_paper(paper_id=ID, include_fulltext=true). "
                 f"Use write_section(section='{section_name}', content=YOUR_TEXT) to save. "
                 f"Do NOT use markdown headers at the start — the system adds them. "
                 f"Every factual statement must cite a paper from the data above using (Author, Year) format."
@@ -2066,9 +2591,48 @@ class RLMEngine:
             _log.info("PRE-CRITIC: All sections pass programmatic checks — proceeding to output assembly")
             return
 
-        # Auto-rewrite failing sections (max 3 to avoid infinite loop)
+        # #8: Programmatic auto-fixes BEFORE sending to LLM rewrite
+        import re as _pre_re
+        fixed_programmatically = 0
+        for section_name, issues in failing_sections[:]:
+            section_file = section_files.get(section_name)
+            if not section_file:
+                continue
+            content = section_file.read_text(encoding="utf-8")
+            original_content = content
+
+            # Auto-fix: strip duplicate gap statements (keep first, remove later ones)
+            gap_issues = [i for i in issues if "Gap statement repeated" in i]
+            if gap_issues and section_name not in ("introduction",):
+                gap_pattern = r'(?:There (?:is|exists|remains) (?:a )?(?:significant |notable |critical )?gap|' \
+                              r'[Ll]imited (?:research|attention|scholarship) (?:has |)(?:been |)(?:devoted|paid|given)|' \
+                              r'[Ll]ittle is known|[Rr]emains (?:unclear|understudied|under-explored))[^.]*\.'
+                matches = list(_pre_re.finditer(gap_pattern, content))
+                if len(matches) > 1:
+                    # Keep only the first gap statement, remove the rest
+                    for m in reversed(matches[1:]):
+                        content = content[:m.start()] + content[m.end():]
+                    _log.info("PRE-CRITIC: Auto-stripped %d duplicate gap statements from %s", len(matches) - 1, section_name)
+
+            if content != original_content:
+                section_file.write_text(content, encoding="utf-8")
+                fixed_programmatically += 1
+                # Re-check issues after fix
+                new_issues = self._check_section_quality(section_name, sections_dir, context)
+                if not new_issues:
+                    failing_sections.remove((section_name, issues))
+                    _log.info("PRE-CRITIC: Section '%s' fixed programmatically — no LLM rewrite needed", section_name)
+
+        if fixed_programmatically:
+            _log.info("PRE-CRITIC: Fixed %d sections programmatically", fixed_programmatically)
+
+        if not failing_sections:
+            _log.info("PRE-CRITIC: All issues fixed programmatically — no LLM rewrites needed")
+            return
+
+        # Auto-rewrite remaining failing sections with LLM (max 3 to avoid infinite loop)
         if on_event:
-            on_event(StepEvent("text", data=f"Pre-critic: {len(failing_sections)} sections need fixes before critic review", depth=0))
+            on_event(StepEvent("text", data=f"Pre-critic: {len(failing_sections)} sections need LLM fixes", depth=0))
 
         system_prompt = build_phase_system_prompt(
             phase="writer", topic=topic, rules=context.rules,

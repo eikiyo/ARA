@@ -650,47 +650,10 @@ class PeerReviewPipeline:
         # Save round 1
         self._save_round_json(cycle, 1, reviews)
 
-        # ── Round 2: Rebuttals ─────────────────────────────────
-        if not self._check_budget():
-            return self._synthesize_consensus(reviews, [], cycle, journal)
-
-        self._emit(f"  Round 2: Rebuttals (cycle {cycle})...")
-        rebuttals: list[dict] = []
-
-        for review in reviews:
-            if not self._check_budget():
-                break
-            reviewer_name = review["reviewer"]
-            model_key = review["model_key"]
-            self._emit(f"    {reviewer_name} responding to other reviewers...")
-
-            prompt = _build_rebuttal_prompt(review, reviews, reviewer_name)
-            response_text, usage = self._generate(model_key, prompt)
-            parsed = _extract_json(response_text)
-
-            rebuttal = {
-                "reviewer": reviewer_name,
-                "rebuttals": parsed.get("rebuttals", {}),
-            }
-            rebuttals.append(rebuttal)
-
-            # Store rebuttal scores
-            if self.db and self.session_id:
-                for attr, data in rebuttal["rebuttals"].items():
-                    revised = data.get("revised_score")
-                    if revised is not None:
-                        self.db.store_peer_review_score(
-                            session_id=self.session_id, cycle=cycle, round_num=2,
-                            reviewer=reviewer_name, attribute=attr,
-                            score=revised,
-                            feedback=data.get("reasoning", ""),
-                        )
-
-        # Save round 2
-        self._save_round_json(cycle, 2, rebuttals)
-
+        # Skip round 2 (rebuttals) — diminishing returns vs cost
+        # Go directly to consensus synthesis from round 1 reviews
         # ── Round 3: Consensus ─────────────────────────────────
-        return self._synthesize_consensus(reviews, rebuttals, cycle, journal)
+        return self._synthesize_consensus(reviews, [], cycle, journal)
 
     def _synthesize_consensus(
         self, reviews: list[dict], rebuttals: list[dict],
