@@ -677,6 +677,15 @@ def snowball_references(args: dict[str, Any], ctx: dict) -> str:
     limit = args.get("limit", 20)  # How many top papers to snowball from
     refs_per_paper = args.get("refs_per_paper", 10)
 
+    # Skip snowball if we already have plenty of papers
+    existing = db.paper_count(session_id)
+    config = ctx.get("config")
+    min_papers = config.min_papers if config else 200
+    if existing >= min_papers:
+        _log.info("SNOWBALL: Already have %d papers (target=%d) — skipping API calls", existing, min_papers)
+        return json.dumps({"snowballed": 0, "papers_checked": 0,
+                           "total_in_db": existing, "note": f"Already have {existing} papers, skipping snowball"})
+
     # Get top papers by citation count
     rows = db._conn.execute(
         "SELECT paper_id, title, doi FROM papers "
@@ -710,6 +719,7 @@ def snowball_references(args: dict[str, Any], ctx: dict) -> str:
             f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}/references",
             headers=headers,
             params={"fields": "title,abstract,authors,year,externalIds,citationCount,url", "limit": refs_per_paper},
+            max_retries=1,
         )
 
         if not isinstance(data, dict):
