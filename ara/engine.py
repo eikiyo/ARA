@@ -888,6 +888,18 @@ class RLMEngine:
             max_steps=step_budget,
         )
         _log.info("PIPELINE: Phase %s completed — %d chars", phase_def["name"], len(result))
+
+        # Save phase output to sections folder for phases that produce analytical text
+        if phase_def["name"] in ("hypothesis", "critic", "synthesis") and result and len(result) > 100:
+            try:
+                sections_dir = self.config.workspace / self.config.session_root_dir / "output" / "sections"
+                sections_dir.mkdir(parents=True, exist_ok=True)
+                out_file = sections_dir / f"{phase_def['name']}.md"
+                out_file.write_text(result, encoding="utf-8")
+                _log.info("PIPELINE: Saved %s output to %s (%d chars)", phase_def["name"], out_file, len(result))
+            except Exception as exc:
+                _log.warning("PIPELINE: Failed to save %s output: %s", phase_def["name"], exc)
+
         return result
 
     def _deep_read_batched_continuation(
