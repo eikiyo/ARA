@@ -2212,6 +2212,21 @@ class RLMEngine:
                 _log.info("  CANCELLED at step %d", steps)
                 return last_text or "[Cancelled]"
 
+            # Early exit: deep_read stops before wasting steps on read/fetch when target is met
+            if phase == "analyst_deep_read" and steps > 0:
+                _db = self.tools.db
+                _sid = self.tools.session_id
+                if _db and _sid:
+                    _cc = _db._conn.execute(
+                        "SELECT COUNT(*) FROM claims WHERE session_id = ?", (_sid,)
+                    ).fetchone()[0]
+                    if _cc >= self.config.min_claims:
+                        _log.info("DEEP_READ: Claim target reached (%d >= %d) — stopping at step %d",
+                                  _cc, self.config.min_claims, steps)
+                        if on_event:
+                            on_event(StepEvent("text", data=f"Claim target reached: {_cc} claims. Moving to next phase.", depth=depth))
+                        return last_text or f"Claim target reached: {_cc} claims extracted."
+
             elapsed = time.time() - start_time
             if elapsed > self.config.max_solve_seconds:
                 _log.warning("  TIMEOUT at step %d after %ds", steps, int(elapsed))
@@ -2317,20 +2332,6 @@ class RLMEngine:
             )
             active_model.append_tool_results(conversation, results)
 
-            # Early exit: deep_read stops the moment claim target is reached
-            if phase == "analyst_deep_read" and any(tc.name == "extract_claims" for tc in capped_calls):
-                _db = self.tools.db
-                _sid = self.tools.session_id
-                if _db and _sid:
-                    claim_count = _db._conn.execute(
-                        "SELECT COUNT(*) FROM claims WHERE session_id = ?", (_sid,)
-                    ).fetchone()[0]
-                    if claim_count >= self.config.min_claims:
-                        _log.info("DEEP_READ: Claim target reached (%d >= %d) — stopping early at step %d",
-                                  claim_count, self.config.min_claims, steps)
-                        if on_event:
-                            on_event(StepEvent("text", data=f"Claim target reached: {claim_count} claims. Moving to next phase.", depth=depth))
-                        break
 
             # Tell model about dropped calls so it doesn't re-send them blindly
             if dropped > 0:
