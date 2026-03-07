@@ -223,6 +223,8 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
     if needs_claims:
         where += " AND paper_id NOT IN (SELECT DISTINCT paper_id FROM claims WHERE session_id = ?)"
         params.append(session_id)
+        # Only return papers that have full text — no point asking LLM to read empty papers
+        where += " AND full_text IS NOT NULL"
 
     # Sort by relevance_score if available, fallback to citation_count
     order = "ORDER BY COALESCE(relevance_score, 0) DESC, citation_count DESC"
@@ -497,12 +499,17 @@ def search_similar(args: dict[str, Any], ctx: dict) -> str:
                 p_copy["similarity"] = round(sim, 4)
                 scored.append(p_copy)
             scored.sort(key=lambda x: x["similarity"], reverse=True)
-            top_papers = scored[:limit]
+            # Filter out low-similarity papers — don't feed irrelevant results to LLM
+            _MIN_COSINE = 0.5
+            filtered = [p for p in scored if p["similarity"] >= _MIN_COSINE]
+            top_papers = filtered[:limit]
             top_papers = _enrich_with_claims(top_papers, db, session_id)
             return json.dumps({
                 "papers": top_papers,
                 "method": "embedding_cosine",
                 "total_with_embeddings": len(papers_with_emb),
+                "filtered_below_threshold": len(scored) - len(filtered),
+                "min_cosine_threshold": _MIN_COSINE,
             }, default=str)
 
     # Fallback to keyword matching

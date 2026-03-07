@@ -509,69 +509,88 @@ class RLMEngine:
                 f"not restate it. Write 'As argued in the introduction...' or 'The gap "
                 f"identified above...' instead of restating the same language."
             )),
+            ("methodology", (
+                "Write the methodology section (400-500 words). Even conceptual papers must explain "
+                "the literature selection approach. Cover: (1) Research design and approach — "
+                "state this is a conceptual paper using integrative literature review methodology. "
+                "(2) Database search strategy — which databases (Scopus, Web of Science, OpenAlex, "
+                "Semantic Scholar), search terms used, date range, inclusion/exclusion criteria. "
+                "(3) Paper selection — how many initial results, screening process, final sample size. "
+                "(4) Analytical approach — how claims were extracted, how theoretical streams were identified, "
+                "how the framework was developed. Be concise and precise. "
+                "Do NOT pad with philosophical justifications for conceptual research."
+            )),
             ("theoretical_background", (
                 f"Write the theoretical background ({c.words_theoretical_background}+ words). "
-                f"Cover 3+ theoretical streams as subsections. For each: foundational works, "
+                f"Cover 2-3 theoretical streams as subsections. For each: foundational works, "
                 f"key developments, current state, AND limitations. "
                 f"Show where streams converge and conflict. {c.cites_literature_review}+ citations. "
-                f"Search list_papers for foundational authors in the field. "
-                f"End with transition to framework development. "
-                f"ANTI-REPETITION: Do NOT restate the gap from the introduction. "
-                f"End by showing how the convergence of streams MOTIVATES the framework, "
-                f"not by re-declaring the gap."
+                f"This is the ONLY section that should contain construct definition tables "
+                f"and competing framework comparison tables. Define all key constructs HERE "
+                f"with precise names — later sections must use the EXACT same names. "
+                f"End with a clear 'Theoretical Gap' subsection showing what the three streams "
+                f"together cannot explain. Boundary conditions go HERE, not in framework or discussion. "
+                f"ANTI-REPETITION: Do NOT restate the gap from the introduction."
             )),
             ("framework", (
                 f"Write the framework development section ({c.words_framework}+ words). "
-                "This section describes the CONCEPTUAL MODEL — do NOT include formal propositions here "
-                "(those go in the next section). Include: "
-                "(a) Typology with classification table, "
-                "(b) Process model showing stages/mechanisms with text-based diagram, "
-                "(c) Multi-level framework overview (antecedents → mechanisms → outcomes) explaining "
-                "the logic of each level and how they connect. "
-                "Use domain-specific examples throughout. "
-                "Ground every element in the theoretical background. 15+ citations. "
-                "CONSTRUCT HIERARCHY: If you have 3+ novel constructs, identify ONE as primary "
-                "(the core mechanism), ONE as secondary (enabling condition), and subordinate "
-                "any others as derived capabilities. Do NOT present 3+ constructs as co-equal — "
-                "reviewers will flag construct proliferation."
+                "This section describes the CONCEPTUAL MODEL ONLY. "
+                "STRICT RULES: "
+                "(a) Do NOT include any definition tables — those are in theoretical_background. "
+                "(b) Do NOT include comparison tables with existing frameworks — already done. "
+                "(c) Do NOT include boundary conditions — already in theoretical_background. "
+                "(d) Do NOT include formal propositions — those go in the NEXT section. "
+                "(e) Do NOT create new construct names — use the EXACT names from theoretical_background. "
+                "WHAT TO INCLUDE: "
+                "(1) The integrative logic — how the theoretical streams connect into ONE framework. "
+                "(2) Maximum 2-3 novel constructs total (ONE primary, others subordinate). "
+                "Name them clearly and consistently. "
+                "(3) Causal mechanisms — explain the logic connecting antecedents → mechanisms → outcomes. "
+                "(4) Use domain-specific examples. 15+ citations. "
+                "NO ASCII diagrams — describe the model in prose. "
+                "Keep it tight. Every paragraph must advance the framework, not repeat background."
             )),
             ("propositions", (
                 f"Write the propositions section ({c.words_propositions}+ words). "
-                "This section contains the FORMAL TESTABLE PROPOSITIONS derived from the framework "
-                "described in the previous section. Do NOT repeat the framework description. "
-                "CRITICAL — READ SYNTHESIS FIRST: Check if a synthesis.md or synthesis_data.md "
-                "file exists in sections/. If the synthesis phase produced REVISED propositions "
-                "(e.g., dropping established-knowledge propositions or merging redundant ones), "
-                "use the REVISED set as authoritative. Do NOT re-introduce propositions that "
-                "the synthesis/critic phases flagged as 'established' or 'well-trodden.' "
-                "Present 4-6 propositions (NOT 8 — depth over breadth). For EACH: "
-                "formal statement ('Proposition N: ...'), 2-3 paragraphs of theoretical justification, "
-                "supporting evidence from literature, boundary conditions. "
-                "Identify the most novel proposition and give it its OWN subsection — "
-                "operationalize the construct precisely with domain-specific examples. "
-                "At least 2 counter-intuitive propositions that challenge conventional wisdom. "
-                "End with a summary table — ensure the table descriptions MATCH the proposition "
-                "text exactly. Do NOT use different language in the table vs. the text. "
-                "NOVELTY FILTER: If a proposition restates a well-established finding "
-                "(e.g., inverted-U autonomy effects), drop it. Your contribution is the "
-                "NEW mechanisms, not confirming what's known. 3+ citations per proposition."
+                "FORMAL TESTABLE PROPOSITIONS derived from the framework. "
+                "STRICT RULES: "
+                "(a) Present 3-4 propositions MAXIMUM. Fewer is better if argued deeply. "
+                "(b) Do NOT repeat framework description — just reference it. "
+                "(c) Do NOT re-define constructs — use names from theoretical_background. "
+                "(d) Do NOT include definition tables or comparison tables. "
+                "(e) Use the EXACT construct names from framework section — no renaming. "
+                "For EACH proposition: formal statement, 2-3 paragraphs of justification, "
+                "supporting evidence, boundary conditions. 3+ citations per proposition. "
+                "End with ONE summary table — descriptions must MATCH proposition text exactly. "
+                "NOVELTY FILTER: Drop any proposition that restates well-established findings. "
+                "If the synthesis phase produced REVISED propositions, use those as authoritative."
             )),
             ("discussion", (
-                f"Write the discussion ({c.words_discussion}+ words). Include: "
-                "theoretical contributions (how framework extends each stream), "
-                "comparison table with 3+ existing frameworks, "
-                "specific managerial implications, boundary conditions/limitations, "
-                "5+ future research studies with suggested methodologies. {c.cites_discussion}+ citations. "
-                "ANTI-REPETITION: Do NOT restate the gap or contribution from the introduction. "
-                "Instead, show HOW the framework RESOLVES the tensions identified earlier. "
-                "Start with 'This paper developed...' not 'There is a gap in...'"
+                f"Write the discussion ({c.words_discussion}+ words). "
+                "STRICT RULES — the discussion MUST NOT contain: "
+                "(a) Any tables (no comparison tables, no definition tables, no before/after tables). "
+                "(b) Boundary conditions (already in theoretical_background). "
+                "(c) Construct definitions (already in theoretical_background). "
+                "(d) Framework re-description (already in framework section). "
+                "(e) Gap restatement (already in introduction). "
+                "WHAT TO INCLUDE: "
+                "(1) How the framework resolves the theoretical tensions from the lit review — "
+                "in prose, not tables. Start with 'This paper developed...' "
+                "(2) Specific managerial implications — concrete, actionable, not generic. "
+                "(3) Limitations (2-3 sentences, not a subsection). "
+                "(4) Future research agenda: 3-5 specific empirical studies with methodologies. "
+                f"{c.cites_discussion}+ citations. Be concise. No subsection headers for limitations."
             )),
             ("conclusion", (
-                f"Write the conclusion ({c.words_conclusion}+ words). Include: "
-                "framework's core logic summary, key takeaways for theory and practice, "
-                "the single most important insight, closing statement on broader significance. "
-                "ANTI-REPETITION: Synthesize, don't summarize. A conclusion that restates "
-                "the intro is wasted space. State the insight the reader should walk away with."
+                f"Write the conclusion ({c.words_conclusion}+ words). "
+                "Do NOT summarize the paper — the reader just read it. "
+                "Do NOT restate the gap, framework, or propositions. "
+                "Do NOT include any tables. "
+                "Include ONLY: (1) The single most important theoretical insight in 2-3 sentences. "
+                "(2) One concrete implication for practice. "
+                "(3) A forward-looking closing statement. "
+                "If the author has a positionality statement or conflict of interest "
+                "(e.g., works at a company mentioned as a case), include it as the final paragraph."
             )),
         ]
 
@@ -729,6 +748,22 @@ class RLMEngine:
                     # Programmatic synthesis — tables from DB + short LLM narrative
                     self._pipeline_synthesis_programmatic(topic, paper_type, context, on_event)
                 else:
+                    # Quality gate: hypothesis/synthesis/writer require 30+ papers with claims
+                    if name in ("hypothesis", "synthesis", "writer") and db and session_id:
+                        _PHASE_MIN_PAPERS = 30
+                        _phase_claims = db.get_claims(session_id)
+                        _phase_papers_with_claims = len(set(c["paper_id"] for c in _phase_claims))
+                        if _phase_papers_with_claims < _PHASE_MIN_PAPERS:
+                            _log.error(
+                                "PIPELINE GATE: %s requires %d+ papers with claims, only have %d — BLOCKING",
+                                name, _PHASE_MIN_PAPERS, _phase_papers_with_claims,
+                            )
+                            if on_event:
+                                on_event(StepEvent("error", data=(
+                                    f"Quality gate: {name} blocked — need {_PHASE_MIN_PAPERS} papers "
+                                    f"with claims, only have {_phase_papers_with_claims}"
+                                ), depth=0))
+                            continue
                     self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
             except RateLimitError as exc:
                 _log.error("PIPELINE: Rate limit at phase %s: %s", name, exc)
@@ -999,18 +1034,24 @@ class RLMEngine:
         _log.info("PIPELINE: Deep read batch 1 produced %d claims from %d papers", len(claims), papers_with_claims)
 
         _BATCH_SIZE = 27
-        _MAX_BATCHES = 5
+        _MAX_BATCHES = 8
         _BATCH_COOLDOWN = 30
+        _MIN_PAPERS_HARD = 30  # Hard minimum — never stop below this
 
         for batch_num in range(1, _MAX_BATCHES + 1):
             # Stop if claim target met (with 10% tolerance) OR we've processed most selected papers
+            # BUT never stop below _MIN_PAPERS_HARD papers with claims
             _close_enough = int(self.config.min_claims * 0.90)
-            if len(claims) >= _close_enough:
-                _log.info("PIPELINE: Deep read claim target met (%d claims, %d papers)", len(claims), papers_with_claims)
-                break
-            if papers_with_claims >= self.config.min_deep_read_papers:
-                _log.info("PIPELINE: Deep read paper target met (%d claims, %d papers)", len(claims), papers_with_claims)
-                break
+            if papers_with_claims >= _MIN_PAPERS_HARD:
+                if len(claims) >= _close_enough:
+                    _log.info("PIPELINE: Deep read claim target met (%d claims, %d papers)", len(claims), papers_with_claims)
+                    break
+                if papers_with_claims >= self.config.min_deep_read_papers:
+                    _log.info("PIPELINE: Deep read paper target met (%d claims, %d papers)", len(claims), papers_with_claims)
+                    break
+            else:
+                _log.info("PIPELINE: Deep read below hard minimum (%d/%d papers) — continuing",
+                          papers_with_claims, _MIN_PAPERS_HARD)
             if self.cancel_flag.is_set():
                 break
 
@@ -1062,9 +1103,12 @@ class RLMEngine:
                 _log.warning("PIPELINE: Batch %d produced 0 claims — extra cooldown %ds", batch_num + 1, extra_cooldown)
                 time.sleep(extra_cooldown)
 
-        # HARD GATE: If still 0 claims, this is fatal
+        # HARD GATE: If still below minimum, this is fatal
         if len(claims) == 0:
             _log.error("PIPELINE: FATAL — 0 claims after all deep_read batches. Cannot produce a credible paper.")
+        elif papers_with_claims < _MIN_PAPERS_HARD:
+            _log.error("PIPELINE: WARNING — only %d papers with claims (minimum %d). Paper quality may suffer.",
+                        papers_with_claims, _MIN_PAPERS_HARD)
             if on_event:
                 on_event(StepEvent("error", data="FATAL: 0 claims extracted. Pipeline cannot continue without evidence.", depth=0))
             return
@@ -1279,37 +1323,106 @@ class RLMEngine:
             return
 
         _log.info("PIPELINE VERIFY: %d papers need verification", len(rows))
-        from .tools import verification
-        ctx = {
-            "db": db, "session_id": session_id,
-            "central_db": central_db,
-        }
+        from .tools.http import rate_limited_get
+        import concurrent.futures
 
         verified = 0
         retracted = 0
-        for i, row in enumerate(rows):
-            if self.cancel_flag.is_set():
-                break
-            doi = row["doi"]
-            if not doi:
+
+        # Build per-paper flags so threads only call APIs that are actually needed
+        needs_retraction = {row["doi"] for row in rows if not row["retraction_checked"]}
+        needs_citation = {row["doi"] for row in rows if not row["citation_verified"]}
+
+        def _verify_one_http(doi: str) -> dict[str, Any]:
+            """HTTP-only verification — no DB access. Returns results dict."""
+            result: dict[str, Any] = {"doi": doi, "retracted": False,
+                                       "retraction_checked": False, "citation_count": 0, "citation_verified": False}
+
+            # Skip DOI HEAD validation — already set by pre-populate from central DB
+
+            if doi in needs_retraction:
+                try:
+                    resp = rate_limited_get(
+                        f"https://api.crossref.org/works/{doi}",
+                        params={"mailto": "ara-research@example.com"}, timeout=15)
+                    if resp.status_code == 200:
+                        data = resp.json().get("message", {})
+                        update_to = data.get("update-to", [])
+                        result["retracted"] = any(u.get("type") == "retraction" for u in update_to)
+                    result["retraction_checked"] = True
+                except Exception:
+                    pass
+
+            if doi in needs_citation:
+                try:
+                    import os
+                    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+                    headers = {"x-api-key": api_key} if api_key else {}
+                    resp = rate_limited_get(
+                        f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}",
+                        headers=headers,
+                        params={"fields": "citationCount,influentialCitationCount"}, timeout=15)
+                    if resp.status_code == 200:
+                        result["citation_count"] = resp.json().get("citationCount", 0)
+                        result["citation_verified"] = True
+                except Exception:
+                    pass
+
+            return result
+
+        # Build DOI→paper_id map for batch DB update
+        doi_to_pid: dict[str, int] = {}
+        for row in rows:
+            if row["doi"]:
+                doi_to_pid[row["doi"]] = row["paper_id"]
+        dois = list(doi_to_pid.keys())
+
+        # Run HTTP calls in parallel — NO DB access in threads
+        results: list[dict[str, Any]] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as pool:
+            futures = {pool.submit(_verify_one_http, doi): doi for doi in dois}
+            for i, fut in enumerate(concurrent.futures.as_completed(futures)):
+                if self.cancel_flag.is_set():
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    break
+                try:
+                    results.append(fut.result())
+                except Exception:
+                    pass
+                if (i + 1) % 50 == 0:
+                    _log.info("PIPELINE VERIFY: %d/%d papers checked", i + 1, len(dois))
+
+        # Batch update DB from main thread (single-threaded, safe)
+        for r in results:
+            pid = doi_to_pid.get(r["doi"])
+            if not pid:
                 continue
+            updates = []
+            params: list[Any] = []
+            if r["retraction_checked"]:
+                updates.append("retraction_checked = 1")
+                verified += 1
+            if r["retracted"]:
+                retracted += 1
+            if r["citation_verified"]:
+                updates.append("citation_verified = 1")
+                updates.append("citation_count = ?")
+                params.append(r["citation_count"])
+            if updates:
+                params.append(pid)
+                db._conn.execute(f"UPDATE papers SET {', '.join(updates)} WHERE paper_id = ?", params)
 
-            # Validate DOI
-            verification.validate_doi({"doi": doi}, ctx)
-            # Check retraction
-            ret_result = verification.check_retraction({"doi": doi}, ctx)
-            try:
-                if json.loads(ret_result).get("retracted"):
-                    retracted += 1
-            except Exception:
-                pass
-            # Get citation count
-            verification.get_citation_count({"doi": doi}, ctx)
-            verified += 1
+            # Also cache in central DB
+            if central_db and (r["retraction_checked"] or r["citation_verified"]):
+                try:
+                    central_db.store_doi_validation(
+                        r["doi"], retracted=r["retracted"],
+                        citation_count=r["citation_count"],
+                    )
+                except Exception:
+                    pass
 
-            if (i + 1) % 50 == 0:
-                _log.info("PIPELINE VERIFY: %d/%d papers verified", i + 1, len(rows))
-
+        db._conn.commit()
         _log.info("PIPELINE VERIFY: Complete — %d verified, %d retracted", verified, retracted)
         if on_event:
             on_event(StepEvent("subtask_end", data=f"Verified {verified} papers ({retracted} retracted)", depth=0))
@@ -1871,20 +1984,27 @@ class RLMEngine:
             (p for p in self._get_pipeline_phases() if p["name"] == "deep_read"), None
         )
 
-        # Run fetch + embed + embedding generation all sequentially
-        # No threading — SQLite + Gemini CLOSE_WAIT spins make threads unreliable
-        self._pipeline_fetch_texts(on_event)
-        self._pipeline_embed(on_event)
+        # Run fetch + embed + embedding generation — skip if already done (checkpoints)
+        if "fetch_texts" not in completed:
+            self._pipeline_fetch_texts(on_event)
+        else:
+            _log.info("PIPELINE TRIAGE: Skipping fetch_texts (checkpoint found)")
 
-        if papers_needing_embed:
-            try:
-                self._embedding_triage_generate(papers_needing_embed, db)
-            except Exception as exc:
-                _log.warning("Embedding generation failed: %s", exc)
+        if "embed" not in completed:
+            self._pipeline_embed(on_event)
+            if papers_needing_embed:
+                try:
+                    self._embedding_triage_generate(papers_needing_embed, db)
+                except Exception as exc:
+                    _log.warning("Embedding generation failed: %s", exc)
+        else:
+            _log.info("PIPELINE TRIAGE: Skipping embed (checkpoint found)")
 
         # Deep_read runs synchronously — it gates the pipeline
-        if deep_read_def and deep_read_def.get("objective"):
+        if "deep_read" not in completed and deep_read_def and deep_read_def.get("objective"):
             self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
+        elif "deep_read" in completed:
+            _log.info("PIPELINE TRIAGE: Skipping deep_read (checkpoint found)")
 
         # Mark phases as completed
         for phase_name in ("fetch_texts", "embed", "deep_read"):
@@ -2109,6 +2229,29 @@ class RLMEngine:
                 extra_context += f"\n## {ctx_file.replace('.md', '').title()} Phase Output\n"
                 extra_context += cf.read_text(encoding="utf-8")[:3000] + "\n"
 
+        # Build section rules summary so advisory board knows writer constraints
+        _section_rules = (
+            "SECTION RULES (the writer MUST follow these — your brief must be consistent):\n"
+            "- abstract: Structured (Purpose/Design/Findings/Originality). State gap ONCE in Purpose only.\n"
+            "- introduction: The ONE place to fully state gap + contribution. All other sections reference it.\n"
+            "- methodology: 400-500 words. Literature selection approach, databases, search terms, screening.\n"
+            "- theoretical_background: ONLY section allowed definition tables, comparison tables, boundary conditions. "
+            "Define ALL constructs HERE with precise names — later sections use EXACT same names.\n"
+            "- framework: NO tables, NO boundary conditions, NO propositions, NO new construct names. "
+            "Max 2-3 constructs. Describe model in prose only. NO ASCII diagrams.\n"
+            "- propositions: 3-4 MAX. ONE summary table only. No construct redefinition. "
+            "Drop any proposition restating well-established findings.\n"
+            "- discussion: NO tables at all, NO boundary conditions, NO construct definitions, "
+            "NO framework re-description, NO gap restatement. Prose only.\n"
+            "- conclusion: NO summary/restatement. Single insight + one implication + forward-looking close. "
+            "Include positionality/conflict of interest if applicable.\n\n"
+            "WRITING CONSTRAINTS:\n"
+            "- Average sentence length MUST be under 30 words.\n"
+            "- NO hedging phrases ('it is imperative', 'plays a crucial role', 'it should be noted').\n"
+            "- Section-to-section cosine overlap must stay below 0.30 — each section makes NEW points only.\n"
+            "- Every section must use IDENTICAL construct names (no renaming across sections).\n"
+        )
+
         # Single unified advisory call (replaces 2 advisors + 1 consensus = 3 calls)
         advisory_objective = (
             f"You are the Senior Advisory Board for a research paper on: {topic}.\n"
@@ -2122,6 +2265,7 @@ class RLMEngine:
             f"You have {context.claim_count} claims from {context.papers_with_claims} deeply-read papers.\n"
             f"SYNTHESIS DATA:\n{synthesis_data[:4000]}\n\n"
             f"{extra_context[:3000]}\n\n"
+            f"{_section_rules}\n"
             f"INSTRUCTIONS:\n"
             f"1. Call list_claims() to review all extracted evidence.\n"
             f"2. Call get_risk_of_bias_table() and get_grade_table() to assess evidence quality.\n"
@@ -2133,12 +2277,16 @@ class RLMEngine:
             f"   ## Paper Narrative Arc\n"
             f"   (The overarching story: problem → gap → contribution → implications)\n\n"
             f"   ## Section-by-Section Blueprint\n"
-            f"   For EACH section:\n"
-            f"   - Key argument/purpose\n"
+            f"   For EACH section, follow the SECTION RULES above. Specifically:\n"
+            f"   - Key argument/purpose (unique to this section — no overlap with others)\n"
             f"   - Specific subsections and their content\n"
             f"   - MUST-CITE papers with (Author, Year) — at least 5 per body section\n"
             f"   - Key claims to reference (by claim_id)\n"
-            f"   - Transitions to next section\n\n"
+            f"   - Transitions to next section\n"
+            f"   - Tables ONLY in theoretical_background and propositions (summary table)\n\n"
+            f"   HARD REQUIREMENT: The writing brief MUST distribute ALL {context.papers_with_claims} papers "
+            f"with claims across sections. Every paper that was deeply read must appear in at least one section. "
+            f"Minimum 30 unique papers cited across the full paper. Do NOT leave any deeply-read paper uncited.\n\n"
             f"   ## Theoretical Framework\n"
             f"   (Which theories to use, how they connect, what the original contribution is)\n\n"
             f"   ## Evidence Hierarchy\n"
@@ -2163,11 +2311,26 @@ class RLMEngine:
             max_steps=50,
         )
 
-        # Verify brief was saved
+        # Verify brief was saved and validate against section rules
         brief_file = sections_dir / "writing_brief.md"
         if brief_file.exists():
-            brief_size = len(brief_file.read_text(encoding="utf-8"))
+            brief_text = brief_file.read_text(encoding="utf-8")
+            brief_size = len(brief_text)
             _log.info("ADVISORY BOARD: Writing brief saved — %d chars", brief_size)
+
+            # Programmatic gate: validate brief against section rules
+            brief_violations = self._validate_writing_brief(brief_text)
+            if brief_violations:
+                _log.warning("ADVISORY BOARD GATE: %d violations found — patching brief", len(brief_violations))
+                for v in brief_violations:
+                    _log.warning("  VIOLATION: %s", v)
+                # Append violation warnings to the brief so writer sees them
+                patch = "\n\n---\n## QUALITY GATE OVERRIDES (auto-generated)\n"
+                patch += "The advisory board brief above contains errors. The writer MUST follow these corrections:\n"
+                for v in brief_violations:
+                    patch += f"- {v}\n"
+                brief_file.write_text(brief_text + patch, encoding="utf-8")
+                _log.info("ADVISORY BOARD GATE: Patched brief with %d override warnings", len(brief_violations))
         else:
             _log.warning("ADVISORY BOARD: Writing brief not saved — writer will proceed without it")
 
@@ -2311,6 +2474,39 @@ class RLMEngine:
                     f"propositions that were dropped by the synthesis/critic phases.\n"
                 )
 
+            # F+8.5 Inject summary of already-written sections to prevent repetition
+            # The LLM must know what tables, constructs, and arguments already exist
+            already_written_summary = ""
+            for prev_name, _ in writer_sections:
+                if prev_name == section_name:
+                    break  # Only include sections written BEFORE this one
+                prev_file = sections_dir / f"{prev_name}.md"
+                if prev_file.exists() and prev_file.stat().st_size > 100:
+                    prev_content = prev_file.read_text(encoding="utf-8")
+                    # Extract table names and construct definitions from prior sections
+                    import re as _aw_re
+                    tables = _aw_re.findall(r'\*\*(?:Table \d+[a-z]?:?\s*[^\*]+)\*\*', prev_content)
+                    constructs = _aw_re.findall(r'\*([A-Z][^*]{3,50})\*', prev_content)
+                    headers = _aw_re.findall(r'^#{2,4}\s+(.+)$', prev_content, _aw_re.MULTILINE)
+                    summary_parts = []
+                    if tables:
+                        summary_parts.append(f"  Tables: {', '.join(t[:60] for t in tables[:5])}")
+                    if constructs:
+                        summary_parts.append(f"  Constructs defined: {', '.join(set(c[:40] for c in constructs[:8]))}")
+                    if headers:
+                        summary_parts.append(f"  Subsections: {', '.join(h[:40] for h in headers[:6])}")
+                    if summary_parts:
+                        already_written_summary += f"\n- {prev_name}: " + "; ".join(summary_parts)
+
+            if already_written_summary:
+                already_written_summary = (
+                    f"\n\nALREADY WRITTEN (DO NOT REPEAT):{already_written_summary}\n"
+                    f"DO NOT re-create any tables, construct definitions, boundary conditions, "
+                    f"or comparison frameworks that already exist above. "
+                    f"If you need to reference a construct, use the EXACT SAME NAME as in prior sections. "
+                    f"Do NOT introduce new names for the same concept.\n"
+                )
+
             # F+9. Inject pre-loaded claims/papers + section-specific relevance filtering
             data_injection = ""
 
@@ -2360,9 +2556,16 @@ class RLMEngine:
                 f"{brief_instruction}"
                 f"{synthesis_instruction}"
                 f"{data_injection}"
+                f"{already_written_summary}"
                 f"Use write_section(section='{section_name}', content=YOUR_TEXT) to save. "
                 f"Do NOT use markdown headers at the start — the system adds them. "
-                f"Every factual statement must cite a paper from the data above using (Author, Year) format."
+                f"Every factual statement must cite a paper from the data above using (Author, Year) format. "
+                f"ONLY cite papers with cosine similarity ≥ 0.6 to the section theme — do NOT pad with irrelevant citations. "
+                f"The paper MUST cite at least 30 unique papers total across all sections. "
+                f"WRITING STYLE: Average sentence length MUST be under 30 words. "
+                f"NO hedging phrases ('it is imperative to', 'it should be noted that', "
+                f"'plays a crucial role in'). Be direct: 'X drives Y', not 'X plays a crucial role in driving Y'. "
+                f"NO repeating arguments from other sections — each section makes NEW points only."
             )
 
             # Inject special instructions (domain expertise, empirical context)
@@ -2393,6 +2596,9 @@ class RLMEngine:
                     # produced a better version as text instead of calling write_section
                     should_auto_save = True
             if should_auto_save:
+                # Scrub LLM meta-text before auto-saving (same scrubber as write_section)
+                from .tools.writing import _strip_llm_meta_text
+                result = _strip_llm_meta_text(result)
                 _log.info("PIPELINE WRITER: Auto-saving %s (%d chars — writer didn't call write_section)",
                           section_name, len(result))
                 section_file.write_text(result, encoding="utf-8")
@@ -2423,8 +2629,171 @@ class RLMEngine:
                 )
                 _log.info("PIPELINE WRITER: Section %s rewrite complete", section_name)
 
+            # Append per-section reference footer (programmatic — not LLM)
+            self._append_section_references(section_name, sections_dir)
+
             if on_event:
                 on_event(StepEvent("subtask_end", data=f"Section {section_name} done", depth=0))
+
+    def _append_section_references(self, section_name: str, sections_dir: Path) -> None:
+        """Append a per-section reference footer listing exactly which papers this section cites."""
+        from .tools.writing import _extract_citations_from_text, _verify_citation_against_db
+
+        section_file = sections_dir / f"{section_name}.md"
+        if not section_file.exists() or section_file.stat().st_size < 100:
+            return
+
+        content = section_file.read_text(encoding="utf-8")
+
+        # Strip any existing section reference footer (from prior rewrite)
+        _FOOTER_MARKER = "\n\n---\n<!-- SECTION_REFS:"
+        if _FOOTER_MARKER in content:
+            content = content[:content.index(_FOOTER_MARKER)]
+
+        citations = _extract_citations_from_text(content)
+        if not citations:
+            _log.info("SECTION REFS: %s — 0 citations found", section_name)
+            return
+
+        # Deduplicate
+        unique_cites = list(dict.fromkeys(citations))
+
+        # Resolve each citation against DB
+        db = self.tools.db
+        session_id = self.tools.session_id
+        resolved: list[str] = []
+        unresolved: list[str] = []
+
+        for author_frag, year in unique_cites:
+            if db and session_id:
+                match = _verify_citation_against_db(author_frag, year, db, session_id)
+                if match.get("verified") and match.get("paper"):
+                    p = match["paper"]
+                    authors_list = p.get("authors", [])
+                    if authors_list:
+                        first = authors_list[0]
+                        name = first if isinstance(first, str) else first.get("name", "Unknown")
+                    else:
+                        name = "Unknown"
+                    resolved.append(
+                        f"- ({author_frag}, {year}) → paper_id={p.get('paper_id')} | "
+                        f"{name} et al. — {p.get('title', 'Untitled')[:80]}"
+                    )
+                else:
+                    unresolved.append(f"- ({author_frag}, {year}) — NOT FOUND IN DB")
+            else:
+                unresolved.append(f"- ({author_frag}, {year}) — no DB available")
+
+        # Build footer (HTML comment so it's invisible in rendered markdown)
+        footer = f"{_FOOTER_MARKER} {section_name} -->\n"
+        footer += f"<!-- Verified: {len(resolved)} | Unresolved: {len(unresolved)} -->\n"
+        for line in resolved:
+            footer += f"<!-- {line} -->\n"
+        if unresolved:
+            footer += "<!-- UNRESOLVED (will be missing from final references): -->\n"
+            for line in unresolved:
+                footer += f"<!-- {line} -->\n"
+        footer += "<!-- /SECTION_REFS -->"
+
+        section_file.write_text(content + footer, encoding="utf-8")
+        _log.info("SECTION REFS: %s — %d verified, %d unresolved",
+                  section_name, len(resolved), len(unresolved))
+
+    def _validate_writing_brief(self, brief: str) -> list[str]:
+        """Programmatic gate on advisory board brief — catches rule violations before writer sees them."""
+        import re as _vre
+        violations: list[str] = []
+        brief_lower = brief.lower()
+
+        # Split brief into per-section blocks for targeted checks
+        # Match markdown headers like ## Discussion, ### Framework, etc.
+        section_blocks: dict[str, str] = {}
+        for m in _vre.finditer(r'(?:^|\n)#{1,4}\s*.*?(abstract|introduction|methodology|theoretical.?background|framework|propositions?|discussion|conclusion).*?\n(.*?)(?=\n#{1,4}\s|\Z)', brief, _vre.IGNORECASE | _vre.DOTALL):
+            sec_name = m.group(1).lower().replace(" ", "_").rstrip("s")
+            if sec_name == "proposition":
+                sec_name = "propositions"
+            if sec_name == "theoretical_background" or "theoretical" in sec_name:
+                sec_name = "theoretical_background"
+            section_blocks[sec_name] = m.group(2)
+
+        # 1. Table placement violations — tables only in theoretical_background + propositions (summary)
+        _no_table_sections = {"discussion", "framework", "conclusion", "introduction", "methodology", "abstract"}
+        _table_pattern = _vre.compile(r'\btable\b', _vre.IGNORECASE)
+        for sec, content in section_blocks.items():
+            if sec in _no_table_sections:
+                table_mentions = _table_pattern.findall(content)
+                # Filter out "summary table" in propositions (allowed) and generic references
+                if len(table_mentions) >= 2:  # Multiple mentions = likely instructing to create one
+                    violations.append(
+                        f"OVERRIDE {sec}: Brief suggests tables — {sec} must NOT contain tables. "
+                        f"Tables are only allowed in theoretical_background and propositions (one summary table)."
+                    )
+
+        # 2. Framework section should not have boundary conditions
+        fw_block = section_blocks.get("framework", "")
+        if _vre.search(r'boundar(?:y|ies)\s+condition', fw_block, _vre.IGNORECASE):
+            violations.append(
+                "OVERRIDE framework: Brief assigns boundary conditions to framework — "
+                "boundary conditions belong in theoretical_background ONLY."
+            )
+
+        # 3. Discussion should not restate gap or re-describe framework
+        disc_block = section_blocks.get("discussion", "")
+        if _vre.search(r'(?:restat|re-stat|repeat|reiterat).*(?:gap|research question)', disc_block, _vre.IGNORECASE):
+            violations.append(
+                "OVERRIDE discussion: Brief instructs gap restatement — "
+                "discussion must NOT restate the gap (already in introduction)."
+            )
+        if _vre.search(r'(?:re-?descri|summariz|recap).*framework', disc_block, _vre.IGNORECASE):
+            violations.append(
+                "OVERRIDE discussion: Brief instructs framework re-description — "
+                "discussion must NOT re-describe the framework (already in framework section)."
+            )
+
+        # 4. Conclusion should not summarize or restate
+        conc_block = section_blocks.get("conclusion", "")
+        if _vre.search(r'(?:summari[sz]|recap|restat|re-stat|overview of)', conc_block, _vre.IGNORECASE):
+            violations.append(
+                "OVERRIDE conclusion: Brief instructs summarization — "
+                "conclusion must NOT summarize the paper. Only: single insight, one implication, forward-looking close."
+            )
+
+        # 5. Propositions count — check if brief suggests too many
+        prop_block = section_blocks.get("propositions", "")
+        prop_numbers = _vre.findall(r'(?:proposition|P)\s*(\d+)', prop_block, _vre.IGNORECASE)
+        if prop_numbers:
+            max_prop = max(int(n) for n in prop_numbers)
+            if max_prop > self.config.max_propositions:
+                violations.append(
+                    f"OVERRIDE propositions: Brief suggests {max_prop} propositions — "
+                    f"maximum allowed is {self.config.max_propositions}. Drop weakest propositions."
+                )
+
+        # 6. Check construct naming consistency — if same concept has multiple names
+        # Extract italicized constructs from the brief (common pattern: *Construct Name*)
+        constructs = _vre.findall(r'\*([A-Z][^*]{3,50})\*', brief)
+        if constructs:
+            # Normalize and check for near-duplicates
+            normalized = {}
+            for c in constructs:
+                key = c.lower().strip()
+                # Strip common suffixes for matching
+                for suffix in (" theory", " framework", " model", " perspective"):
+                    key = key.replace(suffix, "")
+                normalized.setdefault(key, set()).add(c)
+            for key, names in normalized.items():
+                if len(names) > 1:
+                    violations.append(
+                        f"OVERRIDE naming: Multiple names for same construct: {', '.join(sorted(names))}. "
+                        f"Use ONE consistent name across all sections."
+                    )
+
+        if violations:
+            _log.info("ADVISORY BOARD GATE: Found %d violations in writing brief", len(violations))
+        else:
+            _log.info("ADVISORY BOARD GATE: Writing brief passed all checks")
+
+        return violations
 
     def _check_section_quality(
         self, section_name: str, sections_dir: Path, context: ExternalContext,
@@ -2540,6 +2909,76 @@ class RLMEngine:
                         if overlap > 0.6:
                             issues.append(f"High overlap ({overlap:.0%}) with '{other_file.stem}' — likely duplication")
 
+        # 8. Sentence length check — verbose academic writing kills readability
+        sentences = _re.split(r'(?<=[.!?])\s+', content)
+        sentences = [s for s in sentences if len(s.split()) > 3]  # ignore fragments
+        if sentences:
+            avg_len = sum(len(s.split()) for s in sentences) / len(sentences)
+            max_avg = self.config.max_avg_sentence_length
+            if avg_len > max_avg:
+                issues.append(
+                    f"Average sentence length {avg_len:.0f} words (max {max_avg}). "
+                    f"Break long sentences. Remove hedging phrases ('it is imperative to', "
+                    f"'it is necessary to', 'it should be noted that'). Be direct."
+                )
+
+        # 9. Hedging phrase detection — flag ornamental academic padding
+        _HEDGING_PHRASES = [
+            r'it is (?:imperative|necessary|important|crucial|vital|essential) (?:to|that)',
+            r'it (?:should|must|can) be (?:noted|observed|argued|emphasized|stressed) that',
+            r'(?:in order|so as) to',
+            r'(?:a (?:significant|substantial|considerable|growing) (?:body|amount|number|volume) of)',
+            r'(?:plays? (?:a|an) (?:significant|crucial|vital|important|key|critical|pivotal) role)',
+            r'(?:in the context of|within the (?:context|framework|domain) of)',
+            r'(?:serves? as (?:a|an) (?:catalyst|driver|enabler|mechanism|conduit|vehicle))',
+        ]
+        hedge_count = 0
+        for hp in _HEDGING_PHRASES:
+            hedge_count += len(_re.findall(hp, content, _re.IGNORECASE))
+        if hedge_count > 5:
+            issues.append(
+                f"{hedge_count} hedging/filler phrases detected. Cut ornamental language. "
+                f"Replace 'it is imperative to X' with 'X'. Replace 'plays a crucial role in' "
+                f"with 'drives/enables/shapes'. Be direct."
+            )
+
+        # 10. Table proliferation check — only theoretical_background should have definition/comparison tables
+        if section_name in ("framework", "discussion", "conclusion", "propositions"):
+            table_count = len(_re.findall(r'\|[^|]+\|[^|]+\|[^|]+\|', content))
+            if table_count > 5:  # More than a header + separator + 1 data row = a real table
+                table_type = "summary" if section_name == "propositions" else "any"
+                max_tables = 1 if section_name == "propositions" else 0
+                if section_name == "propositions" and table_count > 15:
+                    issues.append(
+                        f"Too many table rows ({table_count}) in {section_name}. "
+                        f"Keep only ONE summary table at the end. Remove all definition "
+                        f"and comparison tables — those belong in theoretical_background only."
+                    )
+                elif section_name in ("discussion", "conclusion"):
+                    issues.append(
+                        f"Tables found in {section_name} ({table_count} rows). "
+                        f"Discussion and conclusion must NOT contain tables. "
+                        f"Remove all tables — present insights in prose only. "
+                        f"Definition tables belong in theoretical_background."
+                    )
+
+        # 11. Construct naming consistency — check that key constructs use consistent names
+        # (programmatic: detect if same construct appears under multiple names)
+
+        # 12. Proposition count cap (propositions section only)
+        if section_name == "propositions":
+            prop_count = len(_re.findall(
+                r'(?:^|\n)\s*\*?\*?(?:Proposition|P)\s*\d+\s*[:.]',
+                content, _re.IGNORECASE,
+            ))
+            max_props = self.config.max_propositions
+            if prop_count > max_props:
+                issues.append(
+                    f"Too many propositions: {prop_count} (max {max_props}). "
+                    f"Keep only the sharpest, most novel ones. Depth over breadth. "
+                    f"Drop any that restate well-established findings."
+                )
+
         return issues
 
     def _pre_critic_validation(
@@ -2559,7 +2998,7 @@ class RLMEngine:
 
         # Determine expected sections
         if paper_type == "conceptual":
-            expected = {"abstract", "introduction", "theoretical_background", "framework", "propositions", "discussion", "conclusion"}
+            expected = {"abstract", "introduction", "methodology", "theoretical_background", "framework", "propositions", "discussion", "conclusion"}
         else:
             expected = {"abstract", "introduction", "literature_review", "methods", "results", "discussion", "conclusion"}
 
@@ -2583,6 +3022,74 @@ class RLMEngine:
             total_citations.update(_extract_citations_from_text(content))
             if issues:
                 failing_sections.append((section_name, issues))
+
+        # Total word count check — most journals have 10K-12K word limits
+        _MAX_TOTAL_WORDS = 12000
+        if total_words > _MAX_TOTAL_WORDS:
+            # Find the longest body section and flag it for trimming
+            longest_section = max(
+                ((s, len(section_files[s].read_text(encoding="utf-8").split()))
+                 for s in expected if s in section_files and s not in ("abstract", "methodology")),
+                key=lambda x: x[1],
+            )
+            _log.warning("PRE-CRITIC: Total words %d exceeds %d limit — flagging %s (%d words) for trimming",
+                         total_words, _MAX_TOTAL_WORDS, longest_section[0], longest_section[1])
+            failing_sections.append((longest_section[0], [
+                f"Paper is {total_words} words — journal limit is {_MAX_TOTAL_WORDS}. "
+                f"This section is the longest ({longest_section[1]} words). "
+                f"Cut {total_words - _MAX_TOTAL_WORDS} words total. Remove redundant arguments, "
+                f"shorten examples, eliminate hedging phrases. Be ruthless."
+            ]))
+
+        # Section-to-section repetition detection via embedding cosine similarity
+        # If two body sections are too similar, one is likely redundant
+        _body_sections = [s for s in expected if s not in ("abstract", "conclusion", "methodology", "protocol")]
+        body_contents = {}
+        for s in _body_sections:
+            if s in section_files:
+                body_contents[s] = section_files[s].read_text(encoding="utf-8")
+        if len(body_contents) >= 2 and hasattr(self, '_embed_client') and self._embed_client:
+            try:
+                section_embs: dict[str, list[float]] = {}
+                for s, text in body_contents.items():
+                    # Embed first 3000 chars of each section
+                    res = self._embed_client.models.embed_content(
+                        model="gemini-embedding-001", contents=text[:3000],
+                    )
+                    if res.embeddings and len(res.embeddings) > 0:
+                        section_embs[s] = res.embeddings[0].values
+                # Compare all pairs
+                overlap_threshold = self.config.max_section_overlap
+                section_names = list(section_embs.keys())
+                for i in range(len(section_names)):
+                    for j in range(i + 1, len(section_names)):
+                        sim = self._cosine_sim(section_embs[section_names[i]], section_embs[section_names[j]])
+                        if sim > overlap_threshold:
+                            _log.warning(
+                                "PRE-CRITIC: High cosine overlap %.2f between '%s' and '%s'",
+                                sim, section_names[i], section_names[j],
+                            )
+                            # Flag the later section for rewrite
+                            target = section_names[j]
+                            failing_sections.append((target, [
+                                f"Section '{target}' has {sim:.0%} cosine similarity with '{section_names[i]}'. "
+                                f"This indicates heavy repetition. Remove redundant arguments — "
+                                f"each section should make DIFFERENT points. "
+                                f"If the same argument appears in both, keep it in the more appropriate "
+                                f"section and delete it from this one."
+                            ]))
+            except Exception as exc:
+                _log.warning("PRE-CRITIC: Section overlap check failed: %s", exc)
+
+        # Hard gate: paper must cite at least 30 unique papers
+        _MIN_UNIQUE_CITATIONS = 30
+        if len(total_citations) < _MIN_UNIQUE_CITATIONS:
+            failing_sections.append((
+                "introduction",  # Force rewrite of largest body section to add more citations
+                [f"Paper cites only {len(total_citations)} unique papers — minimum is {_MIN_UNIQUE_CITATIONS}. "
+                 f"Add more citations from the evidence database using search_similar() and list_papers()."],
+            ))
+            _log.warning("PRE-CRITIC: Only %d unique citations — need %d+", len(total_citations), _MIN_UNIQUE_CITATIONS)
 
         _log.info("PRE-CRITIC: total_words=%d, unique_citations=%d, failing_sections=%d/%d",
                    total_words, len(total_citations), len(failing_sections), len(expected))
@@ -2682,34 +3189,86 @@ class RLMEngine:
         flagged = 0
         for row in rows:
             doi = row["doi"].strip().lower()
-            cached = central_db.get_doi_validation(doi)
-            if not cached:
-                continue
+            updates: list[str] = []
+            params: list[Any] = []
 
-            updates = []
-            params = []
-            # DOI valid — if it's in doi_validations, it was validated before
-            updates.append("doi_valid = 1")
-            # Retraction checked
-            if cached.get("retraction_permanent"):
-                updates.append("retraction_checked = 1")
-            # Citation count
-            if cached.get("citation_count", 0) > 0:
-                updates.append("citation_verified = 1")
-                updates.append("citation_count = ?")
-                params.append(cached["citation_count"])
+            # 1) If paper exists in central DB at all, the DOI was valid enough to index it
+            cp = central_db.get_paper_by_doi(doi)
+            if cp:
+                updates.append("doi_valid = 1")
+
+            # 2) Check doi_validations for retraction + citation data
+            cached = central_db.get_doi_validation(doi)
+            if cached:
+                updates.append("doi_valid = 1")
+                # retraction_permanent=1 means the check result won't change
+                if cached.get("retraction_permanent") or cached.get("retracted") is not None:
+                    updates.append("retraction_checked = 1")
+                cc = cached.get("citation_count", 0)
+                if cc is not None and cc >= 0:
+                    updates.append("citation_verified = 1")
+                    updates.append("citation_count = ?")
+                    params.append(cc)
 
             if updates:
-                params.append(row["paper_id"])
+                # Deduplicate (doi_valid may appear twice)
+                seen: set[str] = set()
+                deduped: list[str] = []
+                deduped_params: list[Any] = []
+                param_idx = 0
+                for u in updates:
+                    key = u.split("=")[0].strip()
+                    if key in seen:
+                        if "?" in u:
+                            param_idx += 1
+                        continue
+                    seen.add(key)
+                    deduped.append(u)
+                    if "?" in u:
+                        deduped_params.append(params[param_idx])
+                        param_idx += 1
+
+                deduped_params.append(row["paper_id"])
                 db._conn.execute(
-                    f"UPDATE papers SET {', '.join(updates)} WHERE paper_id = ?",
-                    params,
+                    f"UPDATE papers SET {', '.join(deduped)} WHERE paper_id = ?",
+                    deduped_params,
                 )
                 flagged += 1
 
         if flagged:
             db._conn.commit()
             _log.info("PIPELINE: Pre-populated verification flags for %d/%d papers from central DB", flagged, len(rows))
+
+    def _sync_verification_to_central(self, central_db: Any, db: Any, session_id: int) -> None:
+        """Bulk sync verified papers from session DB → central DB doi_validations.
+        Ensures future runs never re-verify the same DOIs."""
+        rows = db._conn.execute(
+            "SELECT doi, citation_count FROM papers "
+            "WHERE session_id = ? AND doi IS NOT NULL AND doi != '' "
+            "AND (doi_valid = 1 OR retraction_checked = 1 OR citation_verified = 1)",
+            (session_id,),
+        ).fetchall()
+        if not rows:
+            return
+
+        synced = 0
+        for row in rows:
+            doi = row["doi"].strip().lower()
+            if not doi:
+                continue
+            try:
+                existing = central_db.get_doi_validation(doi)
+                if not existing:
+                    central_db.store_doi_validation(
+                        doi, retracted=False,
+                        citation_count=row["citation_count"] or 0,
+                    )
+                    synced += 1
+            except Exception:
+                pass
+
+        if synced:
+            _log.info("PIPELINE VERIFY: Synced %d new doi_validations to central DB", synced)
 
     def _preload_claims_from_central(self, central_db: Any, db: Any, session_id: int) -> None:
         """Pre-load claims from central DB into session DB so deep_read skips already-extracted papers."""
@@ -2815,7 +3374,7 @@ class RLMEngine:
             _log.error("PRISMA finalization failed: %s", exc)
 
     def _pipeline_references(self, context: ExternalContext, on_event: StepCallback | None) -> None:
-        """Generate reference list and PRISMA diagram (PRISMA skipped for conceptual papers)."""
+        """Generate reference list, PRISMA diagram, and reconcile citations bidirectionally."""
         _log.info("PIPELINE: Generating references")
         try:
             self.tools.dispatch("get_citations", {})
@@ -2827,6 +3386,135 @@ class RLMEngine:
                 _log.info("PIPELINE: Skipping PRISMA diagram (%s paper)", context.paper_type)
         except Exception as exc:
             _log.error("PIPELINE: Reference generation failed: %s", exc)
+
+        # Bidirectional reconciliation: text citations ↔ reference list
+        self._reconcile_citations_and_references(context)
+
+    def _reconcile_citations_and_references(self, context: ExternalContext) -> None:
+        """Bidirectional reconciliation: every in-text citation gets a reference, every reference is cited."""
+        from .tools.writing import _extract_citations_from_text, _normalize_author
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        apa_file = ws / self.config.session_root_dir / "output" / "references_apa.txt"
+
+        if not sections_dir.exists() or not apa_file.exists():
+            _log.warning("RECONCILE: Missing sections or references file — skipping")
+            return
+
+        # 1. Collect ALL in-text citations from sections
+        in_text: set[tuple[str, str]] = set()
+        for f in sections_dir.iterdir():
+            if f.suffix == ".md" and f.is_file() and f.stem not in ("writing_brief", "synthesis_data", "protocol"):
+                in_text.update(_extract_citations_from_text(f.read_text(encoding="utf-8")))
+
+        # 2. Parse reference list — extract (author_fragment, year) from each APA entry
+        import re as _rre
+        apa_text = apa_file.read_text(encoding="utf-8")
+        ref_entries = [e.strip() for e in apa_text.split("\n\n") if e.strip()]
+        ref_citations: list[tuple[str, str, str]] = []  # (surname, year, full_entry)
+        for entry in ref_entries:
+            # APA format: "Author, A. B. (Year). Title..."
+            m = _rre.match(r'^([^(]+?)\s*\((\d{4})\)', entry)
+            if m:
+                author_part = m.group(1).strip().rstrip(",").rstrip("&").strip()
+                # Get first author surname
+                surname = author_part.split(",")[0].strip().split()[-1] if author_part else ""
+                ref_citations.append((surname.lower(), m.group(2), entry))
+
+        # 3. Forward check: in-text citations → reference list
+        #    Find citations in text that have NO matching reference entry
+        dangling_in_text: list[tuple[str, str]] = []
+        for author_frag, year in in_text:
+            cite_tokens = _normalize_author(author_frag)
+            matched = False
+            for ref_surname, ref_year, _ in ref_citations:
+                if ref_year != year and not (ref_year.isdigit() and year.isdigit() and abs(int(ref_year) - int(year)) <= 1):
+                    continue
+                if any(ct == ref_surname or ref_surname.startswith(ct) or ct.startswith(ref_surname) for ct in cite_tokens if len(ct) > 2):
+                    matched = True
+                    break
+            if not matched:
+                dangling_in_text.append((author_frag, year))
+
+        # 4. Reverse check: reference list → in-text citations
+        #    Find references that are NEVER cited in the text
+        uncited_refs: list[str] = []
+        for ref_surname, ref_year, full_entry in ref_citations:
+            cited = False
+            for author_frag, year in in_text:
+                if year != ref_year and not (ref_year.isdigit() and year.isdigit() and abs(int(ref_year) - int(year)) <= 1):
+                    continue
+                cite_tokens = _normalize_author(author_frag)
+                if any(ct == ref_surname or ref_surname.startswith(ct) or ct.startswith(ref_surname) for ct in cite_tokens if len(ct) > 2):
+                    cited = True
+                    break
+            if not cited:
+                uncited_refs.append(full_entry)
+
+        # 5. Report and fix
+        _log.info("RECONCILE: %d in-text citations, %d reference entries", len(in_text), len(ref_citations))
+
+        if dangling_in_text:
+            _log.warning("RECONCILE: %d in-text citations have NO reference entry: %s",
+                         len(dangling_in_text),
+                         ", ".join(f"({a}, {y})" for a, y in dangling_in_text[:15]))
+            # Try to find these papers in DB and add them to references
+            db = self.tools.db
+            session_id = self.tools.session_id
+            if db and session_id:
+                added = 0
+                for author_frag, year in dangling_in_text:
+                    result = _extract_citations_from_text.__module__  # just to confirm import works
+                    from .tools.writing import _verify_citation_against_db
+                    match = _verify_citation_against_db(author_frag, year, db, session_id)
+                    if match.get("verified") and match.get("paper"):
+                        p = match["paper"]
+                        authors_list = p.get("authors", [])
+                        # Build APA entry
+                        if authors_list:
+                            names = [a if isinstance(a, str) else a.get("name", "") for a in authors_list[:5]]
+                            apa_author = ", ".join(names[:3])
+                            if len(names) > 3:
+                                apa_author += f", ... {names[-1]}"
+                        else:
+                            apa_author = "Unknown"
+                        new_entry = f"{apa_author} ({p.get('year', 'n.d.')}). {p.get('title', 'Untitled')}."
+                        if p.get("doi"):
+                            new_entry += f" https://doi.org/{p['doi']}"
+                        apa_text += f"\n\n{new_entry}"
+                        added += 1
+                if added:
+                    # Re-sort and save
+                    entries = [e.strip() for e in apa_text.split("\n\n") if e.strip()]
+                    apa_file.write_text("\n\n".join(sorted(entries)), encoding="utf-8")
+                    _log.info("RECONCILE: Added %d missing references from DB", added)
+
+        if uncited_refs:
+            _log.warning("RECONCILE: %d references never cited in text — removing", len(uncited_refs))
+            # Remove uncited references from the file
+            remaining = [e for e in ref_entries if e not in uncited_refs]
+            apa_file.write_text("\n\n".join(sorted(remaining)), encoding="utf-8")
+            _log.info("RECONCILE: Removed %d phantom references, %d remain", len(uncited_refs), len(remaining))
+
+            # Also clean BibTeX
+            bib_file = ws / self.config.session_root_dir / "output" / "references.bib"
+            if bib_file.exists():
+                bib_text = bib_file.read_text(encoding="utf-8")
+                # For each uncited ref, try to remove its BibTeX entry
+                for entry in uncited_refs:
+                    m = _rre.match(r'^([^(]+?)\s*\((\d{4})\)', entry)
+                    if m:
+                        # Find and remove the corresponding @article block
+                        surname = m.group(1).split(",")[0].strip()
+                        # Remove @article{...} block where author contains this surname
+                        bib_text = _rre.sub(
+                            rf'@article\{{[^}}]*?author\s*=\s*\{{[^}}]*?{_rre.escape(surname)}[^}}]*?\}}[^@]*?\}}\s*\n?',
+                            '', bib_text, flags=_rre.DOTALL
+                        )
+                bib_file.write_text(bib_text.strip() + "\n", encoding="utf-8")
+
+        if not dangling_in_text and not uncited_refs:
+            _log.info("RECONCILE: Perfect match — all in-text citations have references and vice versa")
 
     def _solve_recursive(
         self,
@@ -2851,7 +3539,9 @@ class RLMEngine:
         elif phase in ("writer", "synthesis", "advisory_board"):
             active_model = self.writer_model
         elif phase == "analyst_deep_read":
-            active_model = self.deep_read_model  # Flash 3.1 for speed — deep_read is high-volume extraction
+            # Use primary model (not round-robin) for deep_read — round-robin breaks
+            # conversational continuity as each step rotates to a different model
+            active_model = self.model
         elif phase == "brancher":
             active_model = self.light_model  # Flash Lite — brancher is search-heavy, doesn't need Pro
         elif phase in ("scout", "verifier", "protocol"):
@@ -2917,12 +3607,16 @@ class RLMEngine:
                     _cc = _db._conn.execute(
                         "SELECT COUNT(*) FROM claims WHERE session_id = ?", (_sid,)
                     ).fetchone()[0]
-                    if _cc >= self.config.min_claims:
-                        _log.info("DEEP_READ: Claim target reached (%d >= %d) — stopping at step %d",
-                                  _cc, self.config.min_claims, steps)
+                    _papers_done = _db._conn.execute(
+                        "SELECT COUNT(DISTINCT paper_id) FROM claims WHERE session_id = ?", (_sid,)
+                    ).fetchone()[0]
+                    _MIN_PAPERS_HARD = 30
+                    if _cc >= self.config.min_claims and _papers_done >= _MIN_PAPERS_HARD:
+                        _log.info("DEEP_READ: Targets reached (%d claims from %d papers) — stopping at step %d",
+                                  _cc, _papers_done, steps)
                         if on_event:
-                            on_event(StepEvent("text", data=f"Claim target reached: {_cc} claims. Moving to next phase.", depth=depth))
-                        return last_text or f"Claim target reached: {_cc} claims extracted."
+                            on_event(StepEvent("text", data=f"Claim target reached: {_cc} claims from {_papers_done} papers.", depth=depth))
+                        return last_text or f"Claim target reached: {_cc} claims from {_papers_done} papers."
 
             elapsed = time.time() - start_time
             if elapsed > self.config.max_solve_seconds:
@@ -3052,6 +3746,18 @@ class RLMEngine:
             # Check: same EXACT pattern (name+args) 2 turns in a row
             if len(_recent_tool_sigs) >= 2 and _recent_tool_sigs[-1] == _recent_tool_sigs[-2]:
                 _log.warning("Loop: pattern repeated 2 turns: %s", turn_sig[:120])
+                # For list_papers loops in deep_read: redirect instead of stopping
+                if "list_papers" in turn_sig and phase == "analyst_deep_read":
+                    _log.info("Loop redirect: injecting read_paper instruction")
+                    active_model.append_user_message(
+                        conversation,
+                        "DO NOT call list_papers again. You already have the list. "
+                        "Pick the FIRST paper from the list and call: "
+                        "read_paper(paper_id=<ID>, include_fulltext=true). "
+                        "Then extract_claims for it. Process papers ONE BY ONE.",
+                    )
+                    _recent_tool_sigs.clear()  # Reset loop detection
+                    continue
                 loop_detected = True
 
             # Check: any non-delegation tool > MAX total

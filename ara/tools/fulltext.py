@@ -1,7 +1,7 @@
 # Location: ara/tools/fulltext.py
-# Purpose: Batch full-text fetching from multiple sources (Unpaywall, CORE, S2, OpenAlex, Europe PMC, PubMed Central)
-# Functions: batch_fetch_fulltext
-# Calls: http.py, db.py
+# Purpose: Batch full-text fetching from 20+ sources — all racing in parallel
+# Functions: batch_fetch_fulltext, 20 source fetchers
+# Calls: http.py, db.py, papers.py
 # Imports: json, logging, os, re, time, threading, concurrent.futures
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import os
 import re
 import time
 import threading as _th
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import httpx
@@ -24,338 +25,11 @@ _MAX_FULLTEXT_CHARS = 25000
 _MAX_DOWNLOAD_BYTES = 10_000_000
 
 
-# ── Source: Unpaywall (batch via individual DOI lookups, 30 rpm) ──────
-
-_UNPAYWALL_EMAILS = ["syedmosayebalam@gmail.com", "eikiyo.netflix@gmail.com"]
-
-def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
-    """Fetch full text URLs from Unpaywall for a batch of DOIs. Returns {doi: text}.
-    Rotates to backup email on 429 rate limits."""
-    results: dict[str, str] = {}
-    current_email = email
-    _log.info("Unpaywall: starting %d DOI lookups", len(dois))
-    for idx, doi in enumerate(dois):
-        if idx % 20 == 0 and idx > 0:
-            _log.info("Unpaywall: progress %d/%d, found %d so far", idx, len(dois), len(results))
-        for attempt in range(2):  # Try up to 2 emails
-            try:
-                resp = rate_limited_get(
-                    f"https://api.unpaywall.org/v2/{doi}",
-                    params={"email": current_email},
-                    timeout=15,
-                )
-                if resp.status_code == 429:
-                    # Rotate to next email
-                    idx = _UNPAYWALL_EMAILS.index(current_email) if current_email in _UNPAYWALL_EMAILS else -1
-                    next_idx = (idx + 1) % len(_UNPAYWALL_EMAILS)
-                    if _UNPAYWALL_EMAILS[next_idx] != current_email:
-                        _log.info("Unpaywall 429 — rotating email to %s", _UNPAYWALL_EMAILS[next_idx])
-                        current_email = _UNPAYWALL_EMAILS[next_idx]
-                        time.sleep(2)
-                        continue
-                    break
-                if resp.status_code == 422:
-                    _log.warning("Unpaywall 422 for email %s — rotating", current_email)
-                    idx = _UNPAYWALL_EMAILS.index(current_email) if current_email in _UNPAYWALL_EMAILS else -1
-                    next_idx = (idx + 1) % len(_UNPAYWALL_EMAILS)
-                    current_email = _UNPAYWALL_EMAILS[next_idx]
-                    continue
-                if resp.status_code != 200:
-                    break
-                data = resp.json()
-                best_oa = data.get("best_oa_location") or {}
-                url = best_oa.get("url_for_pdf") or best_oa.get("url")
-                if url:
-                    text = _download_and_extract(url)
-                    if text:
-                        results[doi] = text
-                break
-            except Exception as exc:
-                _log.debug("Unpaywall failed for %s: %s", doi, exc)
-                break
-    return results
-
-
-# ── Source: CORE API v3 (batch via OR-query, 10 DOIs per call) ────────
-
-def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
-    """Fetch full text from CORE API using OR-query batching. Retries on 429."""
-    results: dict[str, str] = {}
-    batch_size = 20  # CORE supports OR queries with 20 DOIs
-    # Cap at 100 DOIs to avoid being the bottleneck
-    dois = dois[:100]
-    total_batches = (len(dois) + batch_size - 1) // batch_size
-    _log.info("CORE: starting %d batches for %d DOIs (capped)", total_batches, len(dois))
-
-    for i in range(0, len(dois), batch_size):
-        batch_num = i // batch_size + 1
-        batch = dois[i:i + batch_size]
-        query = " OR ".join(f'doi:"{d}"' for d in batch)
-        _log.info("CORE batch %d/%d: querying %d DOIs", batch_num, total_batches, len(batch))
-        for attempt in range(3):
-            try:
-                resp = rate_limited_get(
-                    "https://api.core.ac.uk/v3/search/works",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    params={"q": query, "limit": batch_size},
-                    timeout=15,
-                )
-                if resp.status_code == 429:
-                    wait = 5 * (attempt + 1)
-                    _log.info("CORE 429 — retrying in %ds (attempt %d/3)", wait, attempt + 1)
-                    time.sleep(wait)
-                    continue
-                if resp.status_code != 200:
-                    _log.info("CORE batch %d returned %d — skipping", batch_num, resp.status_code)
-                    break
-                data = resp.json()
-                for item in data.get("results", []):
-                    item_doi = item.get("doi", "")
-                    if not item_doi:
-                        continue
-                    item_doi = _normalize_doi(item_doi)
-                    full_text = item.get("fullText", "")
-                    if full_text and len(full_text) > 200:
-                        results[item_doi] = full_text[:_MAX_FULLTEXT_CHARS]
-                    elif item.get("downloadUrl"):
-                        text = _download_and_extract(item["downloadUrl"])
-                        if text:
-                            results[item_doi] = text
-                break
-            except Exception as exc:
-                _log.info("CORE batch %d failed (attempt %d): %s", batch_num, attempt + 1, exc)
-                if attempt < 2:
-                    time.sleep(3 * (attempt + 1))
-        time.sleep(1)
-
-    _log.info("CORE: completed — found %d texts", len(results))
-    return results
-
-
-# ── Source: Semantic Scholar (batch API, up to 500 per call) ──────────
-
-def _fetch_s2_batch(dois: list[str]) -> dict[str, str]:
-    """Fetch open access PDFs from Semantic Scholar batch API."""
-    results: dict[str, str] = {}
-    batch_size = 500
-    _log.info("S2: starting batch fetch for %d DOIs", len(dois))
-    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["x-api-key"] = api_key
-
-    for i in range(0, len(dois), batch_size):
-        batch = dois[i:i + batch_size]
-        paper_ids = [f"DOI:{d}" for d in batch]
-        for attempt in range(3):
-            try:
-                client = httpx.Client(timeout=60, follow_redirects=True)
-                resp = client.post(
-                    "https://api.semanticscholar.org/graph/v1/paper/batch",
-                    json={"ids": paper_ids},
-                    params={"fields": "externalIds,openAccessPdf"},
-                    headers=headers,
-                )
-                client.close()
-                if resp.status_code == 429:
-                    wait = 5 * (attempt + 1)
-                    _log.info("S2 429 — retrying in %ds (attempt %d/3)", wait, attempt + 1)
-                    time.sleep(wait)
-                    continue
-                if resp.status_code != 200:
-                    _log.debug("S2 batch returned %d", resp.status_code)
-                    break
-                for paper in resp.json():
-                    if not paper or not isinstance(paper, dict):
-                        continue
-                    oa_pdf = paper.get("openAccessPdf") or {}
-                    pdf_url = oa_pdf.get("url")
-                    if not pdf_url:
-                        continue
-                    ext_ids = paper.get("externalIds") or {}
-                    paper_doi = ext_ids.get("DOI", "")
-                    if paper_doi:
-                        text = _download_and_extract(pdf_url)
-                        if text:
-                            results[paper_doi.lower()] = text
-                break
-            except Exception as exc:
-                _log.debug("S2 batch failed (attempt %d): %s", attempt + 1, exc)
-                if attempt < 2:
-                    time.sleep(3 * (attempt + 1))
-        time.sleep(3)
-
-    return results
-
-
-# ── Source: OpenAlex (batch via filter, up to 50 per call) ────────────
-
-def _fetch_openalex_batch(dois: list[str]) -> dict[str, str]:
-    """Fetch open access URLs from OpenAlex using DOI filter."""
-    results: dict[str, str] = {}
-    batch_size = 50  # OpenAlex filter supports pipe-separated DOIs
-
-    for i in range(0, len(dois), batch_size):
-        batch = dois[i:i + batch_size]
-        doi_filter = "|".join(f"https://doi.org/{d}" for d in batch)
-        try:
-            resp = rate_limited_get(
-                "https://api.openalex.org/works",
-                params={
-                    "filter": f"doi:{doi_filter}",
-                    "per_page": batch_size,
-                    "select": "doi,open_access,best_oa_location",
-                    "mailto": "syedmosayebalam@gmail.com",
-                },
-                timeout=30,
-            )
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-            for item in data.get("results", []):
-                item_doi = item.get("doi", "")
-                if item_doi:
-                    item_doi = _normalize_doi(item_doi)
-                oa = item.get("open_access") or {}
-                if not oa.get("is_oa"):
-                    continue
-                best_loc = item.get("best_oa_location") or {}
-                pdf_url = best_loc.get("pdf_url") or best_loc.get("landing_page_url")
-                if pdf_url and item_doi:
-                    text = _download_and_extract(pdf_url)
-                    if text:
-                        results[item_doi] = text
-        except Exception as exc:
-            _log.debug("OpenAlex batch failed: %s", exc)
-
-    return results
-
-
-# ── Source: Europe PMC (batch via DOI search) ─────────────────────────
-
-def _fetch_epmc_batch(dois: list[str]) -> dict[str, str]:
-    """Fetch full text from Europe PMC fulltext XML API."""
-    results: dict[str, str] = {}
-    batch_size = 20
-
-    for i in range(0, len(dois), batch_size):
-        batch = dois[i:i + batch_size]
-        query = " OR ".join(f'DOI:"{d}"' for d in batch)
-        try:
-            resp = rate_limited_get(
-                "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-                params={"query": query, "pageSize": batch_size, "format": "json", "resultType": "core"},
-                timeout=30,
-            )
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-            for item in data.get("resultList", {}).get("result", []):
-                item_doi = item.get("doi", "")
-                if not item_doi:
-                    continue
-                pmcid = item.get("pmcid")
-                if not pmcid:
-                    continue
-                # Fetch full text XML from PMC
-                ft_text = _fetch_epmc_fulltext(pmcid)
-                if ft_text:
-                    results[item_doi.lower()] = ft_text
-        except Exception as exc:
-            _log.debug("EPMC batch failed: %s", exc)
-
-    return results
-
-
-def _fetch_epmc_fulltext(pmcid: str) -> str | None:
-    """Fetch full text XML from Europe PMC for a given PMCID."""
-    try:
-        resp = rate_limited_get(
-            f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML",
-            timeout=20,
-        )
-        if resp.status_code != 200:
-            return None
-        text = re.sub(r"<[^>]+>", " ", resp.text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:_MAX_FULLTEXT_CHARS] if len(text) > 200 else None
-    except Exception:
-        return None
-
-
-# ── Source: PubMed Central (PMC OA via NCBI) ──────────────────────────
-
-def _fetch_pmc_batch(dois: list[str]) -> dict[str, str]:
-    """Fetch full text from PubMed Central via DOI lookup + efetch."""
-    results: dict[str, str] = {}
-    ncbi_key = os.getenv("NCBI_API_KEY", "")
-    batch_size = 20
-    total_batches = (len(dois) + batch_size - 1) // batch_size
-    _log.info("PMC: starting %d batches for %d DOIs", total_batches, len(dois))
-
-    for i in range(0, len(dois), batch_size):
-        batch_num = i // batch_size + 1
-        batch = dois[i:i + batch_size]
-        _log.info("PMC batch %d/%d: querying %d DOIs", batch_num, total_batches, len(batch))
-        query = " OR ".join(f'{d}[DOI]' for d in batch)
-        try:
-            params: dict[str, Any] = {
-                "db": "pmc", "term": query, "retmax": batch_size, "retmode": "json",
-            }
-            if ncbi_key:
-                params["api_key"] = ncbi_key
-            resp = rate_limited_get(
-                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-                params=params,
-                timeout=20,
-            )
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-            pmc_ids = data.get("esearchresult", {}).get("idlist", [])
-            if not pmc_ids:
-                continue
-
-            # Fetch full text XML
-            fetch_params: dict[str, Any] = {
-                "db": "pmc", "id": ",".join(pmc_ids), "rettype": "xml", "retmode": "xml",
-            }
-            if ncbi_key:
-                fetch_params["api_key"] = ncbi_key
-            ft_resp = rate_limited_get(
-                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-                params=fetch_params,
-                timeout=30,
-            )
-            if ft_resp.status_code != 200:
-                continue
-
-            # Extract text and match DOIs
-            xml_text = ft_resp.text
-            # Split by article boundaries
-            articles = re.split(r'<article\b', xml_text)
-            for article_xml in articles[1:]:  # Skip first empty split
-                # Extract DOI from this article
-                doi_match = re.search(r'pub-id-type="doi">([^<]+)<', article_xml)
-                if not doi_match:
-                    continue
-                found_doi = doi_match.group(1).lower()
-                # Strip XML tags
-                text = re.sub(r"<[^>]+>", " ", article_xml)
-                text = re.sub(r"\s+", " ", text).strip()
-                if len(text) > 200:
-                    results[found_doi] = text[:_MAX_FULLTEXT_CHARS]
-        except Exception as exc:
-            _log.debug("PMC batch failed: %s", exc)
-        time.sleep(1)
-
-    return results
-
-
-# ── Shared helpers ────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# SHARED HELPERS
+# ══════════════════════════════════════════════════════════════════════
 
 def _normalize_doi(raw: str) -> str:
-    """Normalize DOI to lowercase without URL prefix."""
     doi = raw.strip().lower()
     for prefix in ("https://doi.org/", "http://doi.org/", "http://dx.doi.org/", "https://dx.doi.org/"):
         if doi.startswith(prefix):
@@ -364,10 +38,10 @@ def _normalize_doi(raw: str) -> str:
     return doi
 
 
-def _download_and_extract(url: str) -> str | None:
+def _download_and_extract(url: str, timeout: int = 15) -> str | None:
     """Download a URL and extract text (PDF or HTML/XML)."""
     try:
-        with httpx.stream("GET", url, timeout=15, follow_redirects=True) as resp:
+        with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as resp:
             if resp.status_code != 200:
                 return None
             content_type = resp.headers.get("content-type", "")
@@ -399,27 +73,721 @@ def _download_and_extract(url: str) -> str | None:
     return None
 
 
-# ── Main batch orchestrator ───────────────────────────────────────────
+def _strip_xml(xml: str) -> str | None:
+    text = re.sub(r"<[^>]+>", " ", xml)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:_MAX_FULLTEXT_CHARS] if len(text) > 200 else None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 1: Semantic Scholar (batch 500 DOIs/call)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_s2_batch(dois: list[str]) -> dict[str, str]:
+    results: dict[str, str] = {}
+    batch_size = 500
+    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+    headers: dict[str, str] = {"x-api-key": api_key} if api_key else {}
+
+    for i in range(0, len(dois), batch_size):
+        batch = dois[i:i + batch_size]
+        ids = [f"DOI:{d}" for d in batch]
+        for attempt in range(3):
+            try:
+                client = httpx.Client(timeout=60, follow_redirects=True)
+                resp = client.post(
+                    "https://api.semanticscholar.org/graph/v1/paper/batch",
+                    json={"ids": ids},
+                    params={"fields": "externalIds,openAccessPdf"},
+                    headers=headers,
+                )
+                client.close()
+                if resp.status_code == 429:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                if resp.status_code != 200:
+                    break
+                for paper in resp.json():
+                    if not paper or not isinstance(paper, dict):
+                        continue
+                    pdf_url = (paper.get("openAccessPdf") or {}).get("url")
+                    if pdf_url:
+                        paper_doi = (paper.get("externalIds") or {}).get("DOI", "")
+                        if paper_doi:
+                            text = _download_and_extract(pdf_url)
+                            if text:
+                                results[paper_doi.lower()] = text
+                break
+            except Exception:
+                if attempt < 2:
+                    time.sleep(3 * (attempt + 1))
+        time.sleep(3)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 2: OpenAlex (batch 50 DOIs/call)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_openalex_batch(dois: list[str]) -> dict[str, str]:
+    results: dict[str, str] = {}
+    batch_size = 50
+    for i in range(0, len(dois), batch_size):
+        batch = dois[i:i + batch_size]
+        doi_filter = "|".join(f"https://doi.org/{d}" for d in batch)
+        try:
+            resp = rate_limited_get(
+                "https://api.openalex.org/works",
+                params={
+                    "filter": f"doi:{doi_filter}",
+                    "per_page": batch_size,
+                    "select": "doi,open_access,best_oa_location",
+                    "mailto": "syedmosayebalam@gmail.com",
+                },
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                continue
+            for item in resp.json().get("results", []):
+                item_doi = _normalize_doi(item.get("doi", ""))
+                if not item_doi:
+                    continue
+                oa = item.get("open_access") or {}
+                if not oa.get("is_oa"):
+                    continue
+                best_loc = item.get("best_oa_location") or {}
+                pdf_url = best_loc.get("pdf_url") or best_loc.get("landing_page_url")
+                if pdf_url:
+                    text = _download_and_extract(pdf_url)
+                    if text:
+                        results[item_doi] = text
+        except Exception as exc:
+            _log.debug("OpenAlex batch failed: %s", exc)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 3: Europe PMC (batch 20 DOIs/call → full text XML)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_epmc_batch(dois: list[str]) -> dict[str, str]:
+    results: dict[str, str] = {}
+    batch_size = 20
+    for i in range(0, len(dois), batch_size):
+        batch = dois[i:i + batch_size]
+        query = " OR ".join(f'DOI:"{d}"' for d in batch)
+        try:
+            resp = rate_limited_get(
+                "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+                params={"query": query, "pageSize": batch_size, "format": "json", "resultType": "core"},
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                continue
+            for item in resp.json().get("resultList", {}).get("result", []):
+                item_doi = (item.get("doi") or "").lower()
+                pmcid = item.get("pmcid")
+                if not pmcid or not item_doi:
+                    continue
+                try:
+                    ft_resp = rate_limited_get(
+                        f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML",
+                        timeout=20,
+                    )
+                    if ft_resp.status_code == 200:
+                        text = _strip_xml(ft_resp.text)
+                        if text:
+                            results[item_doi] = text
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 4: CORE (batch 20 DOIs/call)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
+    results: dict[str, str] = {}
+    batch_size = 20
+    dois = dois[:150]
+    for i in range(0, len(dois), batch_size):
+        batch = dois[i:i + batch_size]
+        query = " OR ".join(f'doi:"{d}"' for d in batch)
+        for attempt in range(3):
+            try:
+                resp = rate_limited_get(
+                    "https://api.core.ac.uk/v3/search/works",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    params={"q": query, "limit": batch_size},
+                    timeout=15,
+                )
+                if resp.status_code == 429:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                if resp.status_code != 200:
+                    break
+                for item in resp.json().get("results", []):
+                    item_doi = _normalize_doi(item.get("doi", ""))
+                    if not item_doi:
+                        continue
+                    full_text = item.get("fullText", "")
+                    if full_text and len(full_text) > 200:
+                        results[item_doi] = full_text[:_MAX_FULLTEXT_CHARS]
+                    elif item.get("downloadUrl"):
+                        text = _download_and_extract(item["downloadUrl"])
+                        if text:
+                            results[item_doi] = text
+                break
+            except Exception:
+                if attempt < 2:
+                    time.sleep(3 * (attempt + 1))
+        time.sleep(1)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 5: PubMed Central (batch via NCBI)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_pmc_batch(dois: list[str]) -> dict[str, str]:
+    results: dict[str, str] = {}
+    ncbi_key = os.getenv("NCBI_API_KEY", "")
+    batch_size = 20
+    dois = dois[:150]
+
+    for i in range(0, len(dois), batch_size):
+        batch = dois[i:i + batch_size]
+        query = " OR ".join(f'{d}[DOI]' for d in batch)
+        try:
+            params: dict[str, Any] = {"db": "pmc", "term": query, "retmax": batch_size, "retmode": "json"}
+            if ncbi_key:
+                params["api_key"] = ncbi_key
+            resp = rate_limited_get(
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+                params=params, timeout=20,
+            )
+            if resp.status_code != 200:
+                continue
+            pmc_ids = resp.json().get("esearchresult", {}).get("idlist", [])
+            if not pmc_ids:
+                continue
+            fetch_params: dict[str, Any] = {"db": "pmc", "id": ",".join(pmc_ids), "rettype": "xml", "retmode": "xml"}
+            if ncbi_key:
+                fetch_params["api_key"] = ncbi_key
+            ft_resp = rate_limited_get(
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+                params=fetch_params, timeout=30,
+            )
+            if ft_resp.status_code != 200:
+                continue
+            articles = re.split(r'<article\b', ft_resp.text)
+            for article_xml in articles[1:]:
+                doi_match = re.search(r'pub-id-type="doi">([^<]+)<', article_xml)
+                if not doi_match:
+                    continue
+                found_doi = doi_match.group(1).lower()
+                text = _strip_xml(article_xml)
+                if text:
+                    results[found_doi] = text
+        except Exception:
+            pass
+        time.sleep(1)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 6: Unpaywall (1 DOI/call)
+# ══════════════════════════════════════════════════════════════════════
+
+_UNPAYWALL_EMAILS = ["syedmosayebalam@gmail.com", "eikiyo.netflix@gmail.com"]
+
+def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
+    results: dict[str, str] = {}
+    current_email = email
+    dois = dois[:150]
+    for doi in dois:
+        for attempt in range(2):
+            try:
+                resp = rate_limited_get(
+                    f"https://api.unpaywall.org/v2/{doi}",
+                    params={"email": current_email}, timeout=15,
+                )
+                if resp.status_code == 429 or resp.status_code == 422:
+                    idx = _UNPAYWALL_EMAILS.index(current_email) if current_email in _UNPAYWALL_EMAILS else -1
+                    current_email = _UNPAYWALL_EMAILS[(idx + 1) % len(_UNPAYWALL_EMAILS)]
+                    time.sleep(2)
+                    continue
+                if resp.status_code != 200:
+                    break
+                best_oa = resp.json().get("best_oa_location") or {}
+                url = best_oa.get("url_for_pdf") or best_oa.get("url")
+                if url:
+                    text = _download_and_extract(url)
+                    if text:
+                        results[doi] = text
+                break
+            except Exception:
+                break
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 7: CrossRef (TDM links — batch 1 DOI/call)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_crossref_tdm(dois: list[str]) -> dict[str, str]:
+    """CrossRef text-and-data-mining links → direct full text."""
+    results: dict[str, str] = {}
+    dois = dois[:100]
+    for doi in dois:
+        try:
+            resp = rate_limited_get(
+                f"https://api.crossref.org/works/{doi}",
+                params={"mailto": "ara-research@example.com"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            links = resp.json().get("message", {}).get("link", [])
+            for link in links:
+                ct = link.get("content-type", "")
+                url = link.get("URL", "")
+                if url and ("xml" in ct or "plain" in ct or "pdf" in ct):
+                    text = _download_and_extract(url)
+                    if text:
+                        results[doi] = text
+                        break
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 8: arXiv (direct PDF by DOI pattern or search)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_arxiv_batch(dois: list[str]) -> dict[str, str]:
+    """arXiv: extract arXiv IDs from DOIs and fetch PDFs directly."""
+    results: dict[str, str] = {}
+    # arXiv DOIs look like 10.48550/arXiv.XXXX.XXXXX
+    arxiv_dois = [(d, re.search(r'arxiv\.(\d+\.\d+)', d, re.I)) for d in dois]
+    arxiv_papers = [(d, m.group(1)) for d, m in arxiv_dois if m]
+
+    for doi, arxiv_id in arxiv_papers[:100]:
+        try:
+            text = _download_and_extract(f"https://arxiv.org/pdf/{arxiv_id}")
+            if text:
+                results[doi] = text
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    # Also try S2 to find arXiv PDFs for non-arXiv DOIs
+    non_arxiv = [d for d in dois if not any(d == ad[0] for ad in arxiv_papers)]
+    if non_arxiv:
+        for doi in non_arxiv[:50]:
+            try:
+                resp = rate_limited_get(
+                    f"https://export.arxiv.org/api/query?search_query=doi:{doi}&max_results=1",
+                    timeout=15,
+                )
+                if resp.status_code == 200 and "<entry>" in resp.text:
+                    id_match = re.search(r'<id>http://arxiv.org/abs/([^<]+)</id>', resp.text)
+                    if id_match:
+                        arxiv_id = id_match.group(1)
+                        text = _download_and_extract(f"https://arxiv.org/pdf/{arxiv_id}")
+                        if text:
+                            results[doi] = text
+            except Exception:
+                pass
+            time.sleep(1)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 9: bioRxiv / medRxiv (DOI pattern → direct PDF)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_biorxiv_batch(dois: list[str]) -> dict[str, str]:
+    """bioRxiv/medRxiv: DOI → direct PDF download."""
+    results: dict[str, str] = {}
+    biorxiv_dois = [d for d in dois if "10.1101/" in d]
+    for doi in biorxiv_dois[:100]:
+        try:
+            pdf_url = f"https://www.biorxiv.org/content/{doi}v1.full.pdf"
+            text = _download_and_extract(pdf_url)
+            if not text:
+                pdf_url = f"https://www.medrxiv.org/content/{doi}v1.full.pdf"
+                text = _download_and_extract(pdf_url)
+            if text:
+                results[doi] = text
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 10: DOAJ (Open Access journal lookup)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_doaj_batch(dois: list[str]) -> dict[str, str]:
+    """DOAJ: search by DOI, get full text link."""
+    results: dict[str, str] = {}
+    for doi in dois[:80]:
+        try:
+            resp = rate_limited_get(
+                f"https://doaj.org/api/search/articles/doi:{doi}",
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            items = resp.json().get("results", [])
+            if items:
+                bibjson = items[0].get("bibjson", {})
+                links = bibjson.get("link", [])
+                for link in links:
+                    url = link.get("url", "")
+                    if url:
+                        text = _download_and_extract(url)
+                        if text:
+                            results[doi] = text
+                            break
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 11: Zenodo (DOI → file download)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_zenodo_batch(dois: list[str]) -> dict[str, str]:
+    """Zenodo: DOI lookup → download attached PDF."""
+    results: dict[str, str] = {}
+    zenodo_dois = [d for d in dois if "zenodo" in d.lower()]
+    for doi in zenodo_dois[:50]:
+        try:
+            # Extract Zenodo record ID from DOI
+            match = re.search(r'zenodo\.(\d+)', doi, re.I)
+            if not match:
+                continue
+            record_id = match.group(1)
+            resp = rate_limited_get(
+                f"https://zenodo.org/api/records/{record_id}",
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            files = resp.json().get("files", [])
+            for f in files:
+                if f.get("key", "").endswith(".pdf"):
+                    url = f.get("links", {}).get("self", "")
+                    if url:
+                        text = _download_and_extract(url)
+                        if text:
+                            results[doi] = text
+                            break
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 12: HAL (French open archive)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_hal_batch(dois: list[str]) -> dict[str, str]:
+    """HAL: search by DOI, get PDF if available."""
+    results: dict[str, str] = {}
+    for doi in dois[:80]:
+        try:
+            resp = rate_limited_get(
+                "https://api.archives-ouvertes.fr/search/",
+                params={"q": f'doiId_s:"{doi}"', "fl": "doiId_s,fileMain_s,uri_s", "wt": "json"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            docs = resp.json().get("response", {}).get("docs", [])
+            if docs:
+                pdf_url = docs[0].get("fileMain_s") or docs[0].get("uri_s")
+                if pdf_url:
+                    text = _download_and_extract(pdf_url)
+                    if text:
+                        results[doi] = text
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 13: DBLP (CS papers → PDF links)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_dblp_batch(dois: list[str]) -> dict[str, str]:
+    """DBLP: DOI lookup → electronic edition link → PDF."""
+    results: dict[str, str] = {}
+    for doi in dois[:80]:
+        try:
+            resp = rate_limited_get(
+                "https://dblp.org/search/publ/api",
+                params={"q": doi, "format": "json", "h": "1"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            hits = resp.json().get("result", {}).get("hits", {}).get("hit", [])
+            if hits:
+                info = hits[0].get("info", {})
+                ee = info.get("ee", "")
+                if isinstance(ee, list):
+                    ee = ee[0] if ee else ""
+                if ee:
+                    text = _download_and_extract(ee)
+                    if text:
+                        results[doi] = text
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 14: BASE (Bielefeld Academic Search Engine)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_base_batch(dois: list[str]) -> dict[str, str]:
+    """BASE: search by DOI → OA full text link."""
+    results: dict[str, str] = {}
+    for doi in dois[:80]:
+        try:
+            resp = rate_limited_get(
+                "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi",
+                params={"func": "PerformSearch", "query": f'dcdoi:"{doi}"',
+                        "format": "json", "hits": "1"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            docs = resp.json().get("response", {}).get("docs", [])
+            if docs:
+                url = docs[0].get("dclink") or docs[0].get("dcidentifier")
+                if url and isinstance(url, str):
+                    text = _download_and_extract(url)
+                    if text:
+                        results[doi] = text
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 15: Internet Archive Scholar
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_ia_scholar_batch(dois: list[str]) -> dict[str, str]:
+    """Internet Archive Scholar: search cached academic papers."""
+    results: dict[str, str] = {}
+    for doi in dois[:80]:
+        try:
+            resp = rate_limited_get(
+                "https://scholar.archive.org/search",
+                params={"q": f'doi:"{doi}"', "format": "json"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            hits = resp.json().get("results", [])
+            if hits:
+                for hit in hits[:1]:
+                    access = hit.get("access", [])
+                    for a in access:
+                        url = a.get("access_url", "")
+                        if url:
+                            text = _download_and_extract(url)
+                            if text:
+                                results[doi] = text
+                                break
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 16: SciELO (Latin American OA journals)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_scielo_batch(dois: list[str]) -> dict[str, str]:
+    """SciELO: DOI redirect → scrape article page."""
+    results: dict[str, str] = {}
+    scielo_dois = [d for d in dois if "scielo" in d.lower() or "10.1590/" in d]
+    for doi in scielo_dois[:50]:
+        try:
+            text = _download_and_extract(f"https://doi.org/{doi}")
+            if text:
+                results[doi] = text
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 17: Figshare (research data/papers)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_figshare_batch(dois: list[str]) -> dict[str, str]:
+    """Figshare: search by DOI, download attached files."""
+    results: dict[str, str] = {}
+    for doi in dois[:50]:
+        try:
+            resp = httpx.post(
+                "https://api.figshare.com/v2/articles/search",
+                json={"doi": doi},
+                headers={"Content-Type": "application/json"},
+                timeout=15,
+            )
+            if resp.status_code != 200 or not resp.json():
+                continue
+            article = resp.json()[0]
+            article_id = article.get("id")
+            if not article_id:
+                continue
+            detail = rate_limited_get(
+                f"https://api.figshare.com/v2/articles/{article_id}",
+                timeout=15,
+            )
+            if detail.status_code == 200:
+                for f in detail.json().get("files", []):
+                    if f.get("name", "").endswith(".pdf"):
+                        text = _download_and_extract(f.get("download_url", ""))
+                        if text:
+                            results[doi] = text
+                            break
+        except Exception:
+            pass
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 18: DOI direct resolve (publisher landing pages)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_doi_direct(dois: list[str]) -> dict[str, str]:
+    """Resolve DOI → publisher page → extract HTML text."""
+    results: dict[str, str] = {}
+    for doi in dois[:100]:
+        try:
+            text = _download_and_extract(f"https://doi.org/{doi}")
+            if text:
+                results[doi] = text
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 19: SSRN (preprints)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_ssrn_batch(dois: list[str]) -> dict[str, str]:
+    """SSRN: DOIs with 10.2139/ssrn → direct PDF download."""
+    results: dict[str, str] = {}
+    ssrn_dois = [d for d in dois if "10.2139/ssrn" in d]
+    for doi in ssrn_dois[:50]:
+        try:
+            ssrn_id = doi.replace("10.2139/ssrn.", "")
+            pdf_url = f"https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID{ssrn_id}_code.pdf"
+            text = _download_and_extract(pdf_url)
+            if text:
+                results[doi] = text
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SOURCE 20: PubMed abstracts (fallback — abstract only)
+# ══════════════════════════════════════════════════════════════════════
+
+def _fetch_pubmed_abstracts(dois: list[str]) -> dict[str, str]:
+    """PubMed: fetch abstracts as fallback when full text unavailable."""
+    results: dict[str, str] = {}
+    ncbi_key = os.getenv("NCBI_API_KEY", "")
+    batch_size = 50
+    dois = dois[:200]
+
+    for i in range(0, len(dois), batch_size):
+        batch = dois[i:i + batch_size]
+        query = " OR ".join(f'{d}[DOI]' for d in batch)
+        try:
+            params: dict[str, Any] = {"db": "pubmed", "term": query, "retmax": batch_size, "retmode": "json"}
+            if ncbi_key:
+                params["api_key"] = ncbi_key
+            resp = rate_limited_get(
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+                params=params, timeout=20,
+            )
+            if resp.status_code != 200:
+                continue
+            pmids = resp.json().get("esearchresult", {}).get("idlist", [])
+            if not pmids:
+                continue
+            fetch_params: dict[str, Any] = {
+                "db": "pubmed", "id": ",".join(pmids),
+                "rettype": "abstract", "retmode": "xml",
+            }
+            if ncbi_key:
+                fetch_params["api_key"] = ncbi_key
+            ft_resp = rate_limited_get(
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+                params=fetch_params, timeout=30,
+            )
+            if ft_resp.status_code != 200:
+                continue
+            # Parse XML for DOI + abstract pairs
+            articles = re.split(r'<PubmedArticle', ft_resp.text)
+            for article_xml in articles[1:]:
+                doi_match = re.search(r'<ArticleId IdType="doi">([^<]+)<', article_xml)
+                abstract_match = re.search(r'<AbstractText[^>]*>(.*?)</AbstractText>', article_xml, re.DOTALL)
+                if doi_match and abstract_match:
+                    found_doi = doi_match.group(1).lower()
+                    abstract_text = re.sub(r'<[^>]+>', '', abstract_match.group(1)).strip()
+                    if len(abstract_text) > 100:
+                        results[found_doi] = abstract_text[:_MAX_FULLTEXT_CHARS]
+        except Exception:
+            pass
+        time.sleep(1)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
+# MAIN ORCHESTRATOR — ALL SOURCES RACE IN PARALLEL
+# ══════════════════════════════════════════════════════════════════════
 
 def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
-    """Batch fetch full text from 6 sources in parallel. Stores results in DB.
-    Sources: Semantic Scholar (500/batch), CORE (10/batch), OpenAlex (50/batch),
-    Unpaywall (1/call), Europe PMC (20/batch), PubMed Central (20/batch)."""
+    """Race 20 sources in parallel. First result for each DOI wins.
+    Sources: S2, OpenAlex, EPMC, CORE, PMC, Unpaywall, CrossRef TDM,
+    arXiv, bioRxiv, DOAJ, Zenodo, HAL, DBLP, BASE, IA Scholar,
+    SciELO, Figshare, DOI direct, SSRN, PubMed abstracts."""
 
     db = ctx.get("db")
     session_id = ctx.get("session_id")
     if not db or not session_id:
         return json.dumps({"error": "Database or session not available"})
 
-    # Get papers without full text that have DOIs
     rows = db._conn.execute(
         "SELECT paper_id, doi FROM papers "
         "WHERE session_id = ? AND doi IS NOT NULL AND full_text IS NULL",
         (session_id,),
     ).fetchall()
-
     if not rows:
-        return json.dumps({"fetched": 0, "message": "All papers already have full text or no DOIs available"})
+        return json.dumps({"fetched": 0, "message": "All papers already have full text"})
 
     doi_to_pid: dict[str, int] = {}
     dois: list[str] = []
@@ -430,7 +798,7 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
 
     _log.info("FULLTEXT BATCH: %d papers need full text", len(dois))
 
-    # LOCAL-FIRST: Check central DB for cached full texts before hitting APIs
+    # ── LOCAL-FIRST: Central DB cache ──
     central_found = 0
     central_db = ctx.get("central_db")
     if central_db:
@@ -445,8 +813,7 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
                     except Exception:
                         pass
         if central_found:
-            _log.info("FULLTEXT BATCH: %d/%d texts found in central DB — skipping those", central_found, len(dois))
-            # Re-query to get updated list of papers still needing full text
+            _log.info("FULLTEXT BATCH: %d/%d texts from central DB cache", central_found, len(dois))
             rows = db._conn.execute(
                 "SELECT paper_id, doi FROM papers "
                 "WHERE session_id = ? AND doi IS NOT NULL AND full_text IS NULL",
@@ -458,155 +825,116 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
                 d = r["doi"].strip().lower()
                 doi_to_pid[d] = r["paper_id"]
                 dois.append(d)
-            _log.info("FULLTEXT BATCH: %d papers still need full text after central DB", len(dois))
             if not dois:
                 return json.dumps({"fetched": central_found, "from_central_db": central_found,
                                    "message": "All full texts found in central DB"})
 
-    # Load credentials
+    _log.info("FULLTEXT BATCH: %d papers still need full text — launching 20 sources", len(dois))
+
+    # ── Credentials ──
     core_key = os.getenv("CORE_API_KEY", "")
     if not core_key:
         try:
-            creds = json.loads((os.path.expanduser("~/.ara/credentials.json") and open(os.path.expanduser("~/.ara/credentials.json")).read()))
+            creds = json.loads(open(os.path.expanduser("~/.ara/credentials.json")).read())
             core_key = creds.get("core_api_key", "")
         except Exception:
             pass
-    _EMAILS = ["syedmosayebalam@gmail.com", "eikiyo.netflix@gmail.com"]
-    unpaywall_email = _EMAILS[0]
 
-    # Run sources in parallel threads
-    all_results: dict[str, str] = {}
+    # ── Thread-safe results collection ──
+    found: dict[str, str] = {}  # doi → text (first writer wins)
+    found_lock = _th.Lock()
     source_stats: dict[str, int] = {}
 
-    def _run_source(name: str, func: Any, *func_args: Any) -> tuple[str, dict[str, str]]:
+    def _run_source(name: str, func, *func_args):
+        """Run a source and collect results. Thread-safe."""
         try:
             results = func(*func_args)
-            return name, results
+            count = 0
+            with found_lock:
+                for doi, text in results.items():
+                    doi_lower = doi.lower()
+                    if doi_lower not in found and doi_lower in doi_to_pid:
+                        found[doi_lower] = text
+                        count += 1
+                        try:
+                            db.store_fulltext_content(doi=doi_lower, text=text[:_MAX_FULLTEXT_CHARS])
+                        except Exception:
+                            pass
+                source_stats[name] = count
+            _log.info("FULLTEXT source %s: +%d texts (total: %d/%d)",
+                      name, count, len(found), len(dois))
         except Exception as exc:
             _log.warning("FULLTEXT source %s failed: %s", name, exc)
-            return name, {}
+            source_stats[name] = 0
 
-    # Remaining DOIs after each source succeeds — avoid re-fetching
-    remaining = set(dois)
+    # ── LAUNCH ALL 20 SOURCES IN PARALLEL ──
+    _RACE_TIMEOUT = 300  # 5 min total timeout for the race
 
-    def _collect_results(name: str, results: dict[str, str]) -> int:
-        """Store results in DB and update remaining set. Returns count of new texts."""
-        new_found = 0
-        for doi, text in results.items():
-            doi_lower = doi.lower()
-            if doi_lower in remaining:
-                all_results[doi_lower] = text
-                remaining.discard(doi_lower)
-                new_found += 1
-                try:
-                    db.store_fulltext_content(doi=doi_lower, text=text[:_MAX_FULLTEXT_CHARS])
-                except Exception as exc:
-                    _log.debug("Immediate store failed for %s: %s", doi_lower, exc)
-        source_stats[name] = new_found
-        _log.info("FULLTEXT source %s: found %d texts (%d remaining)", name, new_found, len(remaining))
-        return new_found
-
-    # Phase 1: Batch APIs first (cheapest, fastest) — 180s total timeout
-    _PHASE1_TIMEOUT = 180
-    _log.info("FULLTEXT Phase 1: starting parallel batch APIs (S2, OpenAlex, EPMC, CORE)")
-    phase1_results: dict[str, tuple[str, dict]] = {}
-
-    def _run_and_store(name, func, *args):
-        try:
-            _, res = _run_source(name, func, *args)
-            phase1_results[name] = (name, res)
-        except Exception as exc:
-            _log.warning("FULLTEXT Phase 1 source %s failed: %s", name, exc)
+    # Build source list — all get the same DOI list
+    remaining_dois = list(dois)
+    sources = [
+        ("semantic_scholar", _fetch_s2_batch, remaining_dois),
+        ("openalex", _fetch_openalex_batch, remaining_dois),
+        ("europe_pmc", _fetch_epmc_batch, remaining_dois),
+        ("pmc", _fetch_pmc_batch, remaining_dois),
+        ("unpaywall", _fetch_unpaywall_batch, remaining_dois, _UNPAYWALL_EMAILS[0]),
+        ("crossref_tdm", _fetch_crossref_tdm, remaining_dois),
+        ("arxiv", _fetch_arxiv_batch, remaining_dois),
+        ("biorxiv", _fetch_biorxiv_batch, remaining_dois),
+        ("doaj", _fetch_doaj_batch, remaining_dois),
+        ("zenodo", _fetch_zenodo_batch, remaining_dois),
+        ("hal", _fetch_hal_batch, remaining_dois),
+        ("dblp", _fetch_dblp_batch, remaining_dois),
+        ("base", _fetch_base_batch, remaining_dois),
+        ("ia_scholar", _fetch_ia_scholar_batch, remaining_dois),
+        ("scielo", _fetch_scielo_batch, remaining_dois),
+        ("figshare", _fetch_figshare_batch, remaining_dois),
+        ("doi_direct", _fetch_doi_direct, remaining_dois),
+        ("ssrn", _fetch_ssrn_batch, remaining_dois),
+        ("pubmed_abstracts", _fetch_pubmed_abstracts, remaining_dois),
+    ]
+    if core_key:
+        sources.append(("core", _fetch_core_batch, remaining_dois, core_key))
 
     threads = []
-    threads.append(_th.Thread(target=_run_and_store, args=("semantic_scholar", _fetch_s2_batch, list(remaining))))
-    if core_key:
-        threads.append(_th.Thread(target=_run_and_store, args=("core", _fetch_core_batch, list(remaining), core_key)))
-    threads.append(_th.Thread(target=_run_and_store, args=("openalex", _fetch_openalex_batch, list(remaining))))
-    threads.append(_th.Thread(target=_run_and_store, args=("europe_pmc", _fetch_epmc_batch, list(remaining))))
+    for source_args in sources:
+        name = source_args[0]
+        func = source_args[1]
+        args_rest = source_args[2:]
+        t = _th.Thread(target=_run_source, args=(name, func, *args_rest), daemon=True)
+        threads.append(t)
+
+    _log.info("FULLTEXT RACE: launching %d sources in parallel", len(threads))
+    start_time = time.monotonic()
 
     for t in threads:
         t.start()
+
+    # Wait for all threads with timeout
     for t in threads:
-        t.join(timeout=_PHASE1_TIMEOUT)
+        remaining_time = _RACE_TIMEOUT - (time.monotonic() - start_time)
+        if remaining_time <= 0:
+            break
+        t.join(timeout=max(remaining_time, 1))
 
-    for name, (_, results) in phase1_results.items():
-        _collect_results(name, results)
+    alive = sum(1 for t in threads if t.is_alive())
+    if alive:
+        _log.warning("FULLTEXT RACE: %d sources still running after %ds timeout — moving on",
+                      alive, _RACE_TIMEOUT)
 
-    _log.info("FULLTEXT Phase 1 complete: %d texts found so far, %d remaining", len(all_results), len(remaining))
+    elapsed = time.monotonic() - start_time
+    total_fetched = len(found) + central_found
+    total_needed = len(dois) + central_found
 
-    # Phase 2: PMC — needs NCBI, good for biomedical (cap at 100 DOIs, 120s timeout)
-    if remaining:
-        pmc_dois = list(remaining)[:100]
-        pmc_results = {}
-        def _run_pmc():
-            nonlocal pmc_results
-            try:
-                _, pmc_results = _run_source("pmc", _fetch_pmc_batch, pmc_dois)
-            except Exception as exc:
-                _log.warning("FULLTEXT PMC phase failed: %s", exc)
-        pmc_thread = _th.Thread(target=_run_pmc)
-        pmc_thread.start()
-        pmc_thread.join(timeout=120)
-        if pmc_thread.is_alive():
-            _log.warning("FULLTEXT PMC phase timed out (120s)")
-        new_found = 0
-        for doi, text in pmc_results.items():
-            doi_lower = doi.lower()
-            if doi_lower in remaining:
-                all_results[doi_lower] = text
-                remaining.discard(doi_lower)
-                new_found += 1
-                try:
-                    db.store_fulltext_content(doi=doi_lower, text=text[:_MAX_FULLTEXT_CHARS])
-                except Exception:
-                    pass
-        source_stats["pmc"] = new_found
-        _log.info("FULLTEXT source pmc: found %d texts (%d remaining)", new_found, len(remaining))
-
-    # Phase 3: Unpaywall — 1 per call, use only for remaining (cap at 100, 120s timeout)
-    if remaining:
-        unpaywall_dois = list(remaining)[:100]
-        uw_results = {}
-        def _run_unpaywall():
-            nonlocal uw_results
-            try:
-                _, uw_results = _run_source("unpaywall", _fetch_unpaywall_batch, unpaywall_dois, unpaywall_email)
-            except Exception as exc:
-                _log.warning("FULLTEXT Unpaywall phase failed: %s", exc)
-        uw_thread = _th.Thread(target=_run_unpaywall)
-        uw_thread.start()
-        uw_thread.join(timeout=120)
-        if uw_thread.is_alive():
-            _log.warning("FULLTEXT Unpaywall phase timed out (120s)")
-        new_found = 0
-        for doi, text in uw_results.items():
-            doi_lower = doi.lower()
-            if doi_lower in remaining:
-                all_results[doi_lower] = text
-                remaining.discard(doi_lower)
-                new_found += 1
-                try:
-                    db.store_fulltext_content(doi=doi_lower, text=text[:_MAX_FULLTEXT_CHARS])
-                except Exception:
-                    pass
-        source_stats["unpaywall"] = new_found
-        _log.info("FULLTEXT source unpaywall: found %d texts (%d remaining)", new_found, len(remaining))
-
-    # Final count (all already committed individually above)
-    stored = len(all_results)
-
-    total_fetched = stored + central_found
-    total_needed_original = len(dois) + central_found
     summary = {
-        "papers_without_fulltext": total_needed_original,
+        "papers_without_fulltext": total_needed,
         "total_fetched": total_fetched,
         "from_central_db": central_found,
-        "from_apis": stored,
-        "still_missing": len(remaining),
-        "note": f"Central DB matched {central_found}/{total_needed_original} papers (rest are from different topics or lack fulltext in cache)",
-        "coverage": f"{total_fetched / total_needed_original * 100:.1f}%" if total_needed_original else "0%",
+        "from_apis": len(found),
+        "still_missing": len(dois) - len(found),
+        "coverage": f"{total_fetched / total_needed * 100:.1f}%" if total_needed else "0%",
+        "elapsed_seconds": round(elapsed, 1),
         "sources": source_stats,
     }
-    _log.info("FULLTEXT BATCH COMPLETE: %s", json.dumps(summary))
+    _log.info("FULLTEXT RACE COMPLETE in %.1fs: %s", elapsed, json.dumps(summary))
     return json.dumps(summary)

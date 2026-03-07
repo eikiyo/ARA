@@ -64,14 +64,14 @@ class ARAConfig:
     steps_critic: int = 60
     steps_synthesis: int = 40
 
-    # Writer section word minimums
-    words_abstract: int = 250
-    words_introduction: int = 800
-    words_literature_review: int = 1500
-    words_methods: int = 1000
-    words_results: int = 1200
-    words_discussion: int = 1000
-    words_conclusion: int = 400
+    # Writer section word minimums (lean — verbosity kills academic writing)
+    words_abstract: int = 200
+    words_introduction: int = 600
+    words_literature_review: int = 1200
+    words_methods: int = 800
+    words_results: int = 1000
+    words_discussion: int = 800
+    words_conclusion: int = 300
 
     # Writer section citation minimums
     cites_introduction: int = 8
@@ -95,10 +95,15 @@ class ARAConfig:
     # Paper type: "review" (SLR), "scoping" (scoping review), or "conceptual" (theoretical/framework)
     paper_type: str = "review"
 
-    # Conceptual paper section word minimums (used when paper_type="conceptual")
-    words_theoretical_background: int = 1500
-    words_framework: int = 2000
-    words_propositions: int = 1500
+    # Conceptual paper section word minimums (lean targets — depth over length)
+    words_theoretical_background: int = 1200
+    words_framework: int = 1500
+    words_propositions: int = 1000
+
+    # Writing quality constraints
+    max_propositions: int = 5  # Hard cap on propositions per paper
+    max_avg_sentence_length: int = 30  # Words per sentence — reject above this
+    max_section_overlap: float = 0.30  # Cosine similarity between sections — flag repetition above this
 
     # Scope mode: "broad" (default) or "narrow"
     # Narrow mode reduces targets for focused reviews on specific subtopics
@@ -189,9 +194,12 @@ class ARAConfig:
             search_start_year=_safe_int("ARA_SEARCH_START_YEAR", 2014),
             scope_mode=os.getenv("ARA_SCOPE_MODE", "broad"),
             paper_type=os.getenv("ARA_PAPER_TYPE", "review"),
-            words_theoretical_background=_safe_int("ARA_WORDS_THEORETICAL_BACKGROUND", 1500),
-            words_framework=_safe_int("ARA_WORDS_FRAMEWORK", 2000),
-            words_propositions=_safe_int("ARA_WORDS_PROPOSITIONS", 1500),
+            words_theoretical_background=_safe_int("ARA_WORDS_THEORETICAL_BACKGROUND", 1200),
+            words_framework=_safe_int("ARA_WORDS_FRAMEWORK", 1500),
+            words_propositions=_safe_int("ARA_WORDS_PROPOSITIONS", 1000),
+            max_propositions=_safe_int("ARA_MAX_PROPOSITIONS", 5),
+            max_avg_sentence_length=_safe_int("ARA_MAX_AVG_SENTENCE_LENGTH", 30),
+            max_section_overlap=_safe_float("ARA_MAX_SECTION_OVERLAP", 0.30),
             special_instructions=os.getenv("ARA_SPECIAL_INSTRUCTIONS", ""),
             special_authors=os.getenv("ARA_SPECIAL_AUTHORS", ""),
             peer_review_enabled=os.getenv("ARA_PEER_REVIEW_ENABLED", "true").lower() not in ("false", "0", "no"),

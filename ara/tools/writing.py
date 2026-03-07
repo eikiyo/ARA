@@ -14,6 +14,39 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
+# LLM meta-text patterns to strip — preambles, tool-failure commentary, etc.
+import re as _re
+
+_LLM_META_PATTERNS = [
+    # "Here is the drafted X section..." preambles
+    _re.compile(r'^(?:Here is|Below is|I\'ve (?:drafted|written|prepared)|The following is)[^\n]*?\.\s*(?:\*{3,}|---+)?\s*\n', _re.IGNORECASE),
+    # "Since tool calls were looping..." explanations
+    _re.compile(r'^[^\n]*(?:tool call|looping|validation|provided the raw text|directly below)[^\n]*\.\s*\n', _re.IGNORECASE),
+    # Markdown separators at the very top (***  or ---)
+    _re.compile(r'^\s*(?:\*{3,}|---+)\s*\n'),
+    # "Note:" or "Important:" meta-commentary at the start
+    _re.compile(r'^(?:Note|Important|NB|Caveat):\s*[^\n]*\n', _re.IGNORECASE),
+]
+
+
+def _strip_llm_meta_text(content: str) -> str:
+    """Remove LLM-generated meta-commentary from section content."""
+    original_len = len(content)
+    # Apply patterns iteratively (meta-text can be multi-line at the top)
+    for _ in range(5):  # Max 5 passes
+        changed = False
+        for pat in _LLM_META_PATTERNS:
+            new_content = pat.sub('', content, count=1)
+            if new_content != content:
+                content = new_content.lstrip()
+                changed = True
+        if not changed:
+            break
+    if len(content) < original_len:
+        _log.info("WRITE_SECTION: Stripped %d chars of LLM meta-text", original_len - len(content))
+    return content
+
+
 # Track per-section rejection count so we don't loop forever
 # Keyed by "session_id:section_key" — auto-cleans stale entries on access
 _section_rejection_counts: dict[str, int] = {}
@@ -163,11 +196,14 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
     if not content:
         return json.dumps({"error": "content is required — write the section text and pass it here"})
 
+    # Strip LLM meta-text artifacts (preambles, tool-failure commentary, etc.)
+    content = _strip_llm_meta_text(content)
+
     section_key = section.lower().replace(" ", "_")
 
     # Reject invalid section names (dummy, test, temp, untitled, etc.)
     _VALID_SECTIONS = {
-        "abstract", "introduction", "literature_review", "methods", "results",
+        "abstract", "introduction", "literature_review", "methods", "methodology", "results",
         "discussion", "conclusion", "theoretical_background", "framework",
         "propositions", "references",
     } | _INTERNAL_SECTIONS
@@ -396,25 +432,45 @@ def get_citations(args: dict[str, Any], ctx: dict) -> str:
             p["authors"] = json.loads(p.get("authors") or "[]")
 
     # Filter papers to only those matching in-text citations
+    # Build a fast lookup: normalized author surname fragments → paper
     papers = []
+    unmatched_citations: list[tuple[str, str]] = []
     if in_text_citations:
-        for p in all_papers:
-            authors_list = p.get("authors", [])
-            year = str(p.get("year", ""))
-            matched = False
-            for author_frag, cite_year in in_text_citations:
-                if abs(int(cite_year) - int(year)) <= 1 if year.isdigit() and cite_year.isdigit() else False:
-                    author_tokens = _normalize_author(author_frag)
-                    for a in authors_list:
-                        a_str = a if isinstance(a, str) else (a.get("name", "") or a.get("family", ""))
-                        paper_tokens = _normalize_author(a_str)
-                        if any(ct in paper_tokens for ct in author_tokens):
-                            matched = True
-                            break
-                    if matched:
+        for author_frag, cite_year in in_text_citations:
+            matched_paper = None
+            author_tokens = _normalize_author(author_frag)
+            for p in all_papers:
+                if p in papers:
+                    # Already included — just check if this citation matches it too
+                    pass
+                authors_list = p.get("authors", [])
+                year = str(p.get("year", ""))
+                # Year match: exact or ±1 (handles in-press / early access)
+                year_ok = False
+                if year.isdigit() and cite_year.isdigit():
+                    year_ok = abs(int(cite_year) - int(year)) <= 1
+                if not year_ok:
+                    continue
+                # Author match: any token from citation appears in any author name
+                for a in authors_list:
+                    a_str = a if isinstance(a, str) else (a.get("name", "") or a.get("family", ""))
+                    paper_tokens = _normalize_author(a_str)
+                    # Also try the raw surname (last word of name)
+                    a_surname = a_str.strip().split()[-1].lower() if a_str.strip() else ""
+                    if any(ct in paper_tokens or ct == a_surname for ct in author_tokens):
+                        matched_paper = p
                         break
-            if matched:
-                papers.append(p)
+                if matched_paper:
+                    break
+            if matched_paper and matched_paper not in papers:
+                papers.append(matched_paper)
+            elif not matched_paper:
+                unmatched_citations.append((author_frag, cite_year))
+
+        if unmatched_citations:
+            _log.warning("REFERENCES: %d in-text citations unmatched: %s",
+                         len(unmatched_citations),
+                         ", ".join(f"({a}, {y})" for a, y in unmatched_citations[:10]))
     if not papers:
         papers = all_papers  # Fallback if no matches
 

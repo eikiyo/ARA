@@ -292,6 +292,10 @@ def _load_sections(sections_dir: Path, paper_type: str = "review") -> dict[str, 
                 _log.debug("Skipping pipeline artifact: %s", f.stem)
                 continue
             content = f.read_text(encoding="utf-8")
+            # Strip per-section reference footers (added by writer pipeline for audit)
+            _footer_marker = "\n\n---\n<!-- SECTION_REFS:"
+            if _footer_marker in content:
+                content = content[:content.index(_footer_marker)]
             # Strip leading markdown headers to avoid duplication (output.py adds its own)
             content = re.sub(r'^#{1,4}\s+.*\n*', '', content, count=1).strip()
             sections[f.stem] = content
