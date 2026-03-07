@@ -705,8 +705,8 @@ class RLMEngine:
                         t2 = _th.Thread(target=_run_verifier)
                         t1.start()
                         t2.start()
-                        t1.join()
-                        t2.join()
+                        t1.join(timeout=300)
+                        t2.join(timeout=300)
 
                         # Mark verifier as completed so it's skipped in the main loop
                         if db and session_id:

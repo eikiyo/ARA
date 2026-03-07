@@ -155,7 +155,7 @@ class GeminiModel:
     def _stream_generate(
         self, model_name: str, contents: Any, config: Any,
         on_chunk: Callable[[str], None] | None = None,
-        _stream_timeout: int = 300,
+        _stream_timeout: int = 120,
     ) -> ModelTurn:
         """Stream generate from a specific model. Handles Gemini 3.x thought_signature.
 
