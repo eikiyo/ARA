@@ -277,6 +277,7 @@ def generate_output(
 _PIPELINE_ARTIFACTS = frozenset({
     "protocol", "synthesis_data", "writing_brief", "advisor_1",
     "advisor_2", "advisory_report", "evaluation",
+    "hypothesis", "critic", "synthesis",  # pipeline working notes, not paper content
 })
 
 
@@ -314,13 +315,7 @@ def _build_markdown(
             parts.append(sections[name])
             parts.append("")
 
-    # Add any extra sections not in standard order
-    for name, content in sections.items():
-        if name not in order:
-            heading = _SECTION_HEADINGS.get(name, name.replace("_", " ").title())
-            parts.append(f"## {heading}\n")
-            parts.append(content)
-            parts.append("")
+    # Only ordered sections appear in the paper — pipeline artifacts are excluded by _load_sections
 
     # Add PRISMA diagram if available
     if prisma_ascii:
@@ -497,12 +492,7 @@ def _build_html(
                 parts.append(f"<h2>{heading}</h2>")
                 parts.append(_md_to_html(content))
 
-    # Extra sections
-    for name, content in sections.items():
-        if name not in order:
-            heading = _SECTION_HEADINGS.get(name, name.replace("_", " ").title())
-            parts.append(f"<h2>{html.escape(heading)}</h2>")
-            parts.append(_md_to_html(content))
+    # Only ordered sections appear — pipeline artifacts excluded by _load_sections
 
     # PRISMA SVG
     if prisma_svg:

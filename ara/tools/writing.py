@@ -24,6 +24,7 @@ _section_too_short_counts: dict[str, int] = {}  # Track too-short rejections sep
 _INTERNAL_SECTIONS = frozenset({
     "protocol", "synthesis_data", "writing_brief", "advisor_1",
     "advisor_2", "advisory_report", "evaluation",
+    "hypothesis", "critic", "synthesis",  # pipeline working notes, not paper content
 })
 _MAX_SECTION_REJECTIONS = 3  # After this many citation rejections, save anyway
 
