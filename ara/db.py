@@ -301,6 +301,10 @@ class ARADB:
         if "embedding" not in existing:
             self._conn.execute("ALTER TABLE papers ADD COLUMN embedding TEXT")
             self._conn.commit()
+        for col in ("doi_valid", "retraction_checked", "citation_verified"):
+            if col not in existing:
+                self._conn.execute(f"ALTER TABLE papers ADD COLUMN {col} INTEGER DEFAULT 0")
+                self._conn.commit()
         # Ensure phase_checkpoints table exists (for older DBs)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS phase_checkpoints ("

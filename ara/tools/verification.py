@@ -18,16 +18,51 @@ from .http import rate_limited_get, rate_limited_head
 _log = logging.getLogger(__name__)
 
 
+def _find_paper_by_doi(ctx: dict, doi: str) -> tuple[Any, int | None]:
+    """Find paper in session DB by DOI. Returns (db, paper_id) or (None, None)."""
+    db = ctx.get("db")
+    session_id = ctx.get("session_id")
+    if not db or not session_id:
+        return None, None
+    row = db._conn.execute(
+        "SELECT paper_id FROM papers WHERE session_id = ? AND doi = ?",
+        (session_id, doi),
+    ).fetchone()
+    return db, row["paper_id"] if row else None
+
+
+def _set_flag(ctx: dict, doi: str, flag: str) -> None:
+    """Set a verification flag on the paper in session DB."""
+    db, pid = _find_paper_by_doi(ctx, doi)
+    if db and pid:
+        db._conn.execute(f"UPDATE papers SET {flag} = 1 WHERE paper_id = ?", (pid,))
+        db._conn.commit()
+
+
+def _has_flag(ctx: dict, doi: str, flag: str) -> bool:
+    """Check if a verification flag is already set."""
+    db, pid = _find_paper_by_doi(ctx, doi)
+    if not db or not pid:
+        return False
+    row = db._conn.execute(f"SELECT {flag} FROM papers WHERE paper_id = ?", (pid,)).fetchone()
+    return bool(row and row[0])
+
+
 def check_retraction(args: dict[str, Any], ctx: dict) -> str:
     doi = args.get("doi", "").strip()
     if not doi:
         return json.dumps({"error": "DOI is required"})
 
-    # Check central DB cache first
+    # Check session DB flag first
+    if _has_flag(ctx, doi, "retraction_checked"):
+        return json.dumps({"doi": doi, "retracted": False, "source": "session_db_flag"})
+
+    # Check central DB cache
     central_db = ctx.get("central_db")
     if central_db:
         cached = central_db.get_doi_validation(doi)
         if cached and cached.get("retraction_permanent"):
+            _set_flag(ctx, doi, "retraction_checked")
             return json.dumps({
                 "doi": doi,
                 "retracted": bool(cached["retracted"]),
@@ -62,11 +97,13 @@ def check_retraction(args: dict[str, Any], ctx: dict) -> str:
                 except Exception:
                     pass
 
+            _set_flag(ctx, doi, "retraction_checked")
             return json.dumps({
                 "doi": doi,
                 "retracted": is_retracted,
                 "update_to": update_to_clean,
             })
+        _set_flag(ctx, doi, "retraction_checked")
         return json.dumps({"doi": doi, "retracted": False, "note": "Could not verify"})
     except Exception as exc:
         _log.warning("Retraction check failed for %s: %s", doi, exc)
@@ -78,11 +115,23 @@ def get_citation_count(args: dict[str, Any], ctx: dict) -> str:
     if not doi:
         return json.dumps({"error": "DOI is required"})
 
-    # Check central DB cache first (skip if stale)
+    # Check session DB flag first
+    if _has_flag(ctx, doi, "citation_verified"):
+        db, pid = _find_paper_by_doi(ctx, doi)
+        if db and pid:
+            row = db._conn.execute("SELECT citation_count FROM papers WHERE paper_id = ?", (pid,)).fetchone()
+            if row and row["citation_count"]:
+                return json.dumps({
+                    "doi": doi, "citation_count": row["citation_count"],
+                    "influential_count": 0, "source": "session_db_flag",
+                })
+
+    # Check central DB cache (skip if stale)
     central_db = ctx.get("central_db")
     if central_db:
         cached = central_db.get_doi_validation(doi)
         if cached and not cached.get("citation_count_stale") and cached.get("citation_count", 0) > 0:
+            _set_flag(ctx, doi, "citation_verified")
             return json.dumps({
                 "doi": doi,
                 "citation_count": cached["citation_count"],
@@ -112,6 +161,7 @@ def get_citation_count(args: dict[str, Any], ctx: dict) -> str:
                 except Exception:
                     pass
 
+            _set_flag(ctx, doi, "citation_verified")
             return json.dumps({
                 "doi": doi,
                 "citation_count": cc,
@@ -128,12 +178,26 @@ def validate_doi(args: dict[str, Any], ctx: dict) -> str:
     if not doi:
         return json.dumps({"error": "DOI is required"})
 
+    # Check session DB flag first
+    if _has_flag(ctx, doi, "doi_valid"):
+        return json.dumps({"doi": doi, "valid": True, "source": "session_db_flag"})
+
+    # Check central DB — if doi_validation exists, DOI was already validated
+    central_db = ctx.get("central_db")
+    if central_db:
+        cached = central_db.get_doi_validation(doi)
+        if cached:
+            _set_flag(ctx, doi, "doi_valid")
+            return json.dumps({"doi": doi, "valid": True, "source": "central_db_cache"})
+
     try:
         resp = rate_limited_head(
             f"https://doi.org/{doi}",
             timeout=10,
         )
         valid = resp.status_code < 400
+        if valid:
+            _set_flag(ctx, doi, "doi_valid")
         return json.dumps({
             "doi": doi,
             "valid": valid,

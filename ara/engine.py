@@ -669,6 +669,10 @@ class RLMEngine:
                 elif name == "triage":
                     self._pipeline_triage_parallel(topic, paper_type, context, on_event, completed)
                 elif name == "protocol" and "verifier" not in completed:
+                    # Bulk pre-populate verification flags from central DB
+                    central_db = self.tools.central_db
+                    if central_db and db and session_id:
+                        self._prepopulate_verification_flags(central_db, db, session_id)
                     # Run protocol + verifier concurrently — they're independent
                     verifier_def = next(
                         (p for p in self._get_pipeline_phases() if p["name"] == "verifier"), None
@@ -1939,6 +1943,49 @@ class RLMEngine:
 
     # NOTE: LLM paper_critic removed — peer review handles qualitative evaluation post-output.
     # The programmatic quality gate (_pre_critic_validation) catches mechanical issues.
+
+    def _prepopulate_verification_flags(self, central_db: Any, db: Any, session_id: int) -> None:
+        """Bulk set verification flags from central DB cache — avoids per-paper API calls."""
+        rows = db._conn.execute(
+            "SELECT paper_id, doi FROM papers "
+            "WHERE session_id = ? AND doi IS NOT NULL "
+            "AND (doi_valid = 0 OR retraction_checked = 0 OR citation_verified = 0)",
+            (session_id,),
+        ).fetchall()
+        if not rows:
+            return
+
+        flagged = 0
+        for row in rows:
+            doi = row["doi"].strip().lower()
+            cached = central_db.get_doi_validation(doi)
+            if not cached:
+                continue
+
+            updates = []
+            params = []
+            # DOI valid — if it's in doi_validations, it was validated before
+            updates.append("doi_valid = 1")
+            # Retraction checked
+            if cached.get("retraction_permanent"):
+                updates.append("retraction_checked = 1")
+            # Citation count
+            if cached.get("citation_count", 0) > 0:
+                updates.append("citation_verified = 1")
+                updates.append("citation_count = ?")
+                params.append(cached["citation_count"])
+
+            if updates:
+                params.append(row["paper_id"])
+                db._conn.execute(
+                    f"UPDATE papers SET {', '.join(updates)} WHERE paper_id = ?",
+                    params,
+                )
+                flagged += 1
+
+        if flagged:
+            db._conn.commit()
+            _log.info("PIPELINE: Pre-populated verification flags for %d/%d papers from central DB", flagged, len(rows))
 
     def _preload_claims_from_central(self, central_db: Any, db: Any, session_id: int) -> None:
         """Pre-load claims from central DB into session DB so deep_read skips already-extracted papers."""
