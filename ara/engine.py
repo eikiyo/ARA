@@ -1279,23 +1279,21 @@ class RLMEngine:
             if papers_needing_embed:
                 self._embedding_triage_generate(papers_needing_embed, db)
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            futs = [
-                pool.submit(_run_fetch_and_embed_phase),
-                pool.submit(_run_deep_read),
-                pool.submit(_run_embedding_generation),
-            ]
-            for fut in as_completed(futs):
-                try:
-                    fut.result()
-                except Exception as exc:
-                    _log.exception("PIPELINE TRIAGE PARALLEL: thread failed: %s", exc)
+        # Fire fetch+embed+embedding_gen in background — don't block pipeline
+        bg_pool = ThreadPoolExecutor(max_workers=3)
+        bg_pool.submit(_run_fetch_and_embed_phase)
+        bg_pool.submit(_run_embedding_generation)
+        bg_pool.shutdown(wait=False)
+
+        # Deep_read runs synchronously — it gates the pipeline
+        _run_deep_read()
 
         # Mark phases as completed
         for phase_name in ("fetch_texts", "embed", "deep_read"):
             if db and session_id:
                 db.save_phase_checkpoint(session_id, phase_name)
             completed.add(phase_name)
+        _log.info("PIPELINE: deep_read done — fetch+embed continue in background")
 
         # ── Step 3: LLM triage for borderline papers ──
         untriaged = db._conn.execute(

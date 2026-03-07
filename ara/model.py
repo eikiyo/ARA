@@ -96,9 +96,7 @@ class BaseModel(Protocol):
 _DEEP_READ_ROUND_ROBIN_MODELS = [
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-flash-preview-05-20",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
+    "gemini-2.0-flash-lite",
 ]
 
 _GEMINI_CONTEXT_WINDOWS: dict[str, int] = {
