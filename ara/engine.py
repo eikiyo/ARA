@@ -1181,19 +1181,40 @@ class RLMEngine:
         rejected = 0
         borderline = 0
 
-        for pid, text in papers_needing_embed:
+        import queue as _q
+        _EMBED_TIMEOUT = 30  # seconds per embedding call
+
+        for idx, (pid, text) in enumerate(papers_needing_embed):
             try:
-                res = self._embed_client.models.embed_content(model="gemini-embedding-001", contents=text)
+                # Timeout-wrapped embed_content to prevent CLOSE_WAIT spin
+                result_q: _q.Queue = _q.Queue()
+                def _do_embed(t=text):
+                    try:
+                        r = self._embed_client.models.embed_content(model="gemini-embedding-001", contents=t)
+                        result_q.put(r)
+                    except Exception as e:
+                        result_q.put(e)
+                worker = _th.Thread(target=_do_embed)
+                worker.start()
+                worker.join(timeout=_EMBED_TIMEOUT)
+                if worker.is_alive():
+                    _log.warning("TRIAGE EMBED: timeout on paper %d (%d/%d) — skipping", pid, idx+1, len(papers_needing_embed))
+                    borderline += 1
+                    continue
+                res = result_q.get_nowait()
+                if isinstance(res, Exception):
+                    raise res
+
                 if res.embeddings and len(res.embeddings) > 0:
                     emb = res.embeddings[0].values
                     try:
                         db.store_embedding(pid, emb)
                     except Exception:
                         pass
-                    result = self._score_and_store(db, pid, self._cosine_sim(self._topic_emb, emb))
-                    if result == "selected":
+                    score_result = self._score_and_store(db, pid, self._cosine_sim(self._topic_emb, emb))
+                    if score_result == "selected":
                         selected += 1
-                    elif result == "rejected":
+                    elif score_result == "rejected":
                         rejected += 1
                     else:
                         borderline += 1
@@ -1262,24 +1283,16 @@ class RLMEngine:
             (p for p in self._get_pipeline_phases() if p["name"] == "deep_read"), None
         )
 
-        # Run embedding generation in background (non-daemon, joined later)
-        _embed_thread = None
-        if papers_needing_embed:
-            def _run_embedding_generation():
-                try:
-                    self._embedding_triage_generate(papers_needing_embed, db)
-                except Exception as exc:
-                    _log.warning("Embedding generation failed: %s", exc)
-            _embed_thread = _th.Thread(target=_run_embedding_generation)
-            _embed_thread.start()
-
-        # Run fetch synchronously — deep_read needs the full texts
+        # Run fetch + embed + embedding generation all sequentially
+        # No threading — SQLite + Gemini CLOSE_WAIT spins make threads unreliable
         self._pipeline_fetch_texts(on_event)
         self._pipeline_embed(on_event)
 
-        # Wait for embedding generation to finish before deep_read
-        if _embed_thread is not None:
-            _embed_thread.join(timeout=120)
+        if papers_needing_embed:
+            try:
+                self._embedding_triage_generate(papers_needing_embed, db)
+            except Exception as exc:
+                _log.warning("Embedding generation failed: %s", exc)
 
         # Deep_read runs synchronously — it gates the pipeline
         if deep_read_def and deep_read_def.get("objective"):
