@@ -646,16 +646,15 @@ class RLMEngine:
                                 return
                         self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
 
-                    max_w = 3 if run_deep_read else 2
-                    with ThreadPoolExecutor(max_workers=max_w) as pool:
-                        futs = [pool.submit(_run_fetch), pool.submit(_run_embed)]
-                        if run_deep_read:
-                            futs.append(pool.submit(_run_deep_read))
-                        for fut in as_completed(futs):
-                            try:
-                                fut.result()
-                            except Exception as exc:
-                                _log.exception("PIPELINE: Parallel phase failed: %s", exc)
+                    # Fire fetch+embed in background, don't block pipeline on them
+                    bg_pool = ThreadPoolExecutor(max_workers=2)
+                    fetch_fut = bg_pool.submit(_run_fetch)
+                    embed_fut = bg_pool.submit(_run_embed)
+                    bg_pool.shutdown(wait=False)  # Don't wait — let them run in background
+
+                    # Run deep_read synchronously — it gates the pipeline
+                    if run_deep_read:
+                        _run_deep_read()
 
                     # Mark embed + deep_read as completed so they're skipped in the main loop
                     if db and session_id:
@@ -671,6 +670,9 @@ class RLMEngine:
                                 deep_read_def, topic, paper_type, context, on_event,
                                 db, session_id,
                             )
+
+                    # Don't wait — fetch+embed continue in background while pipeline moves on
+                    _log.info("PIPELINE: fetch+embed running in background — moving to next phase")
 
                 elif name == "embed":
                     # Already ran in parallel with fetch_texts above
