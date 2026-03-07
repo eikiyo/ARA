@@ -324,7 +324,7 @@ class CentralDB:
         return d
 
     def get_paper_by_doi(self, doi: str) -> dict[str, Any] | None:
-        row = self._conn.execute("SELECT * FROM papers WHERE doi = ?", (doi,)).fetchone()
+        row = self._conn.execute("SELECT * FROM papers WHERE LOWER(doi) = LOWER(?)", (doi,)).fetchone()
         if not row:
             return None
         d = dict(row)
