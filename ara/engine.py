@@ -1270,23 +1270,21 @@ class RLMEngine:
             self._pipeline_fetch_texts(on_event)
             self._pipeline_embed(on_event)
 
-        def _run_deep_read():
-            time.sleep(5)  # Brief delay so some full texts land first
-            if deep_read_def and deep_read_def.get("objective"):
-                self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
-
         def _run_embedding_generation():
             if papers_needing_embed:
                 self._embedding_triage_generate(papers_needing_embed, db)
 
-        # Fire fetch+embed+embedding_gen in background — don't block pipeline
-        bg_pool = ThreadPoolExecutor(max_workers=3)
-        bg_pool.submit(_run_fetch_and_embed_phase)
-        bg_pool.submit(_run_embedding_generation)
-        bg_pool.shutdown(wait=False)
+        # Fire fetch+embed+embedding_gen in background daemon threads
+        import threading as _th
+        _bg1 = _th.Thread(target=_run_fetch_and_embed_phase, daemon=True)
+        _bg2 = _th.Thread(target=_run_embedding_generation, daemon=True)
+        _bg1.start()
+        _bg2.start()
 
         # Deep_read runs synchronously — it gates the pipeline
-        _run_deep_read()
+        time.sleep(5)  # Brief delay so some full texts land first
+        if deep_read_def and deep_read_def.get("objective"):
+            self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
 
         # Mark phases as completed
         for phase_name in ("fetch_texts", "embed", "deep_read"):
