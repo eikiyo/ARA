@@ -155,18 +155,54 @@ class GeminiModel:
     def _stream_generate(
         self, model_name: str, contents: Any, config: Any,
         on_chunk: Callable[[str], None] | None = None,
+        _stream_timeout: int = 300,
     ) -> ModelTurn:
-        """Stream generate from a specific model. Handles Gemini 3.x thought_signature."""
+        """Stream generate from a specific model. Handles Gemini 3.x thought_signature.
+
+        _stream_timeout: max seconds to wait for the entire stream to complete.
+        Raises ModelError if the stream hangs beyond this limit.
+        """
+        import threading as _th
+        import queue as _q
+
         is_gemini3 = "3." in model_name or "3-" in model_name
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         usage = TokenUsage()
 
-        for chunk in self._client.models.generate_content_stream(
-            model=model_name,
-            contents=contents,
-            config=config,
-        ):
+        # Run streaming in a thread so we can enforce a timeout
+        chunk_q: _q.Queue = _q.Queue()
+        _SENTINEL = object()
+
+        def _stream_worker():
+            try:
+                for c in self._client.models.generate_content_stream(
+                    model=model_name, contents=contents, config=config,
+                ):
+                    chunk_q.put(c)
+                chunk_q.put(_SENTINEL)
+            except Exception as exc:
+                chunk_q.put(exc)
+
+        worker = _th.Thread(target=_stream_worker, daemon=True)
+        worker.start()
+
+        deadline = time.time() + _stream_timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise ModelError(f"Stream timeout ({_stream_timeout}s) for {model_name}")
+            try:
+                chunk = chunk_q.get(timeout=min(remaining, 60))
+            except _q.Empty:
+                # Check if worker thread died
+                if not worker.is_alive():
+                    raise ModelError(f"Stream worker died for {model_name}")
+                continue
+            if chunk is _SENTINEL:
+                break
+            if isinstance(chunk, Exception):
+                raise chunk
             if chunk.text:
                 text_parts.append(chunk.text)
                 if on_chunk:
