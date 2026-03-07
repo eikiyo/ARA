@@ -1,0 +1,326 @@
+{
+  "_comment": "ARA Source Registry — each entry defines how to search an academic API",
+
+  "doaj": {
+    "name": "DOAJ",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://doaj.org/api/search/articles/{query}",
+    "url_mode": "path",
+    "query_param": null,
+    "params": {"pageSize": "{limit}"},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 60,
+    "batch_size": 20,
+    "response_path": "results",
+    "field_map": {
+      "title": "bibjson.title",
+      "abstract": "bibjson.abstract",
+      "authors": "bibjson.author[].name",
+      "year": "bibjson.year",
+      "doi": "bibjson.identifier[?type=doi].id",
+      "url": "bibjson.link[0].url",
+      "journal": "bibjson.journal.title"
+    },
+    "phases": ["search"],
+    "priority": 5
+  },
+
+  "zenodo": {
+    "name": "Zenodo",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://zenodo.org/api/records",
+    "url_mode": "query",
+    "query_param": "q",
+    "params": {"size": "{limit}", "type": "publication", "sort": "bestmatch"},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 60,
+    "batch_size": 20,
+    "response_path": "hits.hits",
+    "field_map": {
+      "title": "metadata.title",
+      "abstract": "metadata.description",
+      "authors": "metadata.creators[].name",
+      "year": "metadata.publication_date[:4]",
+      "doi": "metadata.doi",
+      "url": "links.html"
+    },
+    "phases": ["search"],
+    "priority": 6
+  },
+
+  "hal": {
+    "name": "HAL",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://api.archives-ouvertes.fr/search/",
+    "url_mode": "query",
+    "query_param": "q",
+    "params": {"rows": "{limit}", "wt": "json", "fl": "title_s,abstract_s,authFullName_s,producedDate_s,doiId_s,uri_s"},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 120,
+    "batch_size": 20,
+    "response_path": "response.docs",
+    "field_map": {
+      "title": "title_s[0]",
+      "abstract": "abstract_s[0]",
+      "authors": "authFullName_s",
+      "year": "producedDate_s[:4]",
+      "doi": "doiId_s",
+      "url": "uri_s"
+    },
+    "phases": ["search"],
+    "priority": 6
+  },
+
+  "eric": {
+    "name": "ERIC",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://api.ies.ed.gov/eric/",
+    "url_mode": "query",
+    "query_param": "search",
+    "params": {"rows": "{limit}", "format": "json"},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 120,
+    "batch_size": 20,
+    "response_path": "response.docs",
+    "field_map": {
+      "title": "title",
+      "abstract": "description",
+      "authors": "author[]",
+      "year": "publicationdateyear",
+      "doi": null,
+      "url": "url",
+      "source_id": "id"
+    },
+    "phases": ["search"],
+    "priority": 7
+  },
+
+  "inspire_hep": {
+    "name": "INSPIRE-HEP",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://inspirehep.net/api/literature",
+    "url_mode": "query",
+    "query_param": "q",
+    "params": {"size": "{limit}", "fields": "titles,abstracts,authors,dois,earliest_date"},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 60,
+    "batch_size": 10,
+    "response_path": "hits.hits",
+    "field_map": {
+      "title": "metadata.titles[0].title",
+      "abstract": "metadata.abstracts[0].value",
+      "authors": "metadata.authors[].full_name",
+      "year": "metadata.earliest_date[:4]",
+      "doi": "metadata.dois[0].value",
+      "url": "links.json"
+    },
+    "phases": ["search"],
+    "priority": 8
+  },
+
+  "biorxiv": {
+    "name": "bioRxiv",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://api.biorxiv.org/details/biorxiv",
+    "url_mode": "custom_biorxiv",
+    "query_param": null,
+    "params": {},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 30,
+    "batch_size": 30,
+    "response_path": "collection",
+    "field_map": {
+      "title": "title",
+      "abstract": "abstract",
+      "authors": "authors",
+      "year": "date[:4]",
+      "doi": "doi",
+      "url": null
+    },
+    "phases": ["search"],
+    "priority": 7
+  },
+
+  "medrxiv": {
+    "name": "medRxiv",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://api.biorxiv.org/details/medrxiv",
+    "url_mode": "custom_biorxiv",
+    "query_param": null,
+    "params": {},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 30,
+    "batch_size": 30,
+    "response_path": "collection",
+    "field_map": {
+      "title": "title",
+      "abstract": "abstract",
+      "authors": "authors",
+      "year": "date[:4]",
+      "doi": "doi",
+      "url": null
+    },
+    "phases": ["search"],
+    "priority": 7
+  },
+
+  "figshare": {
+    "name": "Figshare",
+    "enabled": true,
+    "type": "rest_post",
+    "base_url": "https://api.figshare.com/v2/articles/search",
+    "url_mode": "query",
+    "query_param": null,
+    "post_body": {"search_for": "{query}", "page_size": "{limit}", "item_type": 2},
+    "headers": {"Content-Type": "application/json"},
+    "auth_env": null,
+    "rate_limit_rpm": 60,
+    "batch_size": 10,
+    "response_path": "",
+    "field_map": {
+      "title": "title",
+      "abstract": "description",
+      "authors": "authors[].full_name",
+      "year": "published_date[:4]",
+      "doi": "doi",
+      "url": "url"
+    },
+    "phases": ["search"],
+    "priority": 8
+  },
+
+  "opencitations": {
+    "name": "OpenCitations",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://opencitations.net/index/coci/api/v1/references/{doi}",
+    "url_mode": "path_doi",
+    "query_param": null,
+    "params": {},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 30,
+    "batch_size": 1,
+    "response_path": "",
+    "field_map": {
+      "cited_doi": "cited",
+      "citing_doi": "citing",
+      "creation": "creation"
+    },
+    "phases": ["citation"],
+    "priority": 3
+  },
+
+  "clinical_trials": {
+    "name": "ClinicalTrials.gov",
+    "enabled": true,
+    "type": "rest_get",
+    "base_url": "https://clinicaltrials.gov/api/v2/studies",
+    "url_mode": "query",
+    "query_param": "query.term",
+    "params": {"pageSize": "{limit}"},
+    "headers": {},
+    "auth_env": null,
+    "rate_limit_rpm": 60,
+    "batch_size": 10,
+    "response_path": "studies",
+    "field_map": {
+      "title": "protocolSection.identificationModule.officialTitle",
+      "abstract": "protocolSection.descriptionModule.briefSummary",
+      "year": "protocolSection.statusModule.studyFirstPostDateStruct.date[:4]",
+      "url": "protocolSection.identificationModule.nctId",
+      "source_id": "protocolSection.identificationModule.nctId"
+    },
+    "phases": ["search"],
+    "priority": 9
+  },
+
+  "springer_nature": {
+    "name": "Springer Nature",
+    "enabled": false,
+    "type": "rest_get",
+    "base_url": "https://api.springernature.com/metadata/json",
+    "url_mode": "query",
+    "query_param": "q",
+    "params": {"s": "1", "p": "{limit}", "api_key": "{auth}"},
+    "headers": {},
+    "auth_env": "SPRINGER_API_KEY",
+    "rate_limit_rpm": 50,
+    "batch_size": 20,
+    "response_path": "records",
+    "field_map": {
+      "title": "title",
+      "abstract": "abstract",
+      "authors": "creators[].creator",
+      "year": "publicationDate[:4]",
+      "doi": "doi",
+      "url": "url[0].value"
+    },
+    "phases": ["search"],
+    "priority": 4
+  },
+
+  "nasa_ads": {
+    "name": "NASA ADS",
+    "enabled": false,
+    "type": "rest_get",
+    "base_url": "https://api.adsabs.harvard.edu/v1/search/query",
+    "url_mode": "query",
+    "query_param": "q",
+    "params": {"rows": "{limit}", "fl": "title,abstract,author,year,doi,bibcode"},
+    "headers": {"Authorization": "Bearer {auth}"},
+    "auth_env": "NASA_ADS_API_KEY",
+    "rate_limit_rpm": 300,
+    "batch_size": 20,
+    "response_path": "response.docs",
+    "field_map": {
+      "title": "title[0]",
+      "abstract": "abstract",
+      "authors": "author",
+      "year": "year",
+      "doi": "doi[0]",
+      "source_id": "bibcode"
+    },
+    "phases": ["search"],
+    "priority": 4
+  },
+
+  "lens": {
+    "name": "The Lens",
+    "enabled": false,
+    "type": "rest_post",
+    "base_url": "https://api.lens.org/scholarly/search",
+    "url_mode": "query",
+    "query_param": null,
+    "post_body": {"query": {"match": {"title": "{query}"}}, "size": "{limit}"},
+    "headers": {"Authorization": "Bearer {auth}", "Content-Type": "application/json"},
+    "auth_env": "LENS_API_KEY",
+    "rate_limit_rpm": 10,
+    "batch_size": 20,
+    "response_path": "data",
+    "field_map": {
+      "title": "title",
+      "abstract": "abstract",
+      "authors": "authors[].first_name+last_name",
+      "year": "year_published",
+      "doi": "external_ids[?type=doi].value",
+      "url": "source_urls[0].url"
+    },
+    "phases": ["search"],
+    "priority": 3
+  }
+}

@@ -604,6 +604,17 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
             errors.append(f"{name}: {exc}")
             _log.warning("Search %s failed: %s", name, exc)
 
+    # Run registry sources (DOAJ, Zenodo, HAL, ERIC, etc.)
+    if not skip_external:
+        try:
+            from .source_runner import run_registry_sources
+            registry_papers = run_registry_sources(query, limit=limit, phase="search")
+            if registry_papers:
+                results["_registry"] = registry_papers
+                _log.info("SEARCH_ALL: Registry sources added %d papers", len(registry_papers))
+        except Exception as exc:
+            _log.warning("SEARCH_ALL: Registry sources failed: %s", exc)
+
     all_papers = []
     per_source: dict[str, int] = {}
 
@@ -613,8 +624,15 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
         all_papers.extend(central_papers)
 
     for name, papers_list in results.items():
-        per_source[name] = len(papers_list)
-        all_papers.extend(papers_list)
+        if name == "_registry":
+            # Break out registry papers by their individual source
+            for p in papers_list:
+                src = p.get("source", "registry")
+                per_source[src] = per_source.get(src, 0) + 1
+            all_papers.extend(papers_list)
+        else:
+            per_source[name] = len(papers_list)
+            all_papers.extend(papers_list)
 
     # Dedup papers by DOI across sources
     seen_dois: set[str] = set()
