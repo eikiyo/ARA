@@ -210,12 +210,15 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
     limit = min(args.get("limit", 200), 200)  # Hard cap at 200 per call
     offset = args.get("offset", 0)
 
-    # Allow filtering to only selected papers
+    # Allow filtering to only selected or untriaged papers
     selected_only = args.get("selected_only", False)
+    filter_mode = args.get("filter", "")
     where = "WHERE session_id = ?"
     params: list[Any] = [session_id]
     if selected_only:
         where += " AND selected_for_deep_read = 1"
+    elif filter_mode == "untriaged":
+        where += " AND selected_for_deep_read IS NULL"
 
     # Sort by relevance_score if available, fallback to citation_count
     order = "ORDER BY COALESCE(relevance_score, 0) DESC, citation_count DESC"

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -665,7 +667,7 @@ class RLMEngine:
                 elif name == "snowball":
                     self._pipeline_snowball(topic, on_event)
                 elif name == "triage":
-                    self._pipeline_triage(topic, context, on_event)
+                    self._pipeline_triage_parallel(topic, paper_type, context, on_event, completed)
                 elif name == "protocol" and "verifier" not in completed:
                     # Run protocol + verifier concurrently — they're independent
                     verifier_def = next(
@@ -731,12 +733,6 @@ class RLMEngine:
                     brancher_future = _brancher_pool.submit(
                         self._pipeline_run_phase, brancher_def, topic, paper_type, context, on_event
                     )
-
-                # Re-embed: papers may have gained full text during deep_read
-                _log.info("PIPELINE: Re-embedding papers after deep_read (full text may have changed)")
-                if on_event:
-                    on_event(StepEvent("text", data="Re-embedding papers with updated full text...", depth=0))
-                self._pipeline_embed(on_event)
 
                 # Deduplicate claims
                 self._deduplicate_claims(db, session_id)
@@ -1001,10 +997,320 @@ class RLMEngine:
     def _TRIAGE_BATCH_SIZE(self) -> int:
         return self.config.triage_batch_size
 
+    @staticmethod
+    def _cosine_sim(a: list[float], b: list[float]) -> float:
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    _SELECT_THRESHOLD = 0.45
+    _REJECT_THRESHOLD = 0.20
+
+    def _score_and_store(self, db: Any, pid: int, sim: float) -> str:
+        """Score a paper and commit immediately. Returns 'selected', 'rejected', or 'borderline'."""
+        if sim >= self._SELECT_THRESHOLD:
+            db._conn.execute(
+                "UPDATE papers SET relevance_score = ?, selected_for_deep_read = 1 WHERE paper_id = ?",
+                (round(sim, 3), pid),
+            )
+            db._conn.commit()
+            return "selected"
+        elif sim < self._REJECT_THRESHOLD:
+            db._conn.execute(
+                "UPDATE papers SET relevance_score = ?, selected_for_deep_read = 0 WHERE paper_id = ?",
+                (round(sim, 3), pid),
+            )
+            db._conn.commit()
+            return "rejected"
+        else:
+            db._conn.execute(
+                "UPDATE papers SET relevance_score = ? WHERE paper_id = ?",
+                (round(sim, 3), pid),
+            )
+            db._conn.commit()
+            return "borderline"
+
+    def _embed_topic(self) -> tuple[Any, list[float]] | None:
+        """Embed the topic string. Returns (client, embedding) or None."""
+        api_key = os.getenv("GOOGLE_API_KEY") or (self.config.google_api_key if self.config else None)
+        if not api_key:
+            return None
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            return client, None  # type: ignore  # caller will embed
+        except Exception:
+            return None
+
+    def _embedding_triage_cached(
+        self, topic: str, db: Any, session_id: int, on_event: StepCallback | None,
+    ) -> tuple[int, int, int, list[tuple[int, str]]]:
+        """Phase 1: Score papers using ONLY cached embeddings (DB-first, no API calls).
+        Returns (auto_selected, auto_rejected, borderline, papers_needing_embed)."""
+
+        _log.info("PIPELINE TRIAGE: Phase 1 — scoring with cached embeddings")
+        if on_event:
+            on_event(StepEvent("text", data="Embedding triage phase 1 — scoring from cached embeddings...", depth=0))
+
+        # Embed topic
+        api_key = os.getenv("GOOGLE_API_KEY") or (self.config.google_api_key if self.config else None)
+        if not api_key:
+            _log.warning("PIPELINE TRIAGE: No API key for embedding triage")
+            return 0, 0, 0, []
+
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            result = client.models.embed_content(model="gemini-embedding-001", contents=topic)
+            if not result.embeddings or len(result.embeddings) == 0:
+                return 0, 0, 0, []
+            self._topic_emb = result.embeddings[0].values
+            self._embed_client = client
+        except Exception as exc:
+            _log.warning("PIPELINE TRIAGE: Failed to embed topic: %s", exc)
+            return 0, 0, 0, []
+
+        # Get all papers
+        rows = db._conn.execute(
+            "SELECT paper_id, title, abstract, doi, embedding FROM papers WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+
+        central_db = self.tools.central_db
+        auto_selected = 0
+        auto_rejected = 0
+        borderline = 0
+        papers_needing_embed: list[tuple[int, str]] = []
+
+        for row in rows:
+            pid = row["paper_id"]
+            emb = None
+
+            # Check session DB
+            if row["embedding"]:
+                emb = json.loads(row["embedding"])
+
+            # Check central DB
+            if not emb and row["doi"] and central_db:
+                doi = row["doi"].strip().lower()
+                cp = central_db.get_paper_by_doi(doi)
+                if cp and cp.get("embedding"):
+                    emb = cp["embedding"] if isinstance(cp["embedding"], list) else json.loads(cp["embedding"])
+                    try:
+                        db.store_embedding(pid, emb)
+                    except Exception:
+                        pass
+
+            if emb:
+                # Score immediately
+                result = self._score_and_store(db, pid, self._cosine_sim(self._topic_emb, emb))
+                if result == "selected":
+                    auto_selected += 1
+                elif result == "rejected":
+                    auto_rejected += 1
+                else:
+                    borderline += 1
+            else:
+                # Queue for embedding generation
+                text_parts = []
+                if row["title"]:
+                    text_parts.append(row["title"])
+                if row["abstract"]:
+                    text_parts.append(row["abstract"])
+                text = " ".join(text_parts)
+                if text.strip():
+                    papers_needing_embed.append((pid, text[:3000]))
+                else:
+                    borderline += 1
+
+        _log.info(
+            "PIPELINE TRIAGE: Phase 1 complete — "
+            "auto_selected=%d, auto_rejected=%d, borderline=%d, need_embedding=%d",
+            auto_selected, auto_rejected, borderline, len(papers_needing_embed),
+        )
+        if on_event:
+            on_event(StepEvent("text", data=(
+                f"Embedding triage phase 1: {auto_selected} selected, {auto_rejected} rejected, "
+                f"{borderline} borderline, {len(papers_needing_embed)} need embedding"
+            ), depth=0))
+
+        return auto_selected, auto_rejected, borderline, papers_needing_embed
+
+    def _embedding_triage_generate(
+        self, papers_needing_embed: list[tuple[int, str]], db: Any,
+    ) -> tuple[int, int, int]:
+        """Phase 2: Generate missing embeddings and score. Runs in background thread.
+        Returns (selected, rejected, borderline)."""
+        if not papers_needing_embed or not hasattr(self, '_embed_client') or not hasattr(self, '_topic_emb'):
+            return 0, 0, 0
+
+        _log.info("PIPELINE TRIAGE: Phase 2 — generating %d embeddings + scoring", len(papers_needing_embed))
+        selected = 0
+        rejected = 0
+        borderline = 0
+
+        for pid, text in papers_needing_embed:
+            try:
+                res = self._embed_client.models.embed_content(model="gemini-embedding-001", contents=text)
+                if res.embeddings and len(res.embeddings) > 0:
+                    emb = res.embeddings[0].values
+                    try:
+                        db.store_embedding(pid, emb)
+                    except Exception:
+                        pass
+                    result = self._score_and_store(db, pid, self._cosine_sim(self._topic_emb, emb))
+                    if result == "selected":
+                        selected += 1
+                    elif result == "rejected":
+                        rejected += 1
+                    else:
+                        borderline += 1
+                else:
+                    borderline += 1
+            except Exception:
+                borderline += 1
+
+        _log.info(
+            "PIPELINE TRIAGE: Phase 2 complete — selected=%d, rejected=%d, borderline=%d",
+            selected, rejected, borderline,
+        )
+        return selected, rejected, borderline
+
+    def _pipeline_triage_parallel(
+        self, topic: str, paper_type: str, context: ExternalContext,
+        on_event: StepCallback | None, completed: set[str],
+    ) -> None:
+        """Orchestrate triage + fetch + embed + deep_read with maximum parallelism.
+
+        Flow:
+        1. Embedding triage phase 1 (cached embeddings → instant scoring)
+        2. In parallel:
+           a. fetch_texts + deep_read for already-selected papers
+           b. Generate missing embeddings + score remaining papers
+        3. LLM triage for any borderline papers
+        4. Final deep_read pass for newly selected papers
+        """
+        db = self.tools.db
+        session_id = self.tools.session_id
+        if not db or not session_id:
+            _log.error("PIPELINE TRIAGE: No DB or session")
+            return
+
+        total = db.paper_count(session_id)
+        _log.info("PIPELINE TRIAGE PARALLEL: %d papers total", total)
+
+        # ── Step 1: Instant triage with cached embeddings ──
+        sel1, rej1, brd1, papers_needing_embed = self._embedding_triage_cached(
+            topic, db, session_id, on_event,
+        )
+
+        # Pre-load claims from central DB
+        central_db = self.tools.central_db
+        if central_db:
+            self._preload_claims_from_central(central_db, db, session_id)
+
+        # ── Step 2: Parallel — fetch/deep_read selected + generate remaining embeddings ──
+        selected_count = db._conn.execute(
+            "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
+            (session_id,),
+        ).fetchone()[0]
+
+        _log.info(
+            "PIPELINE TRIAGE PARALLEL: %d papers selected after phase 1 — "
+            "starting fetch+deep_read in parallel with %d embedding generations",
+            selected_count, len(papers_needing_embed),
+        )
+        if on_event:
+            on_event(StepEvent("text", data=(
+                f"Phase 1 done: {selected_count} selected. Starting fetch+deep_read "
+                f"while generating {len(papers_needing_embed)} missing embeddings..."
+            ), depth=0))
+
+        deep_read_def = next(
+            (p for p in self._get_pipeline_phases() if p["name"] == "deep_read"), None
+        )
+
+        def _run_fetch_and_embed_phase():
+            self._pipeline_fetch_texts(on_event)
+            self._pipeline_embed(on_event)
+
+        def _run_deep_read():
+            time.sleep(5)  # Brief delay so some full texts land first
+            if deep_read_def and deep_read_def.get("objective"):
+                self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
+
+        def _run_embedding_generation():
+            if papers_needing_embed:
+                self._embedding_triage_generate(papers_needing_embed, db)
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futs = [
+                pool.submit(_run_fetch_and_embed_phase),
+                pool.submit(_run_deep_read),
+                pool.submit(_run_embedding_generation),
+            ]
+            for fut in as_completed(futs):
+                try:
+                    fut.result()
+                except Exception as exc:
+                    _log.exception("PIPELINE TRIAGE PARALLEL: thread failed: %s", exc)
+
+        # Mark phases as completed
+        for phase_name in ("fetch_texts", "embed", "deep_read"):
+            if db and session_id:
+                db.save_phase_checkpoint(session_id, phase_name)
+            completed.add(phase_name)
+
+        # ── Step 3: LLM triage for borderline papers ──
+        untriaged = db._conn.execute(
+            "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read IS NULL",
+            (session_id,),
+        ).fetchone()[0]
+
+        if untriaged > 0:
+            _log.info("PIPELINE TRIAGE PARALLEL: %d borderline papers → LLM triage", untriaged)
+            self._pipeline_triage(topic, context, on_event)
+
+            # ── Step 4: Deep read newly selected papers ──
+            if deep_read_def and deep_read_def.get("objective"):
+                new_selected = db._conn.execute(
+                    "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
+                    (session_id,),
+                ).fetchone()[0]
+                if new_selected > selected_count:
+                    _log.info(
+                        "PIPELINE TRIAGE PARALLEL: %d new papers selected by LLM — running additional deep_read",
+                        new_selected - selected_count,
+                    )
+                    self._pipeline_fetch_texts(on_event)
+                    self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
+        else:
+            _log.info("PIPELINE TRIAGE PARALLEL: No borderline papers — skipping LLM triage")
+
+        # Deep read continuation to meet targets
+        if deep_read_def and db and session_id:
+            self._deep_read_batched_continuation(
+                deep_read_def, topic, paper_type, context, on_event, db, session_id,
+            )
+
+        # PRISMA stats
+        final_selected = db._conn.execute(
+            "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
+            (session_id,),
+        ).fetchone()[0]
+        db.store_prisma_stat(session_id, "records_identified", total)
+        db.store_prisma_stat(session_id, "records_screened", total)
+        db.store_prisma_stat(session_id, "excluded_screening", total - final_selected)
+        db.store_prisma_stat(session_id, "fulltext_assessed", final_selected)
+        _log.info("PIPELINE TRIAGE PARALLEL: Complete — %d/%d papers selected", final_selected, total)
+
     def _pipeline_triage(
         self, topic: str, context: ExternalContext, on_event: StepCallback | None,
     ) -> None:
-        """Run batched triage — each batch evaluates ~40 papers."""
+        """Run triage: embedding scoring (cached → generate) then LLM for borderline."""
         _log.info("PIPELINE: Starting batched triage")
 
         db = self.tools.db
@@ -1016,41 +1322,81 @@ class RLMEngine:
         total = db.paper_count(session_id)
         _log.info("PIPELINE TRIAGE: %d papers to triage", total)
 
-        system_prompt = build_phase_system_prompt(
-            phase="analyst_triage", topic=topic, rules=context.rules,
-            paper_type=self.config.paper_type,
+        # Phase 1: Score papers with CACHED embeddings only (instant, no API)
+        sel1, rej1, brd1, papers_needing_embed = self._embedding_triage_cached(
+            topic, db, session_id, on_event,
         )
 
-        batch_num = 0
-        offset = 0
-        while offset < total:
-            if self.cancel_flag.is_set():
-                break
+        # Phase 2: Generate missing embeddings + score (API calls, but cheap)
+        if papers_needing_embed:
+            sel2, rej2, brd2 = self._embedding_triage_generate(papers_needing_embed, db)
+        else:
+            sel2, rej2, brd2 = 0, 0, 0
 
-            batch_num += 1
-            _log.info("PIPELINE TRIAGE: Batch %d (offset=%d)", batch_num, offset)
-            if on_event:
-                on_event(StepEvent("text", data=f"Triage batch {batch_num} (papers {offset}-{offset + self._TRIAGE_BATCH_SIZE})", depth=0))
+        total_selected = sel1 + sel2
+        total_rejected = rej1 + rej2
+        total_borderline = brd1 + brd2
 
-            objective = (
-                f"Triage batch {batch_num}: "
-                f"1. Call list_papers(limit={self._TRIAGE_BATCH_SIZE}, offset={offset}). "
-                f"2. For EACH paper, score relevance 0.0-1.0 to: {topic}. "
-                f"3. You MUST call rate_papers with ALL ratings. Set selected=true for score >= 0.6. "
-                f"Score < 0.3 for unrelated papers. "
-                f"You MUST call rate_papers even if no papers are relevant — rate them all as low."
+        _log.info(
+            "PIPELINE TRIAGE: Embedding triage totals — selected=%d, rejected=%d, borderline=%d",
+            total_selected, total_rejected, total_borderline,
+        )
+
+        # Phase 3: LLM triage only for borderline papers
+        untriaged = db._conn.execute(
+            "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read IS NULL",
+            (session_id,),
+        ).fetchone()[0]
+
+        if untriaged > 0:
+            _log.info("PIPELINE TRIAGE: %d borderline papers need LLM triage", untriaged)
+
+            system_prompt = build_phase_system_prompt(
+                phase="analyst_triage", topic=topic, rules=context.rules,
+                paper_type=self.config.paper_type,
             )
 
-            self._solve_recursive(
-                objective=objective,
-                context=context,
-                depth=self.config.max_depth,
-                on_event=on_event,
-                system_prompt_override=system_prompt,
-                phase="analyst_triage",
-                max_steps=self.config.triage_step_budget,
-            )
-            offset += self._TRIAGE_BATCH_SIZE
+            batch_num = 0
+            offset = 0
+            while offset < untriaged + self._TRIAGE_BATCH_SIZE:
+                if self.cancel_flag.is_set():
+                    break
+
+                batch_num += 1
+                _log.info("PIPELINE TRIAGE: LLM Batch %d (offset=%d)", batch_num, offset)
+                if on_event:
+                    on_event(StepEvent("text", data=f"LLM triage batch {batch_num} (borderline papers)", depth=0))
+
+                objective = (
+                    f"Triage batch {batch_num}: "
+                    f"1. Call list_papers(limit={self._TRIAGE_BATCH_SIZE}, offset={offset}, filter='untriaged'). "
+                    f"2. For EACH paper, score relevance 0.0-1.0 to: {topic}. "
+                    f"3. You MUST call rate_papers with ALL ratings. Set selected=true for score >= 0.6. "
+                    f"Score < 0.3 for unrelated papers. "
+                    f"You MUST call rate_papers even if no papers are relevant — rate them all as low."
+                )
+
+                self._solve_recursive(
+                    objective=objective,
+                    context=context,
+                    depth=self.config.max_depth,
+                    on_event=on_event,
+                    system_prompt_override=system_prompt,
+                    phase="analyst_triage",
+                    max_steps=self.config.triage_step_budget,
+                )
+                offset += self._TRIAGE_BATCH_SIZE
+
+                # Check if all borderline papers are now triaged
+                remaining = db._conn.execute(
+                    "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read IS NULL",
+                    (session_id,),
+                ).fetchone()[0]
+                if remaining == 0:
+                    _log.info("PIPELINE TRIAGE: All borderline papers triaged")
+                    break
+        else:
+            _log.info("PIPELINE TRIAGE: No borderline papers — skipping LLM triage")
 
         # Report
         selected_count = 0
