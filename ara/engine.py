@@ -494,14 +494,20 @@ class RLMEngine:
                 "Be PRECISE about contribution — do not overclaim. Acknowledge that prior work "
                 "has addressed related questions. "
                 "State what THIS paper adds: the integrative framework connecting them. "
-                "Use (Author, Year) citations. Call list_papers first."
+                "Use (Author, Year) citations. Call list_papers first. "
+                "ANTI-REPETITION: State the gap ONCE in the Purpose line. Do NOT restate "
+                "the gap in Findings or Originality — refer to it, don't repeat it."
             )),
             ("introduction", (
                 f"Write the introduction ({c.words_introduction}+ words). Include: opening hook, "
                 f"the theoretical puzzle, explicit gap statement, framework preview, "
                 f"contribution statement (theory + practice), {c.cites_introduction}+ citations. "
                 f"Be PRECISE about contribution claims — acknowledge related prior work "
-                f"before stating what THIS paper adds."
+                f"before stating what THIS paper adds. "
+                f"ANTI-REPETITION: This is the ONE place to state the gap and contribution "
+                f"fully. All other sections should REFERENCE the intro's gap statement, "
+                f"not restate it. Write 'As argued in the introduction...' or 'The gap "
+                f"identified above...' instead of restating the same language."
             )),
             ("theoretical_background", (
                 f"Write the theoretical background ({c.words_theoretical_background}+ words). "
@@ -509,7 +515,10 @@ class RLMEngine:
                 f"key developments, current state, AND limitations. "
                 f"Show where streams converge and conflict. {c.cites_literature_review}+ citations. "
                 f"Search list_papers for foundational authors in the field. "
-                f"End with transition to framework development."
+                f"End with transition to framework development. "
+                f"ANTI-REPETITION: Do NOT restate the gap from the introduction. "
+                f"End by showing how the convergence of streams MOTIVATES the framework, "
+                f"not by re-declaring the gap."
             )),
             ("framework", (
                 f"Write the framework development section ({c.words_framework}+ words). "
@@ -520,31 +529,49 @@ class RLMEngine:
                 "(c) Multi-level framework overview (antecedents → mechanisms → outcomes) explaining "
                 "the logic of each level and how they connect. "
                 "Use domain-specific examples throughout. "
-                "Ground every element in the theoretical background. 15+ citations."
+                "Ground every element in the theoretical background. 15+ citations. "
+                "CONSTRUCT HIERARCHY: If you have 3+ novel constructs, identify ONE as primary "
+                "(the core mechanism), ONE as secondary (enabling condition), and subordinate "
+                "any others as derived capabilities. Do NOT present 3+ constructs as co-equal — "
+                "reviewers will flag construct proliferation."
             )),
             ("propositions", (
                 f"Write the propositions section ({c.words_propositions}+ words). "
                 "This section contains the FORMAL TESTABLE PROPOSITIONS derived from the framework "
                 "described in the previous section. Do NOT repeat the framework description. "
-                "Present 5-8 formal propositions. For EACH: "
+                "CRITICAL — READ SYNTHESIS FIRST: Check if a synthesis.md or synthesis_data.md "
+                "file exists in sections/. If the synthesis phase produced REVISED propositions "
+                "(e.g., dropping established-knowledge propositions or merging redundant ones), "
+                "use the REVISED set as authoritative. Do NOT re-introduce propositions that "
+                "the synthesis/critic phases flagged as 'established' or 'well-trodden.' "
+                "Present 4-6 propositions (NOT 8 — depth over breadth). For EACH: "
                 "formal statement ('Proposition N: ...'), 2-3 paragraphs of theoretical justification, "
                 "supporting evidence from literature, boundary conditions. "
                 "Identify the most novel proposition and give it its OWN subsection — "
                 "operationalize the construct precisely with domain-specific examples. "
                 "At least 2 counter-intuitive propositions that challenge conventional wisdom. "
-                "End with a summary table of all propositions. 3+ citations per proposition."
+                "End with a summary table — ensure the table descriptions MATCH the proposition "
+                "text exactly. Do NOT use different language in the table vs. the text. "
+                "NOVELTY FILTER: If a proposition restates a well-established finding "
+                "(e.g., inverted-U autonomy effects), drop it. Your contribution is the "
+                "NEW mechanisms, not confirming what's known. 3+ citations per proposition."
             )),
             ("discussion", (
                 f"Write the discussion ({c.words_discussion}+ words). Include: "
                 "theoretical contributions (how framework extends each stream), "
                 "comparison table with 3+ existing frameworks, "
                 "specific managerial implications, boundary conditions/limitations, "
-                "5+ future research studies with suggested methodologies. {c.cites_discussion}+ citations."
+                "5+ future research studies with suggested methodologies. {c.cites_discussion}+ citations. "
+                "ANTI-REPETITION: Do NOT restate the gap or contribution from the introduction. "
+                "Instead, show HOW the framework RESOLVES the tensions identified earlier. "
+                "Start with 'This paper developed...' not 'There is a gap in...'"
             )),
             ("conclusion", (
                 f"Write the conclusion ({c.words_conclusion}+ words). Include: "
                 "framework's core logic summary, key takeaways for theory and practice, "
-                "the single most important insight, closing statement on broader significance."
+                "the single most important insight, closing statement on broader significance. "
+                "ANTI-REPETITION: Synthesize, don't summarize. A conclusion that restates "
+                "the intro is wasted space. State the insight the reader should walk away with."
             )),
         ]
 
@@ -1692,6 +1719,15 @@ class RLMEngine:
             writing_brief = brief_file.read_text(encoding="utf-8")
             _log.info("PIPELINE WRITER: Loaded writing brief from advisory board (%d chars)", len(writing_brief))
 
+        # Load synthesis output — contains revised propositions and critic feedback
+        synthesis_guidance = ""
+        for syn_file in ("synthesis.md", "synthesis_data.md"):
+            sf = sections_dir / syn_file
+            if sf.exists():
+                synthesis_guidance += sf.read_text(encoding="utf-8")[:4000] + "\n\n"
+        if synthesis_guidance:
+            _log.info("PIPELINE WRITER: Loaded synthesis guidance (%d chars)", len(synthesis_guidance))
+
         system_prompt = build_phase_system_prompt(
             phase="writer", topic=topic, rules=context.rules,
             paper_type=paper_type,
@@ -1741,10 +1777,22 @@ class RLMEngine:
                     f"Follow this guidance closely — it was produced by expert advisors who analyzed all evidence.\n"
                 )
 
+            # Inject synthesis guidance for proposition-dependent sections
+            synthesis_instruction = ""
+            if synthesis_guidance and section_name in ("propositions", "framework", "discussion"):
+                synthesis_instruction = (
+                    f"\n\nSYNTHESIS PHASE OUTPUT (AUTHORITATIVE):\n{synthesis_guidance[:3000]}\n"
+                    f"The synthesis phase reviewed all evidence and may have REVISED propositions "
+                    f"(dropping established-knowledge items, merging redundant ones). "
+                    f"Use the REVISED proposition set if one exists. Do NOT re-introduce "
+                    f"propositions that were dropped by the synthesis/critic phases.\n"
+                )
+
             objective = (
                 f"Write the '{section_name}' section for the research paper on: {topic}. "
                 f"{instruction} "
                 f"{brief_instruction}"
+                f"{synthesis_instruction}"
                 f"MANDATORY FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
                 f"Use search_similar(text='<section theme>') to find the most relevant papers for this section. "
                 f"For the 2-3 most important papers in this section, call read_paper(paper_id=ID, include_fulltext=true). "
@@ -1752,6 +1800,10 @@ class RLMEngine:
                 f"Do NOT use markdown headers at the start — the system adds them. "
                 f"Every factual statement must cite a paper verified via list_claims or list_papers."
             )
+
+            # Inject special instructions (domain expertise, empirical context)
+            if self.config.special_instructions:
+                objective += f"\n\nAUTHOR DOMAIN EXPERTISE:\n{self.config.special_instructions}\n"
 
             result = self._solve_recursive(
                 objective=objective,
@@ -1873,7 +1925,39 @@ class RLMEngine:
             if long_uncited > 0:
                 issues.append(f"{long_uncited} paragraph(s) over 300 words with no citations")
 
-        # 5. Duplication check — compare with other sections (>60% overlap = problem)
+        # 5. Proposition table/text consistency check
+        if section_name == "propositions":
+            import re as _re2
+            # Extract proposition statements from text (P1:, P2:, Proposition 1:, etc.)
+            prop_statements = _re2.findall(
+                r'(?:Proposition\s+\d+|P\d+)\s*[:\.]\s*(.{30,200})',
+                content, _re2.IGNORECASE,
+            )
+            # Check if there's a summary table
+            table_rows = _re2.findall(r'\|[^|]+\|[^|]+\|', content)
+            if prop_statements and table_rows:
+                # Verify proposition count matches table rows (minus header)
+                data_rows = [r for r in table_rows if '---' not in r and 'Proposition' not in r.split('|')[1]]
+                if len(data_rows) > 0 and abs(len(prop_statements) - len(data_rows)) > 1:
+                    issues.append(
+                        f"Proposition count mismatch: {len(prop_statements)} in text vs "
+                        f"{len(data_rows)} in summary table — table must match text exactly"
+                    )
+
+        # 6. Gap statement repetition detection
+        if section_name in ("discussion", "conclusion", "theoretical_background", "framework"):
+            gap_phrases = _re.findall(
+                r'(?:gap|lacuna|understudied|under-explored|overlooked|neglected|'
+                r'limited attention|little is known|remains unclear|yet to)',
+                content, _re.IGNORECASE,
+            )
+            if len(gap_phrases) > 3:
+                issues.append(
+                    f"Gap statement repeated {len(gap_phrases)} times in this section. "
+                    f"State the gap in the introduction only — reference it here, don't restate it."
+                )
+
+        # 7. Duplication check — compare with other sections (>60% overlap = problem)
         _COMMON_ACADEMIC_WORDS = {
             "the", "and", "of", "to", "in", "a", "is", "that", "for", "was", "on", "are", "with",
             "as", "this", "by", "from", "be", "have", "an", "has", "their", "been", "were", "or",
