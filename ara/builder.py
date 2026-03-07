@@ -20,34 +20,17 @@ from .tools import ARATools
 
 
 def _build_hypothesis_model(cfg: ARAConfig) -> any:
-    """Build load-balanced model for hypothesis/critic phases (Opus 50% + GPT-5.4 50%)."""
-    models: list[tuple[any, float]] = []
-
-    # Opus 4.6 — 50% weight
+    """Build hypothesis/critic model — Opus 4.6 only."""
     if cfg.anthropic_api_key:
         try:
             opus = AnthropicModel(model="claude-opus-4-6", api_key=cfg.anthropic_api_key)
-            models.append((opus, 0.5))
-            _log.info("Hypothesis model: Opus 4.6 loaded (50%%)")
+            _log.info("Hypothesis model: Opus 4.6 loaded (100%%)")
+            return opus
         except Exception as exc:
             _log.warning("Failed to create Opus 4.6 for hypothesis: %s", exc)
 
-    # GPT-5.4 — 50% weight
-    if cfg.openai_api_key:
-        try:
-            gpt = OpenAIModel(model="gpt-5.4", api_key=cfg.openai_api_key)
-            models.append((gpt, 0.5))
-            _log.info("Hypothesis model: GPT-5.4 loaded (50%%)")
-        except Exception as exc:
-            _log.warning("Failed to create GPT-5.4 for hypothesis: %s", exc)
-
-    if not models:
-        _log.warning("No hypothesis models available — falling back to task model")
-        return None
-
-    if len(models) == 1:
-        _log.info("Hypothesis model: only one provider available — using %s at 100%%", models[0][0].model)
-        return models[0][0]
+    _log.warning("No hypothesis model available — falling back to task model")
+    return None
 
     return LoadBalancedModel(models)
 
