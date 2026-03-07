@@ -93,6 +93,14 @@ class BaseModel(Protocol):
 
 # ── Gemini (native SDK) ────────────────────────────────────────────────
 
+_DEEP_READ_ROUND_ROBIN_MODELS = [
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash-preview-05-20",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+]
+
 _GEMINI_CONTEXT_WINDOWS: dict[str, int] = {
     "gemini-2.0-flash": 1_048_576,
     "gemini-2.5-flash": 1_048_576,
@@ -356,6 +364,87 @@ _ANTHROPIC_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-sonnet-4-6": 200_000,
     "claude-haiku-4-5-20251001": 200_000,
 }
+
+
+class RoundRobinGeminiModel:
+    """Cycles through multiple Gemini models to multiply rate limit quota."""
+
+    def __init__(self, models: list[str], api_key: str):
+        from google import genai
+        self._models = models
+        self._client = genai.Client(api_key=api_key)
+        self._index = 0
+        self.model = models[0]  # Display name
+
+    def _next_model(self) -> str:
+        model = self._models[self._index % len(self._models)]
+        self._index += 1
+        return model
+
+    def context_window(self) -> int:
+        return _GEMINI_CONTEXT_WINDOWS.get(self._models[0], 1_048_576)
+
+    def create_conversation(
+        self, system_prompt: str, tool_defs: list[dict[str, Any]],
+    ) -> Conversation:
+        return Conversation(system_prompt=system_prompt, tool_defs=tool_defs)
+
+    def generate(
+        self, conversation: Conversation,
+        on_chunk: Callable[[str], None] | None = None,
+        _max_retries: int = 5,
+    ) -> ModelTurn:
+        from google.genai import types
+
+        tools = _tool_defs_to_gemini(conversation.tool_defs) if conversation.tool_defs else None
+        contents = GeminiModel._build_contents(self, conversation)
+
+        config = types.GenerateContentConfig(
+            system_instruction=conversation.system_prompt or None,
+            tools=tools,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+
+        # Try each model in round-robin, skip rate-limited ones
+        tried = set()
+        for _ in range(len(self._models) * 2):
+            model_name = self._next_model()
+            if model_name in tried:
+                continue
+            try:
+                result = GeminiModel._stream_generate(self, model_name, contents, config, on_chunk)
+                _log.info("RoundRobin: %s succeeded", model_name)
+                return result
+            except Exception as exc:
+                error_text = str(exc).lower()
+                if "quota" in error_text or "429" in error_text or "resource_exhausted" in error_text:
+                    tried.add(model_name)
+                    _log.info("RoundRobin: %s rate limited, rotating...", model_name)
+                    continue
+                if "api key" in error_text or "403" in error_text:
+                    raise ModelError(f"Authentication failed: {exc}") from exc
+                tried.add(model_name)
+                _log.warning("RoundRobin: %s failed: %s, rotating...", model_name, exc)
+                continue
+
+        # All models rate limited — wait and retry the primary
+        _log.warning("RoundRobin: ALL %d models rate limited — waiting 30s", len(self._models))
+        time.sleep(30)
+        model_name = self._next_model()
+        return GeminiModel._stream_generate(self, model_name, contents, config, on_chunk)
+
+    def append_user_message(self, conv: Conversation, text: str) -> None:
+        conv._messages.append({"role": "user", "text": text})
+
+    def append_assistant_turn(self, conv: Conversation, turn: ModelTurn) -> None:
+        conv._messages.append({"role": "assistant", "turn": turn})
+
+    def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
+        conv._messages.append({"role": "tool_results", "results": results})
+
+    # Borrow _build_contents from GeminiModel
+    _build_contents = GeminiModel._build_contents
+    _stream_generate = GeminiModel._stream_generate
 
 
 class AnthropicModel:

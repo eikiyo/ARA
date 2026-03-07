@@ -83,15 +83,18 @@ def build_engine(cfg: ARAConfig) -> RLMEngine:
         except Exception as exc:
             _log.warning("Failed to create light model (%s), using main model: %s", light_model_name, exc)
 
-    # Build deep_read model (Flash 3.1 — fast extraction, avoid Pro rate limits)
-    deep_read_model_name = "gemini-3-flash-preview"
+    # Build deep_read model — round-robin across 5 Gemini models for 5x rate limit quota
+    from .model import RoundRobinGeminiModel, _DEEP_READ_ROUND_ROBIN_MODELS
     deep_read_model = model  # fallback
-    if cfg.google_api_key and deep_read_model_name != model_name:
+    if cfg.google_api_key:
         try:
-            deep_read_model = GeminiModel(model=deep_read_model_name, api_key=cfg.google_api_key)
-            _log.info("Deep read model: %s (for high-volume claim extraction)", deep_read_model_name)
+            deep_read_model = RoundRobinGeminiModel(
+                models=_DEEP_READ_ROUND_ROBIN_MODELS, api_key=cfg.google_api_key,
+            )
+            _log.info("Deep read model: round-robin across %d models: %s",
+                       len(_DEEP_READ_ROUND_ROBIN_MODELS), ", ".join(_DEEP_READ_ROUND_ROBIN_MODELS))
         except Exception as exc:
-            _log.warning("Failed to create deep_read model (%s), using main model: %s", deep_read_model_name, exc)
+            _log.warning("Failed to create round-robin model, using main model: %s", exc)
 
     # Build hypothesis/critic model (Opus 50% + GPT-5.4 50%)
     hypothesis_model = None
