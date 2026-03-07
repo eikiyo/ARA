@@ -253,58 +253,51 @@ class GeminiModel:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
+        # Round-robin through primary + fallbacks: no retries, immediate rotation
+        fallbacks = _GEMINI_FALLBACK_CHAIN.get(self.model, [])
+        all_models = [self.model] + fallbacks
         last_exc: Exception | None = None
-        for attempt in range(_max_retries):
-            try:
-                return self._stream_generate(self.model, contents, config, on_chunk)
 
+        for model_name in all_models:
+            try:
+                return self._stream_generate(model_name, contents, config, on_chunk)
             except Exception as exc:
                 error_text = str(exc).lower()
 
-                # Auth errors — no point retrying
+                # Auth errors — no point trying other models
                 if "api key" in error_text or "403" in error_text:
                     raise ModelError(f"Authentication failed: {exc}") from exc
 
-                # Rate limit — retry with exponential backoff
+                # Rate limit — immediately try next model, no sleep
                 if "quota" in error_text or "429" in error_text or "resource_exhausted" in error_text:
                     last_exc = exc
-                    wait = min(2 ** attempt * 2, 60)
-                    _log.warning("Rate limited on %s (attempt %d/%d), retrying in %ds...",
-                                 self.model, attempt + 1, _max_retries, wait)
-                    if on_chunk:
-                        on_chunk(f"\n[Rate limited — retrying in {wait}s...]\n")
-                    time.sleep(wait)
+                    _log.warning("Rate limited on %s, rotating to next model...", model_name)
                     continue
 
-                # Other API errors — retry once, then fail
-                if attempt == 0:
+                # Other API errors — retry once on same model, then rotate
+                if last_exc is None:
                     last_exc = exc
-                    _log.warning("API error (attempt 1), retrying in 3s: %s", exc)
-                    time.sleep(3)
-                    continue
-                raise ModelError(f"Gemini API error: {exc}") from exc
-
-        # Primary model exhausted — try fallback chain
-        fallbacks = _GEMINI_FALLBACK_CHAIN.get(self.model, [])
-        for fallback_model in fallbacks:
-            _log.warning("FALLBACK: %s exhausted, trying %s", self.model, fallback_model)
-            if on_chunk:
-                on_chunk(f"\n[Switching to fallback: {fallback_model}]\n")
-            try:
-                return self._stream_generate(fallback_model, contents, config, on_chunk)
-            except Exception as fb_exc:
-                fb_error = str(fb_exc).lower()
-                if "quota" in fb_error or "429" in fb_error or "resource_exhausted" in fb_error:
-                    _log.warning("FALLBACK: %s also rate limited, trying next...", fallback_model)
-                    time.sleep(5)
-                    continue
-                _log.warning("FALLBACK: %s failed: %s", fallback_model, fb_exc)
+                    _log.warning("API error on %s, retrying once: %s", model_name, exc)
+                    try:
+                        time.sleep(2)
+                        return self._stream_generate(model_name, contents, config, on_chunk)
+                    except Exception:
+                        _log.warning("Retry failed on %s, rotating...", model_name)
+                        continue
+                _log.warning("API error on %s: %s, rotating...", model_name, exc)
                 continue
 
-        raise RateLimitError(
-            f"All models exhausted: {self.model} + {', '.join(fallbacks) or 'no fallbacks'}. "
-            f"Wait a few minutes and try again."
-        ) from last_exc
+        # All models exhausted — single 30s wait + retry primary
+        _log.warning("All %d models rate limited — waiting 30s then retrying %s",
+                     len(all_models), self.model)
+        time.sleep(30)
+        try:
+            return self._stream_generate(self.model, contents, config, on_chunk)
+        except Exception as final_exc:
+            raise RateLimitError(
+                f"All models exhausted: {', '.join(all_models)}. "
+                f"Wait a few minutes and try again."
+            ) from final_exc
 
     def append_user_message(self, conv: Conversation, text: str) -> None:
         conv._messages.append({"role": "user", "text": text})
@@ -501,7 +494,7 @@ class AnthropicModel:
     def generate(
         self, conversation: Conversation,
         on_chunk: Callable[[str], None] | None = None,
-        _max_retries: int = 10,
+        _max_retries: int = 3,
     ) -> ModelTurn:
         messages = self._build_messages(conversation)
         tools = self._tool_defs_to_anthropic(conversation.tool_defs) if conversation.tool_defs else None
@@ -563,10 +556,8 @@ class AnthropicModel:
 
                 if "rate_limit" in error_text or "429" in error_text or "overloaded" in error_text:
                     last_exc = exc
-                    wait = min(2 ** attempt * 2, 60)
+                    wait = min(2 ** attempt * 3 + 2, 30)  # 5, 8, 11, ... cap 30s
                     _log.warning("Anthropic rate limited (attempt %d/%d), retrying in %ds...", attempt + 1, _max_retries, wait)
-                    if on_chunk:
-                        on_chunk(f"\n[Rate limited — retrying in {wait}s...]\n")
                     time.sleep(wait)
                     continue
 
