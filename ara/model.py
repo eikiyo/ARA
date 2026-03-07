@@ -442,9 +442,10 @@ class RoundRobinGeminiModel:
     def append_tool_results(self, conv: Conversation, results: list[ToolResult]) -> None:
         conv._messages.append({"role": "tool_results", "results": results})
 
-    # Borrow _build_contents from GeminiModel
+    # Borrow methods from GeminiModel
     _build_contents = GeminiModel._build_contents
     _stream_generate = GeminiModel._stream_generate
+    estimate_tokens = GeminiModel.estimate_tokens
 
 
 class AnthropicModel:
