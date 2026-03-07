@@ -163,7 +163,7 @@ class ARAConfig:
             max_search_rounds=_safe_int("ARA_MAX_SEARCH_ROUNDS", 6),
             paper_critic_max_revisions=_safe_int("ARA_PAPER_CRITIC_MAX_REVISIONS", 3),
             section_critic_max_revisions=_safe_int("ARA_SECTION_CRITIC_MAX_REVISIONS", 2),
-            min_claims=_safe_int("ARA_MIN_CLAIMS", 150),
+            min_claims=_safe_int("ARA_MIN_CLAIMS", 300),
             min_deep_read_papers=_safe_int("ARA_MIN_DEEP_READ_PAPERS", 120),
             snowball_top_papers=_safe_int("ARA_SNOWBALL_TOP_PAPERS", 15),
             snowball_refs_per_paper=_safe_int("ARA_SNOWBALL_REFS_PER_PAPER", 8),
