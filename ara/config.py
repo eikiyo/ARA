@@ -49,6 +49,8 @@ class ARAConfig:
     snowball_refs_per_paper: int = 8
 
     # Triage
+    triage_select_threshold: float = 0.65
+    triage_reject_threshold: float = 0.40
     triage_batch_size: int = 40
 
     # Per-phase step budgets
@@ -165,6 +167,8 @@ class ARAConfig:
             min_deep_read_papers=_safe_int("ARA_MIN_DEEP_READ_PAPERS", 120),
             snowball_top_papers=_safe_int("ARA_SNOWBALL_TOP_PAPERS", 15),
             snowball_refs_per_paper=_safe_int("ARA_SNOWBALL_REFS_PER_PAPER", 8),
+            triage_select_threshold=_safe_float("ARA_TRIAGE_SELECT_THRESHOLD", 0.65),
+            triage_reject_threshold=_safe_float("ARA_TRIAGE_REJECT_THRESHOLD", 0.40),
             triage_batch_size=_safe_int("ARA_TRIAGE_BATCH_SIZE", 40),
             triage_step_budget=_safe_int("ARA_TRIAGE_STEP_BUDGET", 20),
             min_quality_citations=_safe_int("ARA_MIN_QUALITY_CITATIONS", 40),

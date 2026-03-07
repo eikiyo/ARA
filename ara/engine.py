@@ -1031,19 +1031,16 @@ class RLMEngine:
             return 0.0
         return dot / (norm_a * norm_b)
 
-    _SELECT_THRESHOLD = 0.45
-    _REJECT_THRESHOLD = 0.20
-
     def _score_and_store(self, db: Any, pid: int, sim: float) -> str:
         """Score a paper and commit immediately. Returns 'selected', 'rejected', or 'borderline'."""
-        if sim >= self._SELECT_THRESHOLD:
+        if sim >= self.config.triage_select_threshold:
             db._conn.execute(
                 "UPDATE papers SET relevance_score = ?, selected_for_deep_read = 1 WHERE paper_id = ?",
                 (round(sim, 3), pid),
             )
             db._conn.commit()
             return "selected"
-        elif sim < self._REJECT_THRESHOLD:
+        elif sim < self.config.triage_reject_threshold:
             db._conn.execute(
                 "UPDATE papers SET relevance_score = ?, selected_for_deep_read = 0 WHERE paper_id = ?",
                 (round(sim, 3), pid),
