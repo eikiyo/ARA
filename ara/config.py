@@ -22,7 +22,7 @@ class ARAConfig:
     # Model
     model: str = "gemini-3.1-pro-preview"
     writer_model: str = "gemini-3.1-pro-preview"
-    light_model: str = "gemini-3.1-flash-lite-preview"
+    light_model: str = "gemini-2.5-flash-lite"
     google_api_key: str | None = None
 
     # Engine limits
@@ -150,7 +150,7 @@ class ARAConfig:
             session_root_dir=os.getenv("ARA_SESSION_DIR", "ara_data"),
             model=os.getenv("ARA_MODEL", "gemini-3.1-pro-preview"),
             writer_model=os.getenv("ARA_WRITER_MODEL", "gemini-3.1-pro-preview"),
-            light_model=os.getenv("ARA_LIGHT_MODEL", "gemini-3.1-flash-lite-preview"),
+            light_model=os.getenv("ARA_LIGHT_MODEL", "gemini-2.5-flash-lite"),
             google_api_key=os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY"),
             max_depth=_safe_int("ARA_MAX_DEPTH", 4),
             max_steps_per_call=_safe_int("ARA_MAX_STEPS", 150),

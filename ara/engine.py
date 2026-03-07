@@ -2150,7 +2150,7 @@ class RLMEngine:
         elif phase == "analyst_deep_read":
             active_model = self.deep_read_model  # Flash 3.1 for speed — deep_read is high-volume extraction
         elif phase == "brancher":
-            active_model = self.model
+            active_model = self.light_model  # Flash Lite — brancher is search-heavy, doesn't need Pro
         elif phase in ("scout", "verifier", "protocol"):
             active_model = self.light_model
         else:
