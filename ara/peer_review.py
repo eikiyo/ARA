@@ -590,40 +590,10 @@ class PeerReviewPipeline:
         else:
             self._emit("Resuming — skipping revision (already applied)")
 
-        # ── Cycle 2: Review the revision ───────────────────────
-        if not self._check_budget():
-            self._emit(f"Budget exhausted after revision (${self._cost_usd:.2f}). Skipping cycle 2.")
-            self._clear_checkpoint()
-            return self._finalize(topic, paper_type, cycle1_consensus, None, improved=True)
-
-        revised_md_path = ws / "output" / "paper.md"
-        revised_md = revised_md_path.read_text(encoding="utf-8") if revised_md_path.exists() else paper_md
-
-        self._emit("Starting Peer Review Cycle 2...")
-        cycle2_consensus = self._run_review_cycle(revised_md, topic, journal, cycle=2, paper_type=paper_type)
-        if not cycle2_consensus:
-            self._clear_checkpoint()
-            return self._finalize(topic, paper_type, cycle1_consensus, None, improved=True)
-
-        cycle2_scores = {attr: data["score"] for attr, data in cycle2_consensus.items()}
-        cycle2_avg = sum(cycle2_scores.values()) / len(cycle2_scores) if cycle2_scores else 0
-        self._emit(f"Cycle 2 average score: {cycle2_avg:.1f}/100")
-
-        # Store in central DB
-        if self.central_db:
-            improved = self._check_improvement(cycle1_scores, cycle2_scores)
-            self.central_db.store_peer_review_result(
-                session_topic=topic, cycle=2, scores=cycle2_scores,
-                average_score=cycle2_avg, improved=improved,
-            )
-
-        # ── Improvement check ──────────────────────────────────
-        improved = self._check_improvement(cycle1_scores, cycle2_scores)
-        self._emit(f"Improvement check: {'PASSED' if improved else 'FAILED'}")
-        self._emit(f"Total peer review cost: ${self._cost_usd:.2f}")
-
+        # ── Single cycle — skip cycle 2 (diminishing returns vs cost) ──
+        self._emit(f"Single-cycle peer review complete. Cost: ${self._cost_usd:.2f}")
         self._clear_checkpoint()
-        return self._finalize(topic, paper_type, cycle1_consensus, cycle2_consensus, improved)
+        return self._finalize(topic, paper_type, cycle1_consensus, None, improved=True)
 
     def _run_review_cycle(
         self, paper_md: str, topic: str, journal: str, cycle: int,

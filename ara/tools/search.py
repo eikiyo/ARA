@@ -590,19 +590,27 @@ def search_all(args: dict[str, Any], ctx: dict) -> str:
                        existing + len(central_papers))
             skip_external = True
 
-    # Sequential execution — one API at a time, Semantic Scholar last
-    for name, fn in _ALL_SEARCH_FNS:
-        if skip_external:
-            break
-        try:
-            raw = fn({"query": query, "limit": limit}, ctx)
-            data = json.loads(raw)
-            results[name] = data.get("papers", [])
-            if data.get("error"):
-                errors.append(f"{name}: {data['error']}")
-        except Exception as exc:
-            errors.append(f"{name}: {exc}")
-            _log.warning("Search %s failed: %s", name, exc)
+    # Parallel execution — all APIs at once (except Semantic Scholar last due to rate limits)
+    if not skip_external:
+        import concurrent.futures
+        def _run_search(name_fn: tuple[str, Any]) -> tuple[str, list, str | None]:
+            name, fn = name_fn
+            try:
+                raw = fn({"query": query, "limit": limit}, ctx)
+                data = json.loads(raw)
+                err = data.get("error")
+                return name, data.get("papers", []), f"{name}: {err}" if err else None
+            except Exception as exc:
+                _log.warning("Search %s failed: %s", name, exc)
+                return name, [], f"{name}: {exc}"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            futures = {pool.submit(_run_search, nf): nf[0] for nf in _ALL_SEARCH_FNS}
+            for fut in concurrent.futures.as_completed(futures):
+                name, papers, err = fut.result()
+                results[name] = papers
+                if err:
+                    errors.append(err)
 
     # Run registry sources (DOAJ, Zenodo, HAL, ERIC, etc.)
     if not skip_external:

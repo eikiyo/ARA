@@ -783,12 +783,69 @@ class RLMEngine:
                         db.save_phase_checkpoint(session_id, "brancher")
                     completed.add("brancher")
 
+            # C. Critic rejection loop — if critic rejected, re-run hypothesis with feedback
+            if name == "critic" and db and session_id:
+                sections_dir = self.config.workspace / self.config.session_root_dir / "output" / "sections"
+                critic_file = sections_dir / "critic.md"
+                hypothesis_def = next(
+                    (p for p in self._get_pipeline_phases() if p["name"] == "hypothesis"), None
+                )
+                if critic_file.exists() and hypothesis_def:
+                    critic_text = critic_file.read_text(encoding="utf-8")
+                    _MAX_CRITIC_LOOPS = 2  # max re-runs (total = 3 attempts including original)
+                    for loop_i in range(_MAX_CRITIC_LOOPS):
+                        if self.cancel_flag.is_set():
+                            break
+                        # Check for REJECT signal in critic output
+                        critic_lower = critic_text.lower()
+                        has_reject = "reject" in critic_lower and "approve" not in critic_lower
+                        # D. Critic tool enforcement — if critic output is too short, it didn't use tools
+                        critic_too_short = len(critic_text) < 500
+                        if not has_reject and not critic_too_short:
+                            break
+                        if critic_too_short:
+                            _log.warning("PIPELINE: Critic output too short (%d chars) — re-running with tool enforcement", len(critic_text))
+                            # Re-run critic with stronger tool-use instructions
+                            critic_def = next(
+                                (p for p in self._get_pipeline_phases() if p["name"] == "critic"), None
+                            )
+                            if critic_def:
+                                enforced_def = dict(critic_def)
+                                enforced_def["objective"] = (
+                                    "YOU MUST USE TOOLS. Do NOT generate a response without calling tools first. "
+                                    + enforced_def["objective"]
+                                )
+                                self._pipeline_run_phase(enforced_def, topic, paper_type, context, on_event)
+                                if critic_file.exists():
+                                    critic_text = critic_file.read_text(encoding="utf-8")
+                                continue
+                        _log.info("PIPELINE: Critic REJECTED hypothesis (loop %d/%d) — re-running hypothesis with feedback",
+                                  loop_i + 1, _MAX_CRITIC_LOOPS)
+                        if on_event:
+                            on_event(StepEvent("text", data=f"Critic rejected — revising hypothesis (attempt {loop_i + 2})", depth=0))
+                        # Inject critic feedback into hypothesis re-run
+                        revised_hyp_def = dict(hypothesis_def)
+                        revised_hyp_def["objective"] = (
+                            hypothesis_def["objective"]
+                            + f"\n\nCRITIC FEEDBACK (MUST ADDRESS):\n{critic_text[:3000]}\n"
+                            f"The critic REJECTED the previous hypothesis. Revise based on their specific objections."
+                        )
+                        self._pipeline_run_phase(revised_hyp_def, topic, paper_type, context, on_event)
+                        # Re-run critic on revised hypothesis
+                        critic_def = next(
+                            (p for p in self._get_pipeline_phases() if p["name"] == "critic"), None
+                        )
+                        if critic_def:
+                            self._pipeline_run_phase(critic_def, topic, paper_type, context, on_event)
+                            if critic_file.exists():
+                                critic_text = critic_file.read_text(encoding="utf-8")
+
             if db and session_id:
                 db.save_phase_checkpoint(session_id, name)
             if on_event:
                 on_event(StepEvent("subtask_end", data=f"Phase {name} complete", depth=0))
 
-        # Advisory board — multi-advisor deliberation before writing
+        # Advisory board — unified writing brief
         if "advisory_board" not in completed and not self.cancel_flag.is_set():
             self._pipeline_advisory_board(topic, paper_type, context, on_event)
             if db and session_id:
@@ -841,6 +898,19 @@ class RLMEngine:
             special_authors_instruction=special_authors_instruction,
             special_instructions=self.config.special_instructions,
         )
+
+        # B. Brancher → Hypothesis handover: inject brancher findings into hypothesis
+        if prompt_name == "hypothesis":
+            sections_dir = self.config.workspace / self.config.session_root_dir / "output" / "sections"
+            brancher_file = sections_dir / "brancher.md"
+            if brancher_file.exists():
+                brancher_output = brancher_file.read_text(encoding="utf-8")[:4000]
+                objective += (
+                    f"\n\nCROSS-DOMAIN FINDINGS FROM BRANCHER PHASE:\n{brancher_output}\n"
+                    f"Use these cross-domain connections to strengthen and diversify your hypotheses. "
+                    f"At least 2 hypotheses should build on brancher insights.\n"
+                )
+                _log.info("PIPELINE: Injected brancher output (%d chars) into hypothesis phase", len(brancher_output))
 
         # Reset search state for search phases
         if prompt_name in ("scout", "brancher"):
@@ -1517,141 +1587,65 @@ class RLMEngine:
         self, topic: str, paper_type: str,
         context: ExternalContext, on_event: StepCallback | None,
     ) -> None:
-        """Pre-writing advisory board: 4 advisors deliberate, then consensus writing brief."""
+        """Pre-writing advisory board: single unified advisor produces writing brief."""
         _log.info("=" * 40)
-        _log.info("PIPELINE: Advisory Board — pre-writing deliberation")
+        _log.info("PIPELINE: Advisory Board — unified writing brief")
         _log.info("=" * 40)
         if on_event:
-            on_event(StepEvent("subtask_start", data="Advisory Board: deliberating before writing", depth=0))
+            on_event(StepEvent("subtask_start", data="Advisory Board: producing writing brief", depth=0))
 
         ws = self.config.workspace
         sections_dir = ws / self.config.session_root_dir / "output" / "sections"
 
-        # Detect target journal for the journal reviewer
+        # Detect target journal
         from .peer_review import _detect_journal
         journal = self.config.peer_review_journal
         if journal == "auto":
             journal = _detect_journal(topic)
         _log.info("ADVISORY BOARD: Target journal: %s", journal)
 
-        # Load synthesis data for advisor context
+        # Load synthesis data for context
         synthesis_file = sections_dir / "synthesis_data.md"
         synthesis_data = ""
         if synthesis_file.exists():
             synthesis_data = synthesis_file.read_text(encoding="utf-8")[:8000]
 
-        # ── Round 1: Independent advisor recommendations ──────
-        advisor_plans: list[dict[str, str]] = []
+        # Load hypothesis and critic outputs for context
+        extra_context = ""
+        for ctx_file in ("hypothesis.md", "critic.md", "brancher.md"):
+            cf = sections_dir / ctx_file
+            if cf.exists():
+                extra_context += f"\n## {ctx_file.replace('.md', '').title()} Phase Output\n"
+                extra_context += cf.read_text(encoding="utf-8")[:3000] + "\n"
 
-        for advisor in self._ADVISOR_PERSONAS:
-            # Inject journal-specific focus for journal reviewer
-            if advisor["id"] == "journal_reviewer":
-                advisor = dict(advisor)  # shallow copy to avoid mutating class attr
-                advisor["focus"] = (
-                    f"You are a senior reviewer and editorial board member at {journal}. "
-                    f"You have reviewed 100+ papers for this journal and know exactly what gets published. "
-                    f"Your focus is on: "
-                    f"(a) whether this paper fits the scope and standards of {journal}, "
-                    f"(b) what {journal} reviewers specifically look for (methodology rigor, contribution clarity, "
-                    f"empirical grounding, theoretical novelty), "
-                    f"(c) how to frame the contribution to maximize acceptance probability at {journal}, "
-                    f"(d) common rejection reasons at {journal} and how to preempt them, "
-                    f"(e) which recent papers published in {journal} this paper should cite and engage with, "
-                    f"(f) the appropriate tone, structure, and presentation style for {journal}."
-                )
-            if self.cancel_flag.is_set():
-                break
-
-            _log.info("ADVISORY BOARD: %s analyzing evidence...", advisor["name"])
-            if on_event:
-                on_event(StepEvent("text", data=f"Advisory Board: {advisor['name']} analyzing...", depth=0))
-
-            advisor_objective = (
-                f"You are on the advisory board for a research paper on: {topic}. "
-                f"{advisor['focus']}\n\n"
-                f"You have {context.claim_count} claims from {context.papers_with_claims} deeply-read papers.\n"
-                f"SYNTHESIS DATA (summary):\n{synthesis_data[:3000]}\n\n"
-                f"INSTRUCTIONS:\n"
-                f"1. Call list_claims() to review all extracted evidence.\n"
-                f"2. Call get_risk_of_bias_table() and get_grade_table() to assess evidence quality.\n"
-                f"3. Use search_similar() to find the most relevant papers for key themes.\n"
-                f"4. Read 3-5 key papers using read_paper(paper_id=ID, include_fulltext=true).\n"
-                f"5. Based on your analysis, produce a DETAILED advisory report with:\n"
-                f"   - Your recommended narrative arc (what story should this paper tell?)\n"
-                f"   - Section-by-section recommendations (what each section MUST cover)\n"
-                f"   - Specific papers/claims to cite in each section (with paper_id and author names)\n"
-                f"   - Potential weaknesses to address proactively\n"
-                f"   - What makes this paper's contribution unique\n"
-                f"6. Save your report using write_section(section='advisor_{advisor['id']}', content=YOUR_REPORT)"
-            )
-
-            system_prompt = build_phase_system_prompt(
-                phase="advisory_board", topic=topic, rules=context.rules,
-                paper_type=paper_type,
-            )
-
-            result = self._solve_recursive(
-                objective=advisor_objective,
-                context=context,
-                depth=self.config.max_depth,
-                on_event=on_event,
-                system_prompt_override=system_prompt,
-                phase="advisory_board",
-                max_steps=40,
-            )
-
-            # Read the saved advisor report
-            advisor_file = sections_dir / f"advisor_{advisor['id']}.md"
-            report = ""
-            if advisor_file.exists():
-                report = advisor_file.read_text(encoding="utf-8")
-            elif result:
-                report = result
-
-            advisor_plans.append({
-                "advisor": advisor["name"],
-                "id": advisor["id"],
-                "report": report,
-            })
-            _log.info("ADVISORY BOARD: %s done — %d chars", advisor["name"], len(report))
-
-        if not advisor_plans:
-            _log.warning("ADVISORY BOARD: No advisor reports produced — skipping")
-            return
-
-        # ── Round 2: Consensus writing brief ──────────────────
-        _log.info("ADVISORY BOARD: Synthesizing consensus writing brief...")
-        if on_event:
-            on_event(StepEvent("text", data="Advisory Board: synthesizing consensus brief...", depth=0))
-
-        # Build combined advisor input
-        advisor_summaries = ""
-        for plan in advisor_plans:
-            advisor_summaries += f"\n## {plan['advisor']}'s Recommendations\n"
-            advisor_summaries += plan["report"][:4000] + "\n"
-
-        consensus_objective = (
-            f"You are the Senior Editor synthesizing the advisory board's recommendations "
-            f"for a research paper on: {topic}.\n"
+        # Single unified advisory call (replaces 2 advisors + 1 consensus = 3 calls)
+        advisory_objective = (
+            f"You are the Senior Advisory Board for a research paper on: {topic}.\n"
             f"TARGET JOURNAL: {journal}\n\n"
-            f"Two advisors have analyzed the evidence and produced recommendations:\n"
-            f"{advisor_summaries}\n\n"
-            f"IMPORTANT: The Journal Reviewer's input is CRITICAL — they know what {journal} "
-            f"accepts and rejects. Prioritize their framing and scope advice.\n\n"
+            f"You combine TWO roles:\n"
+            f"(A) DOMAIN EXPERT: theoretical framing, contribution positioning, narrative arc, "
+            f"which debates to engage, how to handle conflicting evidence.\n"
+            f"(B) JOURNAL REVIEWER for {journal}: scope fit, what gets published vs rejected, "
+            f"methodology rigor expectations, framing for maximum acceptance probability, "
+            f"common rejection reasons and how to preempt them.\n\n"
+            f"You have {context.claim_count} claims from {context.papers_with_claims} deeply-read papers.\n"
+            f"SYNTHESIS DATA:\n{synthesis_data[:4000]}\n\n"
+            f"{extra_context[:3000]}\n\n"
             f"INSTRUCTIONS:\n"
-            f"1. Call list_claims() to verify the advisors' evidence references.\n"
-            f"2. Call list_papers(compact=true) to get exact author names for citations.\n"
-            f"3. Resolve any DISAGREEMENTS between advisors — pick the stronger argument.\n"
-            f"4. Produce the DEFINITIVE WRITING BRIEF with:\n\n"
+            f"1. Call list_claims() to review all extracted evidence.\n"
+            f"2. Call get_risk_of_bias_table() and get_grade_table() to assess evidence quality.\n"
+            f"3. Call list_papers(compact=true) to get exact author names.\n"
+            f"4. Use search_similar() to find relevant papers for key themes.\n"
+            f"5. Produce the DEFINITIVE WRITING BRIEF with:\n\n"
             f"   ## Target Journal: {journal}\n"
             f"   (Key requirements, style expectations, what gets published vs rejected)\n\n"
             f"   ## Paper Narrative Arc\n"
             f"   (The overarching story: problem → gap → contribution → implications)\n\n"
             f"   ## Section-by-Section Blueprint\n"
-            f"   For EACH section (abstract, introduction, literature_review, methods, results, discussion, conclusion):\n"
-            f"   - Key argument/purpose of this section\n"
+            f"   For EACH section:\n"
+            f"   - Key argument/purpose\n"
             f"   - Specific subsections and their content\n"
-            f"   - MUST-CITE papers with (Author, Year) format — at least 5 per body section\n"
+            f"   - MUST-CITE papers with (Author, Year) — at least 5 per body section\n"
             f"   - Key claims to reference (by claim_id)\n"
             f"   - Transitions to next section\n\n"
             f"   ## Theoretical Framework\n"
@@ -1659,8 +1653,8 @@ class RLMEngine:
             f"   ## Evidence Hierarchy\n"
             f"   (Strongest evidence first, how to handle weak/conflicting evidence)\n\n"
             f"   ## Proactive Defense\n"
-            f"   (Anticipated reviewer objections at {journal} and how to address them in the text)\n\n"
-            f"5. Save using write_section(section='writing_brief', content=YOUR_BRIEF)"
+            f"   (Anticipated reviewer objections at {journal} and how to address them)\n\n"
+            f"6. Save using write_section(section='writing_brief', content=YOUR_BRIEF)"
         )
 
         system_prompt = build_phase_system_prompt(
@@ -1669,7 +1663,7 @@ class RLMEngine:
         )
 
         self._solve_recursive(
-            objective=consensus_objective,
+            objective=advisory_objective,
             context=context,
             depth=self.config.max_depth,
             on_event=on_event,
@@ -1685,12 +1679,6 @@ class RLMEngine:
             _log.info("ADVISORY BOARD: Writing brief saved — %d chars", brief_size)
         else:
             _log.warning("ADVISORY BOARD: Writing brief not saved — writer will proceed without it")
-
-        # Clean up individual advisor files (they've been synthesized)
-        for advisor in self._ADVISOR_PERSONAS:
-            f = sections_dir / f"advisor_{advisor['id']}.md"
-            if f.exists():
-                f.unlink()
 
         if on_event:
             on_event(StepEvent("subtask_end", data="Advisory Board complete", depth=0))
@@ -1727,6 +1715,50 @@ class RLMEngine:
                 synthesis_guidance += sf.read_text(encoding="utf-8")[:4000] + "\n\n"
         if synthesis_guidance:
             _log.info("PIPELINE WRITER: Loaded synthesis guidance (%d chars)", len(synthesis_guidance))
+
+        # F. Pre-load claims + papers data once — avoids repeated tool calls per section
+        cached_claims_summary = ""
+        cached_papers_summary = ""
+        db = self.tools.db
+        session_id = self.tools.session_id
+        if db and session_id:
+            try:
+                claims = db.get_claims(session_id)
+                if claims:
+                    # Build compact claims summary for injection
+                    claim_lines = []
+                    for c in claims[:80]:  # top 80 claims
+                        claim_lines.append(
+                            f"- [{c.get('claim_type', 'finding')}] {c.get('claim_text', '')[:120]} "
+                            f"(paper_id={c.get('paper_id')}, confidence={c.get('confidence', '')})"
+                        )
+                    cached_claims_summary = f"EVIDENCE ({len(claims)} claims, showing top {min(len(claims), 80)}):\n" + "\n".join(claim_lines)
+                    _log.info("PIPELINE WRITER: Pre-loaded %d claims for writer injection", len(claims))
+            except Exception as exc:
+                _log.warning("PIPELINE WRITER: Failed to pre-load claims: %s", exc)
+            try:
+                rows = db._conn.execute(
+                    "SELECT paper_id, title, authors, year FROM papers "
+                    "WHERE session_id = ? AND selected_for_deep_read = 1 "
+                    "ORDER BY citation_count DESC LIMIT 60",
+                    (session_id,),
+                ).fetchall()
+                if rows:
+                    paper_lines = []
+                    for r in rows:
+                        authors_raw = r["authors"] or "[]"
+                        try:
+                            authors_list = json.loads(authors_raw)
+                            first_author = authors_list[0] if authors_list else "Unknown"
+                            if isinstance(first_author, dict):
+                                first_author = first_author.get("name", first_author.get("family", "Unknown"))
+                        except Exception:
+                            first_author = "Unknown"
+                        paper_lines.append(f"- ({first_author}, {r['year']}) — {r['title'][:100]} [paper_id={r['paper_id']}]")
+                    cached_papers_summary = f"PAPERS ({len(rows)} selected, cite as (Author, Year)):\n" + "\n".join(paper_lines)
+                    _log.info("PIPELINE WRITER: Pre-loaded %d papers for writer injection", len(rows))
+            except Exception as exc:
+                _log.warning("PIPELINE WRITER: Failed to pre-load papers: %s", exc)
 
         system_prompt = build_phase_system_prompt(
             phase="writer", topic=topic, rules=context.rules,
@@ -1777,9 +1809,9 @@ class RLMEngine:
                     f"Follow this guidance closely — it was produced by expert advisors who analyzed all evidence.\n"
                 )
 
-            # Inject synthesis guidance for proposition-dependent sections
+            # Inject synthesis guidance into ALL writer sections (not just proposition-dependent ones)
             synthesis_instruction = ""
-            if synthesis_guidance and section_name in ("propositions", "framework", "discussion"):
+            if synthesis_guidance:
                 synthesis_instruction = (
                     f"\n\nSYNTHESIS PHASE OUTPUT (AUTHORITATIVE):\n{synthesis_guidance[:3000]}\n"
                     f"The synthesis phase reviewed all evidence and may have REVISED propositions "
@@ -1788,17 +1820,24 @@ class RLMEngine:
                     f"propositions that were dropped by the synthesis/critic phases.\n"
                 )
 
+            # F. Inject pre-loaded claims/papers to avoid repeated tool calls per section
+            data_injection = ""
+            if cached_claims_summary:
+                data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
+            if cached_papers_summary:
+                data_injection += f"\n{cached_papers_summary[:4000]}\n"
+
             objective = (
                 f"Write the '{section_name}' section for the research paper on: {topic}. "
                 f"{instruction} "
                 f"{brief_instruction}"
                 f"{synthesis_instruction}"
-                f"MANDATORY FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
+                f"{data_injection}"
                 f"Use search_similar(text='<section theme>') to find the most relevant papers for this section. "
                 f"For the 2-3 most important papers in this section, call read_paper(paper_id=ID, include_fulltext=true). "
                 f"Use write_section(section='{section_name}', content=YOUR_TEXT) to save. "
                 f"Do NOT use markdown headers at the start — the system adds them. "
-                f"Every factual statement must cite a paper verified via list_claims or list_papers."
+                f"Every factual statement must cite a paper from the data above using (Author, Year) format."
             )
 
             # Inject special instructions (domain expertise, empirical context)
