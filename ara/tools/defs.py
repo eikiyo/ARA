@@ -149,6 +149,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "offset": {"type": "integer", "description": "Skip first N papers (for pagination)"},
                 "compact": {"type": "boolean", "description": "If true, omit abstracts to save tokens"},
                 "selected_only": {"type": "boolean", "description": "If true, only return papers selected for deep reading"},
+                "needs_claims": {"type": "boolean", "description": "If true, exclude papers that already have extracted claims"},
             },
         },
     },

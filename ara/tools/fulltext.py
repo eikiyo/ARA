@@ -597,11 +597,12 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     total_fetched = stored + central_found
     total_needed_original = len(dois) + central_found
     summary = {
-        "total_needed": total_needed_original,
-        "fetched": total_fetched,
+        "papers_without_fulltext": total_needed_original,
+        "total_fetched": total_fetched,
         "from_central_db": central_found,
         "from_apis": stored,
-        "remaining": len(remaining),
+        "still_missing": len(remaining),
+        "note": f"Central DB matched {central_found}/{total_needed_original} papers (rest are from different topics or lack fulltext in cache)",
         "coverage": f"{total_fetched / total_needed_original * 100:.1f}%" if total_needed_original else "0%",
         "sources": source_stats,
     }

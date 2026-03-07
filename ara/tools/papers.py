@@ -213,12 +213,16 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
     # Allow filtering to only selected or untriaged papers
     selected_only = args.get("selected_only", False)
     filter_mode = args.get("filter", "")
+    needs_claims = args.get("needs_claims", False)
     where = "WHERE session_id = ?"
     params: list[Any] = [session_id]
     if selected_only:
         where += " AND selected_for_deep_read = 1"
     elif filter_mode == "untriaged":
         where += " AND selected_for_deep_read IS NULL"
+    if needs_claims:
+        where += " AND paper_id NOT IN (SELECT DISTINCT paper_id FROM claims WHERE session_id = ?)"
+        params.append(session_id)
 
     # Sort by relevance_score if available, fallback to citation_count
     order = "ORDER BY COALESCE(relevance_score, 0) DESC, citation_count DESC"

@@ -196,14 +196,16 @@ class RLMEngine:
                 "prompt": "analyst_deep_read",
                 "objective": (
                     "Extract structured claims from papers about {topic}. "
-                    "STEP 1: Call list_papers(selected_only=true, limit=100) to get triage-selected papers. "
-                    "STEP 2: For EVERY selected paper: call read_paper(paper_id=ID, include_fulltext=true) to get the full paper text, "
+                    "STEP 1: Call list_papers(selected_only=true, needs_claims=true, limit=100) to get papers that STILL NEED claim extraction. "
+                    "Papers that already have claims from the database are automatically excluded. "
+                    "STEP 2: For EVERY listed paper: call read_paper(paper_id=ID, include_fulltext=true) to get the full paper text, "
                     "then extract_claims with specific quotes from the text, then assess_risk_of_bias. "
                     "Each claim needs: claim_text, claim_type (finding/method/limitation/gap), "
                     "confidence (0-1), supporting_quotes (EXACT quotes from the paper text). "
                     "Also extract: sample_size, effect_size, p_value, study_design, population. "
                     "Process papers one at a time. Target: {min_claims}+ claims from {min_deep_read_papers}+ papers. "
-                    "DO NOT STOP until you have processed ALL selected papers. "
+                    "SKIP any paper that returns no full text — move to the next one immediately. "
+                    "DO NOT STOP until you have processed ALL listed papers. "
                     "If you run out of steps, you have failed. Keep going."
                 ),
             },
@@ -350,15 +352,17 @@ class RLMEngine:
                 "prompt": "analyst_deep_read",
                 "objective": (
                     "Extract theoretical arguments and evidence from papers about {topic}. "
-                    "STEP 1: Call list_papers(selected_only=true, limit=100) to get triage-selected papers. "
-                    "STEP 2: For EVERY selected paper: call read_paper(paper_id=ID, include_fulltext=true) to get the full paper text, then extract_claims. "
+                    "STEP 1: Call list_papers(selected_only=true, needs_claims=true, limit=100) to get papers that STILL NEED claim extraction. "
+                    "Papers that already have claims from the database are automatically excluded. "
+                    "STEP 2: For EVERY listed paper: call read_paper(paper_id=ID, include_fulltext=true) to get the full paper text, then extract_claims. "
                     "Focus on extracting: (a) theoretical arguments and frameworks proposed, "
                     "(b) key constructs and definitions, (c) empirical findings that support/challenge theories, "
                     "(d) research gaps and limitations identified, (e) boundary conditions discussed. "
                     "Use claim_type: 'theory' for theoretical arguments, 'finding' for evidence, "
                     "'gap' for research gaps, 'method' for methodological insights. "
                     "Process papers one at a time. Target: {min_claims}+ claims from {min_deep_read_papers}+ papers. "
-                    "DO NOT STOP until you have processed ALL selected papers."
+                    "SKIP any paper that returns no full text — move to the next one immediately. "
+                    "DO NOT STOP until you have processed ALL listed papers."
                 ),
             },
             {
@@ -851,6 +855,22 @@ class RLMEngine:
         # Use per-phase step budget if defined
         step_budget = self._phase_step_budgets().get(phase_def["name"], self.config.max_steps_per_call)
 
+        # Dynamic budget for deep_read: scale with papers that actually need processing
+        if phase_def["name"] == "deep_read" and self.tools.db and self.tools.session_id:
+            try:
+                needs = self.tools.db._conn.execute(
+                    "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1 "
+                    "AND paper_id NOT IN (SELECT DISTINCT paper_id FROM claims WHERE session_id = ?)",
+                    (self.tools.session_id, self.tools.session_id),
+                ).fetchone()[0]
+                # ~4 steps per paper (read + extract + risk_of_bias + overhead) + 5 startup steps
+                dynamic_budget = needs * 4 + 5
+                if dynamic_budget < step_budget:
+                    _log.info("DEEP_READ: Dynamic budget %d steps for %d papers (was %d)", dynamic_budget, needs, step_budget)
+                    step_budget = dynamic_budget
+            except Exception:
+                pass
+
         result = self._solve_recursive(
             objective=objective,
             context=context,
@@ -907,10 +927,11 @@ class RLMEngine:
                 f"CONTINUE extracting claims from papers about {topic}. "
                 f"You have {len(claims)} claims from {papers_with_claims} papers so far. "
                 f"Target: {self.config.min_claims}+ claims from {self.config.min_deep_read_papers}+ papers. "
-                f"Call list_papers(selected_only=true) to see ALL selected papers. "
-                f"Skip papers you already processed (call list_claims() to see which paper_ids have claims). "
-                f"Process the NEXT {_BATCH_SIZE} unprocessed papers. "
+                f"Call list_papers(selected_only=true, needs_claims=true, limit={_BATCH_SIZE}) to get papers that STILL NEED claims. "
+                f"Papers already processed are automatically excluded. "
+                f"Process ALL listed papers. "
                 f"For each: read_paper(paper_id=ID, include_fulltext=true) → extract_claims with EXACT quotes → assess_risk_of_bias. "
+                f"SKIP any paper with no full text — move to next. "
                 f"Stop after processing {_BATCH_SIZE} papers — another batch will follow."
             )
             batch_phase = {
