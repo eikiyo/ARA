@@ -691,22 +691,9 @@ class RLMEngine:
                         (p for p in self._get_pipeline_phases() if p["name"] == "verifier"), None
                     )
                     if verifier_def:
-                        _log.info("PIPELINE: Running protocol + verifier in parallel")
-                        if on_event:
-                            on_event(StepEvent("text", data="Running protocol + verifier in parallel", depth=0))
-
-                        def _run_protocol():
-                            self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
-
-                        def _run_verifier():
-                            self._pipeline_run_phase(verifier_def, topic, paper_type, context, on_event)
-
-                        t1 = _th.Thread(target=_run_protocol)
-                        t2 = _th.Thread(target=_run_verifier)
-                        t1.start()
-                        t2.start()
-                        t1.join(timeout=300)
-                        t2.join(timeout=300)
+                        _log.info("PIPELINE: Running protocol then verifier (sequential)")
+                        self._pipeline_run_phase(phase_def, topic, paper_type, context, on_event)
+                        self._pipeline_run_phase(verifier_def, topic, paper_type, context, on_event)
 
                         # Mark verifier as completed so it's skipped in the main loop
                         if db and session_id:
