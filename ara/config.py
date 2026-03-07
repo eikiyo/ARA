@@ -41,7 +41,7 @@ class ARAConfig:
     section_critic_max_revisions: int = 2
 
     # Deep read targets
-    min_claims: int = 150
+    min_claims: int = 300
     min_deep_read_papers: int = 120
 
     # Snowball

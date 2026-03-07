@@ -65,11 +65,13 @@ class RLMEngine:
         writer_model: BaseModel | None = None,
         hypothesis_model: BaseModel | None = None,
         light_model: BaseModel | None = None,
+        deep_read_model: BaseModel | None = None,
     ):
         self.model = model
         self.writer_model = writer_model or model
         self.hypothesis_model = hypothesis_model or model
         self.light_model = light_model or model
+        self.deep_read_model = deep_read_model or model
         self.tools = tools
         self.config = config
         self.cancel_flag = threading.Event()
@@ -635,6 +637,13 @@ class RLMEngine:
                         # Small delay so some full texts land before deep_read starts querying
                         import time
                         time.sleep(10)
+                        # Check if claim targets already met (e.g. from central DB pre-load)
+                        if db and session_id:
+                            existing_claims = len(db.get_claims(session_id))
+                            papers_done = len(set(c["paper_id"] for c in db.get_claims(session_id)))
+                            if existing_claims >= self.config.min_claims and papers_done >= self.config.min_deep_read_papers:
+                                _log.info("DEEP_READ: Targets already met (%d claims from %d papers) — skipping", existing_claims, papers_done)
+                                return
                         self._pipeline_run_phase(deep_read_def, topic, paper_type, context, on_event)
 
                     max_w = 3 if run_deep_read else 2
@@ -2144,7 +2153,9 @@ class RLMEngine:
             active_model = self.hypothesis_model
         elif phase in ("writer", "synthesis", "advisory_board"):
             active_model = self.writer_model
-        elif phase in ("analyst_deep_read", "brancher"):
+        elif phase == "analyst_deep_read":
+            active_model = self.deep_read_model  # Flash 3.1 for speed — deep_read is high-volume extraction
+        elif phase == "brancher":
             active_model = self.model
         elif phase in ("scout", "verifier", "protocol"):
             active_model = self.light_model
@@ -2305,6 +2316,21 @@ class RLMEngine:
                 capped_calls, context, depth, on_event, _result_cache, phase=phase,
             )
             active_model.append_tool_results(conversation, results)
+
+            # Early exit: deep_read stops the moment claim target is reached
+            if phase == "analyst_deep_read" and any(tc.name == "extract_claims" for tc in capped_calls):
+                _db = self.tools.db
+                _sid = self.tools.session_id
+                if _db and _sid:
+                    claim_count = _db._conn.execute(
+                        "SELECT COUNT(*) FROM claims WHERE session_id = ?", (_sid,)
+                    ).fetchone()[0]
+                    if claim_count >= self.config.min_claims:
+                        _log.info("DEEP_READ: Claim target reached (%d >= %d) — stopping early at step %d",
+                                  claim_count, self.config.min_claims, steps)
+                        if on_event:
+                            on_event(StepEvent("text", data=f"Claim target reached: {claim_count} claims. Moving to next phase.", depth=depth))
+                        break
 
             # Tell model about dropped calls so it doesn't re-send them blindly
             if dropped > 0:

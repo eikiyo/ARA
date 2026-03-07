@@ -83,6 +83,16 @@ def build_engine(cfg: ARAConfig) -> RLMEngine:
         except Exception as exc:
             _log.warning("Failed to create light model (%s), using main model: %s", light_model_name, exc)
 
+    # Build deep_read model (Flash 3.1 — fast extraction, avoid Pro rate limits)
+    deep_read_model_name = "gemini-3-flash-preview"
+    deep_read_model = model  # fallback
+    if cfg.google_api_key and deep_read_model_name != model_name:
+        try:
+            deep_read_model = GeminiModel(model=deep_read_model_name, api_key=cfg.google_api_key)
+            _log.info("Deep read model: %s (for high-volume claim extraction)", deep_read_model_name)
+        except Exception as exc:
+            _log.warning("Failed to create deep_read model (%s), using main model: %s", deep_read_model_name, exc)
+
     # Build hypothesis/critic model (Opus 50% + GPT-5.4 50%)
     hypothesis_model = None
     if cfg.hypothesis_model == "load_balanced":
@@ -93,4 +103,5 @@ def build_engine(cfg: ARAConfig) -> RLMEngine:
         writer_model=writer_model,
         hypothesis_model=hypothesis_model,
         light_model=light_model,
+        deep_read_model=deep_read_model,
     )
