@@ -11,8 +11,7 @@ import logging
 import os
 import re
 import time
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading as _th
 from typing import Any
 
 import httpx
@@ -510,49 +509,47 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     # Phase 1: Batch APIs first (cheapest, fastest) — 180s total timeout
     _PHASE1_TIMEOUT = 180
     _log.info("FULLTEXT Phase 1: starting parallel batch APIs (S2, OpenAlex, EPMC, CORE)")
-    pool = ThreadPoolExecutor(max_workers=4)
-    futures: dict[Any, str] = {}
+    phase1_results: dict[str, tuple[str, dict]] = {}
 
-    # S2 batch — up to 500 per call, no key needed
-    futures[pool.submit(_run_source, "semantic_scholar", _fetch_s2_batch, list(remaining))] = "semantic_scholar"
+    def _run_and_store(name, func, *args):
+        try:
+            _, res = _run_source(name, func, *args)
+            phase1_results[name] = (name, res)
+        except Exception as exc:
+            _log.warning("FULLTEXT Phase 1 source %s failed: %s", name, exc)
 
-    # CORE batch — 20 per OR-query, capped at 100 DOIs
+    threads = []
+    threads.append(_th.Thread(target=_run_and_store, args=("semantic_scholar", _fetch_s2_batch, list(remaining))))
     if core_key:
-        futures[pool.submit(_run_source, "core", _fetch_core_batch, list(remaining), core_key)] = "core"
+        threads.append(_th.Thread(target=_run_and_store, args=("core", _fetch_core_batch, list(remaining), core_key)))
+    threads.append(_th.Thread(target=_run_and_store, args=("openalex", _fetch_openalex_batch, list(remaining))))
+    threads.append(_th.Thread(target=_run_and_store, args=("europe_pmc", _fetch_epmc_batch, list(remaining))))
 
-    # OpenAlex batch — 50 per filter
-    futures[pool.submit(_run_source, "openalex", _fetch_openalex_batch, list(remaining))] = "openalex"
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=_PHASE1_TIMEOUT)
 
-    # Europe PMC — 20 per query
-    futures[pool.submit(_run_source, "europe_pmc", _fetch_epmc_batch, list(remaining))] = "europe_pmc"
-
-    try:
-        for fut in as_completed(futures, timeout=_PHASE1_TIMEOUT):
-            try:
-                name, results = fut.result(timeout=5)
-                _collect_results(name, results)
-            except Exception as exc:
-                src = futures.get(fut, "unknown")
-                _log.warning("FULLTEXT Phase 1 source %s failed: %s", src, exc)
-    except TimeoutError:
-        _log.warning("FULLTEXT Phase 1 timeout (%ds) — cancelling remaining futures", _PHASE1_TIMEOUT)
-        for fut in futures:
-            fut.cancel()
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+    for name, (_, results) in phase1_results.items():
+        _collect_results(name, results)
 
     _log.info("FULLTEXT Phase 1 complete: %d texts found so far, %d remaining", len(all_results), len(remaining))
 
     # Phase 2: PMC — needs NCBI, good for biomedical (cap at 100 DOIs, 120s timeout)
     if remaining:
         pmc_dois = list(remaining)[:100]
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            fut = pool.submit(_run_source, "pmc", _fetch_pmc_batch, pmc_dois)
+        pmc_results = {}
+        def _run_pmc():
+            nonlocal pmc_results
             try:
-                _, pmc_results = fut.result(timeout=120)
+                _, pmc_results = _run_source("pmc", _fetch_pmc_batch, pmc_dois)
             except Exception as exc:
-                _log.warning("FULLTEXT PMC phase timed out or failed: %s", exc)
-                pmc_results = {}
+                _log.warning("FULLTEXT PMC phase failed: %s", exc)
+        pmc_thread = _th.Thread(target=_run_pmc)
+        pmc_thread.start()
+        pmc_thread.join(timeout=120)
+        if pmc_thread.is_alive():
+            _log.warning("FULLTEXT PMC phase timed out (120s)")
         new_found = 0
         for doi, text in pmc_results.items():
             doi_lower = doi.lower()
@@ -570,13 +567,18 @@ def batch_fetch_fulltext(args: dict[str, Any], ctx: dict) -> str:
     # Phase 3: Unpaywall — 1 per call, use only for remaining (cap at 100, 120s timeout)
     if remaining:
         unpaywall_dois = list(remaining)[:100]
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            fut = pool.submit(_run_source, "unpaywall", _fetch_unpaywall_batch, unpaywall_dois, unpaywall_email)
+        uw_results = {}
+        def _run_unpaywall():
+            nonlocal uw_results
             try:
-                _, uw_results = fut.result(timeout=120)
+                _, uw_results = _run_source("unpaywall", _fetch_unpaywall_batch, unpaywall_dois, unpaywall_email)
             except Exception as exc:
-                _log.warning("FULLTEXT Unpaywall phase timed out or failed: %s", exc)
-                uw_results = {}
+                _log.warning("FULLTEXT Unpaywall phase failed: %s", exc)
+        uw_thread = _th.Thread(target=_run_unpaywall)
+        uw_thread.start()
+        uw_thread.join(timeout=120)
+        if uw_thread.is_alive():
+            _log.warning("FULLTEXT Unpaywall phase timed out (120s)")
         new_found = 0
         for doi, text in uw_results.items():
             doi_lower = doi.lower()
