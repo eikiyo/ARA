@@ -16,7 +16,7 @@ import httpx
 
 _log = logging.getLogger(__name__)
 _TIMEOUT = 30
-_USER_AGENT = "ARA-Research/1.0"
+_USER_AGENT = "Mozilla/5.0 (compatible; ARA-Research/1.0; +https://github.com)"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1076,72 +1076,76 @@ def _fx_currencies() -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 9. PATENTS (PatentsView API — free, no auth)
+# 9. PATENTS (PatentsView v1 API — free with API key from patentsview.org)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def search_patents(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
-    """PatentsView API — US patent data, free, no auth."""
+    """PatentsView API v1 — US patent data. Requires PATENTSVIEW_API_KEY env var
+    (free from https://patentsview.org/apis/purpose)."""
+    api_key = os.getenv("PATENTSVIEW_API_KEY", "")
     query = arguments.get("query", "")
     assignee = arguments.get("assignee", "")
     start_date = arguments.get("start_date", "2018-01-01")
-    limit = min(arguments.get("limit", 25), 100)
+    limit = min(arguments.get("limit", 10), 50)
 
     if not query and not assignee:
         return json.dumps({"error": "query or assignee required"})
 
+    if not api_key:
+        return json.dumps({
+            "error": "PATENTSVIEW_API_KEY env var not set. Get a free key at https://patentsview.org/apis/purpose",
+            "note": "Patent search unavailable without API key.",
+        })
+
     try:
-        # Build PatentsView query
+        # Build PatentsView v1 query (POST-based)
         conditions = []
         if query:
             conditions.append({"_text_any": {"patent_abstract": query}})
         if assignee:
-            conditions.append({"_text_any": {"assignee_organization": assignee}})
+            conditions.append({"_text_any": {"assignees.assignee_organization": assignee}})
         if start_date:
             conditions.append({"_gte": {"patent_date": start_date}})
 
-        if len(conditions) == 1:
-            q = conditions[0]
-        else:
-            q = {"_and": conditions}
+        q = conditions[0] if len(conditions) == 1 else {"_and": conditions}
 
-        url = "https://api.patentsview.org/patents/query"
+        url = "https://search.patentsview.org/api/v1/patent/"
         payload = {
-            "q": json.dumps(q),
-            "f": json.dumps([
-                "patent_number", "patent_title", "patent_abstract",
+            "q": q,
+            "f": [
+                "patent_id", "patent_title", "patent_abstract",
                 "patent_date", "patent_type",
-                "assignee_organization", "assignee_country",
-                "inventor_first_name", "inventor_last_name",
-            ]),
-            "o": json.dumps({"per_page": limit, "page": 1}),
+                "assignees.assignee_organization", "assignees.assignee_country",
+            ],
+            "o": {"size": limit},
         }
 
         with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.get(url, params=payload, headers={"User-Agent": _USER_AGENT})
+            resp = client.post(url, json=payload, headers={
+                "User-Agent": _USER_AGENT,
+                "X-Api-Key": api_key,
+                "Content-Type": "application/json",
+            })
             resp.raise_for_status()
             data = resp.json()
 
         patents = []
         for p in data.get("patents", []):
             assignees = p.get("assignees", [{}])
-            inventors = p.get("inventors", [])
-            inv_names = [f"{i.get('inventor_first_name', '')} {i.get('inventor_last_name', '')}" for i in inventors[:3]]
-
             patents.append({
-                "number": p.get("patent_number", ""),
+                "number": p.get("patent_id", ""),
                 "title": p.get("patent_title", ""),
                 "abstract": (p.get("patent_abstract") or "")[:300],
                 "date": p.get("patent_date", ""),
                 "type": p.get("patent_type", ""),
                 "assignee": assignees[0].get("assignee_organization", "") if assignees else "",
                 "country": assignees[0].get("assignee_country", "") if assignees else "",
-                "inventors": inv_names,
             })
 
         return json.dumps({
             "patents": patents,
             "total": data.get("total_patent_count", len(patents)),
-            "query": query,
+            "query": query or assignee,
         })
     except Exception as e:
         _log.warning(f"PatentsView search failed: {e}")
@@ -1149,18 +1153,23 @@ def search_patents(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 10. WTO (World Trade Organization Stats — free, no auth)
+# 10. WTO (World Trade Organization Stats — requires WTO_API_KEY)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def search_wto(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
-    """WTO Timeseries API — trade statistics, tariffs, services trade."""
+    """WTO Timeseries API — trade statistics, tariffs, services trade.
+    Requires WTO_API_KEY env var (free from https://apiportal.wto.org/)."""
+    api_key = os.getenv("WTO_API_KEY", "")
+    if not api_key:
+        return json.dumps({"error": "WTO_API_KEY env var not set. Get a free key at https://apiportal.wto.org/"})
+
     mode = arguments.get("mode", "search")
 
     try:
         if mode == "search":
-            return _wto_search_indicators(arguments)
+            return _wto_search_indicators(arguments, api_key)
         elif mode == "data":
-            return _wto_get_data(arguments)
+            return _wto_get_data(arguments, api_key)
         else:
             return json.dumps({"error": f"Unknown mode: {mode}"})
     except Exception as e:
@@ -1168,7 +1177,7 @@ def search_wto(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
         return json.dumps({"error": str(e)})
 
 
-def _wto_search_indicators(args: dict[str, Any]) -> str:
+def _wto_search_indicators(args: dict[str, Any], api_key: str) -> str:
     """Search WTO indicators."""
     query = args.get("query", "")
     limit = min(args.get("limit", 15), 100)
@@ -1179,7 +1188,10 @@ def _wto_search_indicators(args: dict[str, Any]) -> str:
     url = "https://api.wto.org/timeseries/v1/indicators"
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.get(url, headers={"User-Agent": _USER_AGENT})
+            resp = client.get(url, headers={
+                "User-Agent": _USER_AGENT,
+                "Ocp-Apim-Subscription-Key": api_key,
+            })
             resp.raise_for_status()
             data = resp.json()
 
@@ -1205,7 +1217,7 @@ def _wto_search_indicators(args: dict[str, Any]) -> str:
         return json.dumps({"indicators": [], "error": str(e)})
 
 
-def _wto_get_data(args: dict[str, Any]) -> str:
+def _wto_get_data(args: dict[str, Any], api_key: str) -> str:
     """Get WTO indicator data."""
     indicator = args.get("indicator", "")
     reporters = args.get("reporters", [])
@@ -1216,8 +1228,8 @@ def _wto_get_data(args: dict[str, Any]) -> str:
         return json.dumps({"data": [], "error": "indicator code required"})
 
     reporter_param = ",".join(reporters) if reporters else ""
-    url = f"https://api.wto.org/timeseries/v1/data"
-    params = {
+    url = "https://api.wto.org/timeseries/v1/data"
+    params: dict[str, Any] = {
         "i": indicator,
         "ps": f"{start_year}-{end_year}",
     }
@@ -1226,7 +1238,10 @@ def _wto_get_data(args: dict[str, Any]) -> str:
 
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.get(url, params=params, headers={"User-Agent": _USER_AGENT})
+            resp = client.get(url, params=params, headers={
+                "User-Agent": _USER_AGENT,
+                "Ocp-Apim-Subscription-Key": api_key,
+            })
             resp.raise_for_status()
             data = resp.json()
 
@@ -1401,29 +1416,37 @@ def search_sec_edgar(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
 
 
 def _edgar_company_search(query: str, headers: dict[str, str]) -> str:
-    """Fallback: search companies by name via EDGAR company API."""
+    """Fallback: search companies by name via EDGAR EFTS full-text search."""
     try:
-        url = f"https://www.sec.gov/cgi-bin/browse-edgar"
-        params = {
-            "company": query,
-            "CIK": "",
-            "type": "10-K",
-            "dateb": "",
-            "owner": "include",
-            "count": 10,
-            "search_text": "",
-            "action": "getcompany",
-            "output": "atom",
-        }
+        url = "https://efts.sec.gov/LATEST/search-index"
+        params = {"q": query, "dateRange": "custom", "startdt": "2020-01-01"}
+
         with httpx.Client(timeout=_TIMEOUT) as client:
             resp = client.get(url, params=params, headers=headers)
-            resp.raise_for_status()
 
-        # Parse basic info from Atom response
+            if resp.status_code != 200:
+                # Second fallback — just return a useful link
+                return json.dumps({
+                    "filings": [],
+                    "note": f"EDGAR search for '{query}'. Use the EDGAR website for detailed filings.",
+                    "url": f"https://efts.sec.gov/LATEST/search-index?q={quote(query)}",
+                })
+
+            data = resp.json()
+
+        filings = []
+        for hit in data.get("hits", {}).get("hits", [])[:10]:
+            src = hit.get("_source", {})
+            filings.append({
+                "company": (src.get("display_names") or [""])[0],
+                "filing_type": src.get("form_type", ""),
+                "date": src.get("file_date", ""),
+                "url": f"https://www.sec.gov/Archives/{src.get('file_name', '')}",
+            })
+
         return json.dumps({
-            "filings": [],
-            "note": f"EDGAR search for '{query}' returned results. Use SEC EDGAR website for detailed filings.",
-            "url": f"https://www.sec.gov/cgi-bin/browse-edgar?company={quote(query)}&CIK=&type=10-K&dateb=&owner=include&count=10&search_text=&action=getcompany",
+            "filings": filings,
+            "total": data.get("hits", {}).get("total", {}).get("value", 0),
         })
     except Exception as e:
         return json.dumps({"filings": [], "error": str(e)})
@@ -1434,10 +1457,12 @@ def _edgar_company_search(query: str, headers: dict[str, str]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def search_open_corporates(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
-    """OpenCorporates API — company registry data from 140+ jurisdictions."""
+    """OpenCorporates API — company registry data from 140+ jurisdictions.
+    Optionally uses OPENCORPORATES_API_KEY env var for higher rate limits."""
     query = arguments.get("query", "")
     jurisdiction = arguments.get("jurisdiction", "")
     limit = min(arguments.get("limit", 10), 30)
+    api_key = os.getenv("OPENCORPORATES_API_KEY", "")
 
     if not query:
         return json.dumps({"error": "query required"})
@@ -1451,9 +1476,21 @@ def search_open_corporates(arguments: dict[str, Any], ctx: dict[str, Any]) -> st
         }
         if jurisdiction:
             params["jurisdiction_code"] = jurisdiction.lower()
+        if api_key:
+            params["api_token"] = api_key
 
-        with httpx.Client(timeout=_TIMEOUT) as client:
+        with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
             resp = client.get(url, params=params, headers={"User-Agent": _USER_AGENT})
+
+            if resp.status_code == 401:
+                # Free tier may be restricted — return helpful message
+                return json.dumps({
+                    "companies": [],
+                    "error": "OpenCorporates API requires api_token. Set OPENCORPORATES_API_KEY env var.",
+                    "url": f"https://opencorporates.com/companies?q={quote(query)}",
+                    "note": "Use the web URL above for manual lookup.",
+                })
+
             resp.raise_for_status()
             data = resp.json()
 
@@ -1525,9 +1562,9 @@ def _sdg_search(args: dict[str, Any]) -> str:
     goal = args.get("goal")
 
     url = "https://unstats.un.org/sdgapi/v1/sdg/Indicator/List"
-    params = {}
+    params: dict[str, Any] = {}
     if goal:
-        url = f"https://unstats.un.org/sdgapi/v1/sdg/Goal/{goal}/Indicator/List"
+        url = f"https://unstats.un.org/sdgapi/v1/sdg/Goal/{goal}/Target/List?includechildren=true"
 
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:
@@ -1720,25 +1757,32 @@ def _ilo_search(args: dict[str, Any]) -> str:
     if not query:
         return json.dumps({"indicators": [], "error": "query required"})
 
-    url = "https://www.ilo.org/sdmx/rest/dataflow/ILO"
+    url = "https://sdmx.ilo.org/rest/dataflow/ILO"
     try:
-        with httpx.Client(timeout=_TIMEOUT) as client:
+        with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
             resp = client.get(
                 url,
-                headers={"Accept": "application/vnd.sdmx.structure+json", "User-Agent": _USER_AGENT},
+                headers={"Accept": "application/json", "User-Agent": _USER_AGENT},
             )
             resp.raise_for_status()
             data = resp.json()
 
-        flows = data.get("data", {}).get("dataflows", [])
+        # ILO SDMX v2 format uses "references" dict
+        refs = data.get("references", {})
+        if not refs:
+            # Try v1 format
+            flows = data.get("data", {}).get("dataflows", [])
+            refs = {f.get("id", ""): f for f in flows}
+
         q = query.lower()
         matches = []
-        for f in flows:
-            name = f.get("name") if isinstance(f.get("name"), str) else (f.get("name") or {}).get("en", "")
-            if q in name.lower() or q in f.get("id", "").lower():
+        for key, f in refs.items():
+            name = f.get("name", "") if isinstance(f.get("name"), str) else (f.get("name") or {}).get("en", str(f.get("name", "")))
+            fid = f.get("id", key)
+            if q in str(name).lower() or q in fid.lower():
                 matches.append({
-                    "id": f.get("id", ""),
-                    "name": name,
+                    "id": fid,
+                    "name": name if isinstance(name, str) else str(name),
                 })
                 if len(matches) >= 15:
                     break
@@ -1762,7 +1806,7 @@ def _ilo_get_data(args: dict[str, Any]) -> str:
     country_filter = "+".join(countries) if countries else ""
     key = country_filter if country_filter else "."
 
-    url = f"https://www.ilo.org/sdmx/rest/data/ILO,{dataflow},./{key}"
+    url = f"https://sdmx.ilo.org/rest/data/ILO,{dataflow},./{key}"
     params = {
         "startPeriod": str(start_year),
         "endPeriod": str(end_year),
@@ -1799,14 +1843,19 @@ def _ilo_get_data(args: dict[str, Any]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def search_air_quality(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
-    """OpenAQ API — global air quality data (PM2.5, PM10, NO2, O3, SO2, CO)."""
+    """OpenAQ API v3 — global air quality data (PM2.5, PM10, NO2, O3, SO2, CO).
+    Requires OPENAQ_API_KEY env var (free from https://explore.openaq.org/)."""
+    api_key = os.getenv("OPENAQ_API_KEY", "")
+    if not api_key:
+        return json.dumps({"error": "OPENAQ_API_KEY env var not set. Get a free key at https://explore.openaq.org/"})
+
     mode = arguments.get("mode", "latest")
 
     try:
         if mode == "latest":
-            return _openaq_latest(arguments)
+            return _openaq_latest(arguments, api_key)
         elif mode == "countries":
-            return _openaq_countries()
+            return _openaq_countries(api_key)
         else:
             return json.dumps({"error": f"Unknown mode: {mode}"})
     except Exception as e:
@@ -1814,63 +1863,84 @@ def search_air_quality(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
         return json.dumps({"error": str(e)})
 
 
-def _openaq_latest(args: dict[str, Any]) -> str:
-    """Get latest air quality measurements."""
+def _openaq_latest(args: dict[str, Any], api_key: str) -> str:
+    """Get latest air quality measurements via OpenAQ v3 API."""
     country = args.get("country", "")
     city = args.get("city", "")
     parameter = args.get("parameter", "pm25")
     limit = min(args.get("limit", 20), 100)
 
-    url = "https://api.openaq.org/v2/latest"
+    # OpenAQ v3 API
+    # Map common parameter names to v3 parameter IDs
+    _PARAM_MAP = {"pm25": 2, "pm10": 1, "o3": 3, "no2": 5, "so2": 8, "co": 7}
+    param_id = _PARAM_MAP.get(parameter)
+
+    url = "https://api.openaq.org/v3/locations"
     params: dict[str, Any] = {
         "limit": limit,
-        "parameter": parameter,
         "order_by": "lastUpdated",
-        "sort": "desc",
+        "sort_order": "desc",
     }
     if country:
-        params["country"] = country
-    if city:
-        params["city"] = city
+        params["countries_id"] = country
+    if param_id:
+        params["parameters_id"] = param_id
 
-    with httpx.Client(timeout=_TIMEOUT) as client:
-        resp = client.get(url, params=params, headers={"User-Agent": _USER_AGENT})
-        resp.raise_for_status()
-        data = resp.json()
+    try:
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            resp = client.get(url, params=params, headers={
+                "User-Agent": _USER_AGENT,
+                "X-API-Key": api_key,
+            })
+            resp.raise_for_status()
+            data = resp.json()
 
-    results = []
-    for r in data.get("results", []):
-        for m in r.get("measurements", []):
-            results.append({
-                "location": r.get("location", ""),
-                "city": r.get("city", ""),
-                "country": r.get("country", ""),
-                "parameter": m.get("parameter", ""),
-                "value": m.get("value"),
-                "unit": m.get("unit", ""),
-                "lastUpdated": m.get("lastUpdated", ""),
+        results = []
+        for loc in data.get("results", []):
+            for sensor in loc.get("sensors", []):
+                param_info = sensor.get("parameter", {})
+                summary = sensor.get("summary", {})
+                results.append({
+                    "location": loc.get("name", ""),
+                    "city": loc.get("locality", ""),
+                    "country": (loc.get("country") or {}).get("code", ""),
+                    "parameter": param_info.get("name", parameter),
+                    "value": summary.get("avg"),
+                    "min": summary.get("min"),
+                    "max": summary.get("max"),
+                    "unit": param_info.get("units", ""),
+                    "lastUpdated": loc.get("datetimeLast", {}).get("utc", ""),
+                })
+
+        return json.dumps({"measurements": results, "parameter": parameter})
+    except Exception as e:
+        _log.warning(f"OpenAQ latest failed: {e}")
+        return json.dumps({"measurements": [], "error": str(e)})
+
+
+def _openaq_countries(api_key: str) -> str:
+    """List countries with air quality data via OpenAQ v3."""
+    url = "https://api.openaq.org/v3/countries"
+    params: dict[str, Any] = {"limit": 200, "order_by": "locationsCount", "sort_order": "desc"}
+
+    try:
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            resp = client.get(url, params=params, headers={
+                "User-Agent": _USER_AGENT,
+                "X-API-Key": api_key,
+            })
+            resp.raise_for_status()
+            data = resp.json()
+
+        countries = []
+        for c in data.get("results", [])[:50]:
+            countries.append({
+                "code": c.get("code", ""),
+                "name": c.get("name", ""),
+                "locations": c.get("locationsCount", 0),
             })
 
-    return json.dumps({"measurements": results, "parameter": parameter})
-
-
-def _openaq_countries() -> str:
-    """List countries with air quality data."""
-    url = "https://api.openaq.org/v2/countries"
-    params = {"limit": 200, "order_by": "count", "sort": "desc"}
-
-    with httpx.Client(timeout=_TIMEOUT) as client:
-        resp = client.get(url, params=params, headers={"User-Agent": _USER_AGENT})
-        resp.raise_for_status()
-        data = resp.json()
-
-    countries = []
-    for c in data.get("results", [])[:50]:
-        countries.append({
-            "code": c.get("code", ""),
-            "name": c.get("name", ""),
-            "locations": c.get("locations", 0),
-            "count": c.get("count", 0),
-        })
-
-    return json.dumps({"countries": countries})
+        return json.dumps({"countries": countries})
+    except Exception as e:
+        _log.warning(f"OpenAQ countries failed: {e}")
+        return json.dumps({"countries": [], "error": str(e)})
