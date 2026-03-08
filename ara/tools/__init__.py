@@ -14,7 +14,7 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from .defs import TOOL_DEFINITIONS
-from . import search, papers, verification, research, writing, pipeline, quality, fulltext, economic_data, novelty, analysis
+from . import search, papers, verification, research, writing, pipeline, quality, fulltext, economic_data, novelty, analysis, migration_innovation
 
 # Phase → allowed tool names (from arch.md §4.2)
 # "search_*" is a wildcard matching all search_ tools
@@ -23,14 +23,14 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "analyst_triage": ["list_papers", "read_paper", "rate_papers"],
     "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "assess_risk_of_bias", "search_similar", "list_papers", "list_claims"],
     "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "verify_claim"],
-    "hypothesis": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "score_hypothesis", "score_novelty", "identify_gaps", "get_risk_of_bias_table", "get_grade_table", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "check_claim_consistency", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "measure_argument_density", "predict_reviewer_objections"],
-    "brancher": ["search_*", "search_similar", "search_evidence", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "identify_gaps", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "check_claim_consistency", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "measure_argument_density", "predict_reviewer_objections"],
-    "critic": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "check_claim_consistency", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "measure_argument_density", "predict_reviewer_objections"],
+    "hypothesis": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "score_hypothesis", "score_novelty", "identify_gaps", "get_risk_of_bias_table", "get_grade_table", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "check_claim_consistency", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "measure_argument_density", "predict_reviewer_objections", "compute_institutional_distance", "compute_brain_drain_index", "compute_arbitrage_spread", "compute_convergence_window", "compute_reverse_knowledge_flow"],
+    "brancher": ["search_*", "search_similar", "search_evidence", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "identify_gaps", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "check_claim_consistency", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "measure_argument_density", "predict_reviewer_objections", "compute_institutional_distance", "compute_brain_drain_index", "compute_arbitrage_spread", "compute_convergence_window", "compute_reverse_knowledge_flow"],
+    "critic": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "check_claim_consistency", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "measure_argument_density", "predict_reviewer_objections", "compute_institutional_distance", "compute_brain_drain_index", "compute_arbitrage_spread", "compute_convergence_window", "compute_reverse_knowledge_flow"],
     "synthesis": ["list_papers", "read_paper", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency"],
     "protocol": ["list_papers", "write_section"],
     "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "search_evidence", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table", "generate_prisma_diagram", "generate_evidence_table", "check_claim_consistency", "measure_argument_density"],
-    "advisory_board": ["write_section", "predict_reviewer_objections", "list_papers", "list_claims", "read_paper", "get_risk_of_bias_table", "get_grade_table", "search_similar", "detect_contradictions", "build_citation_network", "classify_methodology", "meta_analyze", "map_theories", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "aggregate_samples", "generate_evidence_table", "analyze_temporal_trends"],
-    "paper_critic": ["read_paper", "search_similar", "search_evidence", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "check_claim_consistency", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "measure_argument_density", "predict_reviewer_objections"],
+    "advisory_board": ["write_section", "predict_reviewer_objections", "list_papers", "list_claims", "read_paper", "get_risk_of_bias_table", "get_grade_table", "search_similar", "detect_contradictions", "build_citation_network", "classify_methodology", "meta_analyze", "map_theories", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "aggregate_samples", "generate_evidence_table", "analyze_temporal_trends", "compute_institutional_distance", "compute_brain_drain_index", "compute_arbitrage_spread", "compute_convergence_window", "compute_reverse_knowledge_flow", "search_visa_policy"],
+    "paper_critic": ["read_paper", "search_similar", "search_evidence", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "check_claim_consistency", "compute_kappa", "extract_causal_chains", "find_natural_experiments", "score_construct_consistency", "measure_argument_density", "predict_reviewer_objections", "compute_institutional_distance", "compute_brain_drain_index", "compute_arbitrage_spread", "compute_convergence_window", "compute_reverse_knowledge_flow", "search_visa_policy"],
 }
 
 
@@ -125,6 +125,19 @@ TOOL_DISPATCH: dict[str, Any] = {
     "score_construct_consistency": analysis.score_construct_consistency,
     "measure_argument_density": analysis.measure_argument_density,
     "predict_reviewer_objections": analysis.predict_reviewer_objections,
+    # Migration & Innovation Arbitrage tools
+    "search_unhcr": migration_innovation.search_unhcr,
+    "search_oecd_migration": migration_innovation.search_oecd_migration,
+    "search_wipo_ip": migration_innovation.search_wipo_ip,
+    "search_global_innovation_index": migration_innovation.search_global_innovation_index,
+    "compute_institutional_distance": migration_innovation.compute_institutional_distance,
+    "compute_brain_drain_index": migration_innovation.compute_brain_drain_index,
+    "search_bilateral_remittances": migration_innovation.search_bilateral_remittances,
+    "search_coauthorship_network": migration_innovation.search_coauthorship_network,
+    "compute_arbitrage_spread": migration_innovation.compute_arbitrage_spread,
+    "compute_convergence_window": migration_innovation.compute_convergence_window,
+    "compute_reverse_knowledge_flow": migration_innovation.compute_reverse_knowledge_flow,
+    "search_visa_policy": migration_innovation.search_visa_policy,
     # Embedding tools
     "batch_embed_papers": pipeline.batch_embed_papers,
     # Pipeline tools

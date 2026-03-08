@@ -25,7 +25,7 @@ logging.basicConfig(
 _log = logging.getLogger("claim_extract_nodoi")
 
 NUM_AGENTS = 15
-MODEL = "google/gemini-2.0-flash-lite-001"
+MODEL = "google/gemini-2.0-flash-001"
 
 EXTRACTION_PROMPT = """You are an academic research claim extractor. Extract 3-8 structured claims from this paper.
 
@@ -76,13 +76,16 @@ def extract_worker(agent_id: int, papers: list[dict]):
         authors = paper.get("authors") or ""
         year = paper.get("year") or ""
         full_text = paper.get("full_text") or ""
+        abstract = paper.get("abstract") or ""
 
-        if not full_text or len(full_text) < 500:
+        if full_text and len(full_text) >= 500:
+            content = f"Abstract: {abstract}\n\nFull text (first 8000 chars):\n{full_text[:8000]}"
+        elif abstract and len(abstract) >= 50:
+            content = f"Abstract: {abstract}"
+        else:
             with lock:
                 papers_failed += 1
             continue
-
-        content = f"Full text (first 8000 chars):\n{full_text[:8000]}"
 
         prompt = EXTRACTION_PROMPT.format(
             title=title, authors=authors, year=year, content=content,
@@ -174,12 +177,15 @@ def main():
     global start_time
     db = CentralDB()
 
-    # Full-text papers without DOI and without claims (by title match)
+    # All papers without DOI and without claims (fulltext + abstract-only)
     papers = db._conn.execute("""
-        SELECT p.paper_id, p.title, p.authors, p.year, p.full_text
+        SELECT p.paper_id, p.title, p.authors, p.year, p.abstract, p.full_text
         FROM papers p
-        WHERE p.full_text IS NOT NULL AND p.full_text != '' AND length(p.full_text) > 500
-        AND (p.doi IS NULL OR p.doi = '')
+        WHERE (p.doi IS NULL OR p.doi = '')
+        AND (
+            (p.full_text IS NOT NULL AND length(p.full_text) > 500)
+            OR (p.abstract IS NOT NULL AND length(p.abstract) > 50)
+        )
         AND p.title NOT IN (
             SELECT DISTINCT paper_title FROM claims
             WHERE paper_title IS NOT NULL AND paper_title != ''

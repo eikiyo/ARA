@@ -1031,4 +1031,182 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    # ── Migration & Innovation Arbitrage tools ────────────────────────
+    {
+        "name": "search_unhcr",
+        "description": "UNHCR Population Statistics API — refugee, asylum seeker, IDP, and stateless populations by country of origin, country of asylum, and year. Supports bilateral queries (origin→asylum country pairs), timeseries, and country lookup. Free, no auth required.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["population", "timeseries", "countries"], "description": "Query mode: 'population' for snapshot data, 'timeseries' for trends over time, 'countries' to list available countries with ISO codes"},
+                "country_of_origin": {"type": "string", "description": "ISO-3 code of origin country (e.g., 'SYR', 'AFG', 'UKR')"},
+                "country_of_asylum": {"type": "string", "description": "ISO-3 code of asylum/host country (e.g., 'DEU', 'USA', 'TUR')"},
+                "year": {"type": "integer", "description": "Single year filter (e.g., 2023)"},
+                "year_from": {"type": "integer", "description": "Start year for range (e.g., 2000)"},
+                "year_to": {"type": "integer", "description": "End year for range (e.g., 2023)"},
+                "query": {"type": "string", "description": "Country name search (for mode=countries only)"},
+                "limit": {"type": "integer", "description": "Max results (default 20)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "search_oecd_migration",
+        "description": "OECD migration statistics — standardised inflows of permanent/temporary migrants by category (work, family, humanitarian, free movement), and foreign-born population stocks. Covers 30+ OECD countries. Free, no auth.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["inflows", "stocks", "datasets"], "description": "Query mode: 'inflows' for migration flows by category, 'stocks' for foreign-born population, 'datasets' to list available datasets"},
+                "country": {"type": "string", "description": "ISO-3 country code (e.g., 'USA', 'DEU', 'SWE')"},
+                "year_from": {"type": "integer", "description": "Start year (default 2015)"},
+                "year_to": {"type": "integer", "description": "End year (default 2023)"},
+                "migration_type": {"type": "string", "description": "Filter by type: WO (work), FA (family), HU (humanitarian), FR (free movement), _T (total)"},
+                "dataset": {"type": "string", "enum": ["permanent", "temporary"], "description": "Dataset: 'permanent' or 'temporary' migrants (default: permanent)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "search_wipo_ip",
+        "description": "Patent and IP statistics by country — resident vs nonresident patent filings (proxy for immigrant inventor contribution), R&D expenditure, scientific output. Computes nonresident patent share automatically. Uses World Bank / WIPO data. Free, no auth.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["patents", "compare", "indicators"], "description": "Query mode: 'patents' for single country timeseries, 'compare' for cross-country comparison, 'indicators' to list available metrics"},
+                "country": {"type": "string", "description": "ISO-3 country code for mode=patents (e.g., 'USA', 'DEU')"},
+                "countries": {"type": "string", "description": "Comma-separated ISO-3 codes for mode=compare (e.g., 'USA,DEU,CHN,IND')"},
+                "year_from": {"type": "integer", "description": "Start year (default 2010)"},
+                "year_to": {"type": "integer", "description": "End year (default 2022)"},
+                "year": {"type": "integer", "description": "Single year for mode=compare (default 2021)"},
+                "indicator": {"type": "string", "description": "Specific indicator code for mode=compare (default: IP.PAT.RESD)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "search_global_innovation_index",
+        "description": "Global Innovation Index (GII) 2023 scores and 7 sub-pillars (institutions, human capital, infrastructure, market sophistication, business sophistication, knowledge output, creative output) for ~45 countries. Supports gap analysis between origin-host pairs — critical for measuring institutional arbitrage potential. Embedded data, instant lookup.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["lookup", "compare", "gap", "ranking"], "description": "Query mode: 'lookup' single country, 'compare' multiple, 'gap' origin-host difference, 'ranking' full list"},
+                "country": {"type": "string", "description": "ISO-3 code for mode=lookup (e.g., 'SYR', 'USA')"},
+                "countries": {"type": "string", "description": "Comma-separated ISO-3 codes for mode=compare"},
+                "origin": {"type": "string", "description": "Origin country ISO-3 for mode=gap (e.g., 'SYR')"},
+                "host": {"type": "string", "description": "Host country ISO-3 for mode=gap (e.g., 'DEU')"},
+                "limit": {"type": "integer", "description": "Number of countries for mode=ranking (default 45)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "compute_institutional_distance",
+        "description": "Compute Kogut-Singh institutional distance between two countries using World Governance Indicators (WGI) and Hofstede cultural dimensions. Returns composite distance score, dimension-level breakdown, and arbitrage potential interpretation. Embedded data for ~47 countries (WGI) and ~46 countries (Hofstede). Instant computation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "origin": {"type": "string", "description": "Origin country ISO-3 code (e.g., 'SYR', 'IND')"},
+                "host": {"type": "string", "description": "Host country ISO-3 code (e.g., 'USA', 'DEU')"},
+                "include_cultural": {"type": "boolean", "description": "Include Hofstede cultural dimensions (default true)"},
+            },
+            "required": ["origin", "host"],
+        },
+    },
+    {
+        "name": "compute_brain_drain_index",
+        "description": "Compute brain drain severity index (0-100) for a country using World Bank indicators: tertiary emigration rate, R&D expenditure, researchers per million, patents, journal articles, high-tech exports. Optionally compare origin vs host to quantify innovation gaps that immigrants bridge.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "country": {"type": "string", "description": "Country ISO-3 code to analyze (e.g., 'IND', 'NGA', 'SYR')"},
+                "compare_to": {"type": "string", "description": "Optional host country ISO-3 for gap analysis (e.g., 'USA', 'DEU')"},
+            },
+            "required": ["country"],
+        },
+    },
+    {
+        "name": "search_bilateral_remittances",
+        "description": "World Bank bilateral remittance data. Mode 'indicators': remittances received/paid (USD, %GDP), migrant stock, net migration for a country. Mode 'corridors': top global remittance corridors (embedded 2023 data) filterable by country. Critical for quantifying knowledge-transfer financial flows.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["indicators", "corridors"], "description": "Query mode (default: indicators)"},
+                "country": {"type": "string", "description": "ISO-3 code (e.g., 'IND', 'MEX')"},
+                "limit": {"type": "integer", "description": "Max corridors to return (default 20, mode=corridors only)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "search_coauthorship_network",
+        "description": "Cross-border co-authorship analysis via OpenAlex. Mode 'bilateral': yearly co-publication counts between two countries with growth rate. Mode 'top_partners': ranked list of co-authorship partner countries. Filterable by topic and year range. Measures knowledge flow via scientific collaboration.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["bilateral", "top_partners"], "description": "Query mode (default: bilateral)"},
+                "country1": {"type": "string", "description": "First country ISO-2 code (e.g., 'US', 'IN')"},
+                "country2": {"type": "string", "description": "Second country ISO-2 for bilateral mode"},
+                "topic": {"type": "string", "description": "Optional topic filter (e.g., 'innovation', 'entrepreneurship')"},
+                "year_from": {"type": "integer", "description": "Start year (default 2015)"},
+                "year_to": {"type": "integer", "description": "End year (default 2024)"},
+                "limit": {"type": "integer", "description": "Max partners for top_partners mode (default 20)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "compute_arbitrage_spread",
+        "description": "Compute innovation arbitrage spread between origin and host countries. Combines WGI institutional gap (regulatory quality, rule of law, government effectiveness, corruption control) with GII innovation gap (7 pillars). Returns normalized 0-1 spread score and identifies largest pillar opportunity. Core metric for 'immigration as innovation arbitrage' thesis.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "origin": {"type": "string", "description": "Origin country ISO-3 code (e.g., 'IND', 'NGA')"},
+                "host": {"type": "string", "description": "Host country ISO-3 code (e.g., 'USA', 'DEU')"},
+            },
+            "required": ["origin", "host"],
+        },
+    },
+    {
+        "name": "compute_convergence_window",
+        "description": "Track institutional convergence/divergence between origin and host countries over 20 years (2003-2023) using World Bank WGI time series. Shows whether institutional gaps are opening (increasing arbitrage value) or closing (diminishing window). Returns per-dimension trends and overall convergence score. Live API data.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "origin": {"type": "string", "description": "Origin country ISO-3 code (e.g., 'IND', 'CHN')"},
+                "host": {"type": "string", "description": "Host country ISO-3 code (e.g., 'USA', 'GBR')"},
+            },
+            "required": ["origin", "host"],
+        },
+    },
+    {
+        "name": "compute_reverse_knowledge_flow",
+        "description": "Measure reverse knowledge flow between origin and host countries via OpenAlex co-publication analysis. Returns: total co-publications, yearly trends, co-publication intensity (% of each country's output), asymmetry ratio, and growth trajectory. Quantifies the knowledge bridge immigrants create.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "origin": {"type": "string", "description": "Origin country ISO-2 code (e.g., 'IN', 'NG')"},
+                "host": {"type": "string", "description": "Host country ISO-2 code (e.g., 'US', 'DE')"},
+                "topic": {"type": "string", "description": "Optional topic filter (e.g., 'innovation')"},
+                "year_from": {"type": "integer", "description": "Start year (default 2010)"},
+                "year_to": {"type": "integer", "description": "End year (default 2024)"},
+            },
+            "required": ["origin", "host"],
+        },
+    },
+    {
+        "name": "search_visa_policy",
+        "description": "Visa policy and migration openness data. Mode 'lookup': passport index + talent openness for a country. Mode 'compare': side-by-side comparison of multiple countries. Mode 'corridor': origin-host mobility gap analysis. Mode 'ranking': global talent openness ranking. Combines Henley Passport Index 2024 + OECD Talent Attractiveness scores. Embedded data, instant lookup.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["lookup", "compare", "corridor", "ranking"], "description": "Query mode (default: lookup)"},
+                "country": {"type": "string", "description": "ISO-3 code for mode=lookup"},
+                "countries": {"type": "string", "description": "Comma-separated ISO-3 codes for mode=compare"},
+                "origin": {"type": "string", "description": "Origin ISO-3 for mode=corridor"},
+                "host": {"type": "string", "description": "Host ISO-3 for mode=corridor"},
+                "limit": {"type": "integer", "description": "Max results for mode=ranking (default 25)"},
+            },
+            "required": [],
+        },
+    },
 ]

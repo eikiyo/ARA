@@ -35,7 +35,7 @@ logging.basicConfig(
 _log = logging.getLogger("claim_extract")
 
 NUM_AGENTS = 15
-MODEL = "google/gemini-2.0-flash-lite-001"
+MODEL = "google/gemini-2.0-flash-001"
 
 EXTRACTION_PROMPT = """You are an academic research claim extractor. Extract 3-8 structured claims from this paper.
 
