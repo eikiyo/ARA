@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from typing import Any
+from pathlib import Path
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -17,6 +18,24 @@ import httpx
 _log = logging.getLogger(__name__)
 _TIMEOUT = 30
 _USER_AGENT = "Mozilla/5.0 (compatible; ARA-Research/1.0; +https://github.com)"
+
+# Cache for credentials loaded from ~/.ara/credentials.json
+_CRED_CACHE: dict[str, str] | None = None
+
+
+def _get_key(env_var: str, cred_field: str) -> str:
+    """Load API key from env var first, then ~/.ara/credentials.json fallback."""
+    val = os.getenv(env_var, "")
+    if val:
+        return val
+    global _CRED_CACHE
+    if _CRED_CACHE is None:
+        cred_path = Path.home() / ".ara" / "credentials.json"
+        try:
+            _CRED_CACHE = json.loads(cred_path.read_text("utf-8")) if cred_path.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            _CRED_CACHE = {}
+    return _CRED_CACHE.get(cred_field, "")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -205,7 +224,7 @@ def _fred_search_series(args: dict[str, Any]) -> str:
     """Search FRED series by keyword."""
     query = args.get("query", "")
     limit = min(args.get("limit", 10), 100)
-    api_key = os.getenv("FRED_API_KEY", "")
+    api_key = _get_key("FRED_API_KEY", "fred_api_key")
 
     if not query:
         return json.dumps({"series": [], "error": "query required"})
@@ -255,7 +274,7 @@ def _fred_get_series_data(args: dict[str, Any]) -> str:
     series_id = args.get("series_id", "")
     start_date = args.get("start_date", "2015-01-01")
     end_date = args.get("end_date", "2023-12-31")
-    api_key = os.getenv("FRED_API_KEY", "")
+    api_key = _get_key("FRED_API_KEY", "fred_api_key")
 
     if not series_id:
         return json.dumps({"error": "series_id required"})
@@ -1082,7 +1101,7 @@ def _fx_currencies() -> str:
 def search_patents(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
     """PatentsView API v1 — US patent data. Requires PATENTSVIEW_API_KEY env var
     (free from https://patentsview.org/apis/purpose)."""
-    api_key = os.getenv("PATENTSVIEW_API_KEY", "")
+    api_key = _get_key("PATENTSVIEW_API_KEY", "patentsview_api_key")
     query = arguments.get("query", "")
     assignee = arguments.get("assignee", "")
     start_date = arguments.get("start_date", "2018-01-01")
@@ -1159,7 +1178,7 @@ def search_patents(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
 def search_wto(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
     """WTO Timeseries API — trade statistics, tariffs, services trade.
     Requires WTO_API_KEY env var (free from https://apiportal.wto.org/)."""
-    api_key = os.getenv("WTO_API_KEY", "")
+    api_key = _get_key("WTO_API_KEY", "wto_api_key")
     if not api_key:
         return json.dumps({"error": "WTO_API_KEY env var not set. Get a free key at https://apiportal.wto.org/"})
 
@@ -1779,7 +1798,7 @@ def _ilo_get_data(args: dict[str, Any]) -> str:
 def search_air_quality(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
     """OpenAQ API v3 — global air quality data (PM2.5, PM10, NO2, O3, SO2, CO).
     Requires OPENAQ_API_KEY env var (free from https://explore.openaq.org/)."""
-    api_key = os.getenv("OPENAQ_API_KEY", "")
+    api_key = _get_key("OPENAQ_API_KEY", "openaq_api_key")
     if not api_key:
         return json.dumps({"error": "OPENAQ_API_KEY env var not set. Get a free key at https://explore.openaq.org/"})
 
