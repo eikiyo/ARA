@@ -184,6 +184,16 @@ class SessionRuntime:
                              f"Cycle 1 avg: {result.get('cycle1_avg', 0):.1f}"
                              + (f" | Cycle 2 avg: {result.get('cycle2_avg', 0):.1f}" if 'cycle2_avg' in result else ""),
                         depth=0))
+
+                # Post-peer-review programmatic gate — catch regressions from revision agent
+                gate_result = self.engine.post_peer_review_gate(on_event)
+                if gate_result.get("fixes", 0) > 0:
+                    log.info("Post-peer-review gate: applied %d fixes — regenerating output",
+                             gate_result["fixes"])
+                    self._generate_output()  # Regenerate paper.md with gate fixes applied
+                if gate_result.get("issues"):
+                    log.warning("Post-peer-review gate: %d issues — %s",
+                                len(gate_result["issues"]), gate_result["issues"])
         except Exception as exc:
             log.exception("Peer review pipeline error: %s", exc)
             if on_event:

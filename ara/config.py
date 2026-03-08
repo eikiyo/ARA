@@ -96,7 +96,7 @@ class ARAConfig:
     paper_type: str = "review"
 
     # Conceptual paper section word minimums (lean targets — depth over length)
-    words_theoretical_background: int = 1200
+    words_theoretical_background: int = 2000
     words_framework: int = 1500
     words_propositions: int = 1000
 
@@ -194,7 +194,7 @@ class ARAConfig:
             search_start_year=_safe_int("ARA_SEARCH_START_YEAR", 2014),
             scope_mode=os.getenv("ARA_SCOPE_MODE", "broad"),
             paper_type=os.getenv("ARA_PAPER_TYPE", "review"),
-            words_theoretical_background=_safe_int("ARA_WORDS_THEORETICAL_BACKGROUND", 1200),
+            words_theoretical_background=_safe_int("ARA_WORDS_THEORETICAL_BACKGROUND", 2000),
             words_framework=_safe_int("ARA_WORDS_FRAMEWORK", 1500),
             words_propositions=_safe_int("ARA_WORDS_PROPOSITIONS", 1000),
             max_propositions=_safe_int("ARA_MAX_PROPOSITIONS", 5),

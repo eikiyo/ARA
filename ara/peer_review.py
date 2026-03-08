@@ -37,6 +37,11 @@ REVIEW_ATTRIBUTES_EMPIRICAL = [
     "Practical Implications",
     "Ethical Considerations",
     "Publication Readiness",
+    "Cross-Section Coherence",
+    "Table Deduplication & Placement",
+    "Word Count Discipline",
+    "Reference Quality (Journal Tier)",
+    "Construct Naming Consistency",
 ]
 
 REVIEW_ATTRIBUTES_CONCEPTUAL = [
@@ -55,6 +60,11 @@ REVIEW_ATTRIBUTES_CONCEPTUAL = [
     "Future Research Agenda",
     "Domain Specificity",
     "Publication Readiness",
+    "Cross-Section Proposition Coherence",
+    "Table Deduplication & Placement",
+    "Word Count Discipline",
+    "Reference Quality (Journal Tier)",
+    "Construct Naming Consistency",
 ]
 
 # Default for backward compatibility
@@ -99,7 +109,7 @@ REVIEWER_PERSONAS_EMPIRICAL = {
     },
     "senior_editor": {
         "name": "Reviewer 3 (Senior Editor)",
-        "model_key": "claude_opus",
+        "model_key": "gemini_deep",
         "persona": (
             "You are the editor-in-chief of a top-tier journal, providing the final holistic assessment. "
             "You evaluate novelty and originality, practical implications, ethical considerations, "
@@ -124,6 +134,13 @@ REVIEWER_PERSONAS_CONCEPTUAL = {
             "You check that theoretical streams are properly integrated (not just listed), "
             "that the framework has clear boundary conditions, and that competing frameworks "
             "are compared on specific dimensions. "
+            "ADDITIONAL CHECKS: "
+            "(1) Cross-Section Proposition Coherence — are propositions numbered consistently and "
+            "do they appear ONLY in the propositions section? Score 0 if propositions are scattered "
+            "across multiple sections or use overlapping numbers. "
+            "(2) Reference Quality — are canonical authors (Teece, Dunning, North, Barney, Khanna & Palepu) "
+            "properly cited? Are there references from predatory/low-tier journals? "
+            "(3) Construct Naming Consistency — does each construct keep the SAME name across all sections? "
             "IMPORTANT: This is NOT an empirical paper — do NOT evaluate statistical validity, "
             "effect sizes, sample sizes, or reproducibility. The rigor comes from theoretical logic."
         ),
@@ -138,12 +155,18 @@ REVIEWER_PERSONAS_CONCEPTUAL = {
             "proposition formatting and distinctness, writing clarity, and domain specificity. "
             "You check that the theoretical background presents OTHERS' work while the framework "
             "presents the AUTHOR'S contribution — they should not overlap. "
-            "You verify all required sections are present and well-developed."
+            "You verify all required sections are present and well-developed. "
+            "ADDITIONAL CHECKS: "
+            "(1) Table Deduplication — tables should appear ONCE only. Comparison/definition tables "
+            "belong in theoretical_background. Discussion and conclusion must have NO tables. "
+            "(2) Word Count Discipline — total paper should be under 12,000 words. Flag bloated sections. "
+            "(3) No duplicate content — the same argument, table, or comparison matrix should not "
+            "appear in multiple sections."
         ),
     },
     "senior_editor": {
         "name": "Reviewer 3 (Senior Editor)",
-        "model_key": "claude_opus",
+        "model_key": "gemini_deep",
         "persona": (
             "You are the editor-in-chief of JIBS/AMJ evaluating a conceptual framework paper. "
             "You assess: Does this paper make a genuine theoretical contribution? "
@@ -152,6 +175,12 @@ REVIEWER_PERSONAS_CONCEPTUAL = {
             "Is the future research agenda specific and feasible? "
             "You judge publication readiness holistically — theoretical novelty, "
             "construct clarity, practical implications, and overall scholarly impact. "
+            "ADDITIONAL CHECKS: "
+            "(1) Reference quality — do references include canonical IB toolkit authors "
+            "(Dunning, Johanson & Vahlne, Teece, North, Barney, March, Nelson & Winter, "
+            "Cohen & Levinthal, Khanna & Palepu)? Penalize heavily if only low-tier journals. "
+            "(2) Word count — is the paper within 12,000 word target? "
+            "(3) Global coherence — does each section build on the previous without redundancy? "
             "IMPORTANT: Score this AS a conceptual paper — rigor is in the logic of the "
             "framework and grounding in prior theory, not in data or statistics."
         ),
@@ -227,7 +256,7 @@ def _build_review_prompt(
         f"You are reviewing for: **{journal}**\n"
         f"Paper topic: {topic}\n\n"
         f"## Instructions\n"
-        f"Read the paper below carefully and score it on ALL 15 attributes (1-100 each).\n"
+        f"Read the paper below carefully and score it on ALL {len(attributes)} attributes (1-100 each).\n"
         f"For each attribute, provide:\n"
         f"- A numeric score (1-100)\n"
         f"- A specific, actionable improvement instruction (2-3 sentences MAX) — what EXACTLY should be changed, added, or removed to reach 95+\n\n"
@@ -659,19 +688,27 @@ class PeerReviewPipeline:
         self, reviews: list[dict], rebuttals: list[dict],
         cycle: int, journal: str,
     ) -> dict[str, Any]:
-        """Round 3: Use senior editor (Opus) to build consensus."""
+        """Round 3: Use Sonnet to build consensus."""
         self._emit(f"  Round 3: Consensus synthesis (cycle {cycle})...")
 
         prompt = _build_consensus_prompt(reviews, rebuttals, journal)
-        response_text, usage = self._generate("claude_opus", prompt)
+        response_text, usage = self._generate("claude_sonnet", prompt)
         parsed = _extract_json(response_text)
         consensus = parsed.get("consensus", {})
 
         # Fill missing attributes with averaged scores from round 1
+        # Only average reviewers who actually scored the attribute (improvement != "")
+        # to avoid default-50 masking real problems
         for attr in self._review_attrs:
             if attr not in consensus:
-                scores = [r["scores"].get(attr, {}).get("score", 50) for r in reviews]
-                avg = sum(scores) // len(scores) if scores else 50
+                real_scores = []
+                for r in reviews:
+                    attr_data = r["scores"].get(attr, {})
+                    score_val = attr_data.get("score", 50)
+                    has_feedback = bool(attr_data.get("improvement", ""))
+                    if has_feedback or score_val != 50:
+                        real_scores.append(score_val)
+                avg = sum(real_scores) // len(real_scores) if real_scores else 50
                 consensus[attr] = {
                     "score": avg,
                     "improvement_plan": "",
@@ -964,26 +1001,30 @@ class PeerReviewPipeline:
 
 
 def build_peer_review_models(config: ARAConfig) -> dict[str, BaseModel] | None:
-    """Build all 4 reviewer models. Returns None if keys are missing."""
+    """Build peer review models: Gemini deep (reviewing) + Claude Sonnet (reviewing/consensus) + Claude Opus (surgical edits only).
+
+    Reviewers: gemini_deep, claude_sonnet (2 models)
+    Consensus: claude_sonnet
+    Surgical edits: claude_opus
+    """
     from .model import GeminiModel, AnthropicModel
 
     models: dict[str, BaseModel] = {}
 
-    # Gemini models need Google API key
+    # Gemini model needs Google API key
     if not config.google_api_key:
         _log.warning("Peer review: Google API key not available — Gemini reviewers disabled")
         return None
 
     try:
         models["gemini_deep"] = GeminiModel(model="gemini-3.1-pro-preview", api_key=config.google_api_key)
-        models["gemini_pro"] = GeminiModel(model="gemini-3-flash-preview", api_key=config.google_api_key)
     except Exception as exc:
-        _log.error("Failed to create Gemini peer review models: %s", exc)
+        _log.error("Failed to create Gemini peer review model: %s", exc)
         return None
 
     # Anthropic models need Anthropic API key
     if not config.anthropic_api_key:
-        _log.warning("Peer review: Anthropic API key not available — Claude reviewers disabled")
+        _log.warning("Peer review: Anthropic API key not available — Claude models disabled")
         return None
 
     try:

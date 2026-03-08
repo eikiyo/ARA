@@ -18,21 +18,69 @@ _log = logging.getLogger(__name__)
 import re as _re
 
 _LLM_META_PATTERNS = [
-    # "Here is the drafted X section..." preambles
-    _re.compile(r'^(?:Here is|Below is|I\'ve (?:drafted|written|prepared)|The following is)[^\n]*?\.\s*(?:\*{3,}|---+)?\s*\n', _re.IGNORECASE),
+    # "Here is the drafted X section..." preambles (with or without period/colon)
+    _re.compile(r'^(?:Here is|Below is|I\'ve (?:drafted|written|prepared)|The following is)[^\n]*?[.:\n]\s*(?:\*{3,}|---+)?\s*', _re.IGNORECASE),
+    # "Certainly!" / "Sure!" / "Of course!" openers
+    _re.compile(r'^(?:Certainly|Sure|Of course|Absolutely|Great)[!.]?\s*(?:Here is|I\'ve|Below)[^\n]*?[.:]\s*\n', _re.IGNORECASE),
+    # "Let me" / "I will now" / "Continuing from"
+    _re.compile(r'^(?:Let me|I will now|I\'ll now|Continuing from)[^\n]*?[.:]\s*\n', _re.IGNORECASE),
+    # "I've incorporated your feedback" / "As requested" / "Following the reviewer"
+    _re.compile(r'^(?:I\'ve incorporated|As requested|Following (?:the|your))[^\n]*?[.:]\s*\n', _re.IGNORECASE),
     # "Since tool calls were looping..." explanations
     _re.compile(r'^[^\n]*(?:tool call|looping|validation|provided the raw text|directly below)[^\n]*\.\s*\n', _re.IGNORECASE),
     # Markdown separators at the very top (***  or ---)
     _re.compile(r'^\s*(?:\*{3,}|---+)\s*\n'),
-    # "Note:" or "Important:" meta-commentary at the start
-    _re.compile(r'^(?:Note|Important|NB|Caveat):\s*[^\n]*\n', _re.IGNORECASE),
+    # "Note:" / "Important:" / "DRAFT" meta-commentary at the start (colon, dash, em-dash)
+    _re.compile(r'^(?:Note|Important|NB|Caveat|DRAFT)\s*[:.—–\-]\s*[^\n]*\n', _re.IGNORECASE),
+    # Bold meta-notes: "**Note: ...**"
+    _re.compile(r'^\*{1,2}(?:Note|Important|NB|Caveat)[:.][^*\n]*\*{1,2}\s*\n', _re.IGNORECASE),
 ]
+
+# Patterns to strip ANYWHERE in the content (not just at the top)
+_LLM_BODY_PATTERNS = [
+    # Placeholders: [INSERT X HERE], [TODO: X], [PLACEHOLDER]
+    _re.compile(r'\[(?:INSERT|TODO|PLACEHOLDER|ADD|INCLUDE|TBD)[^\]]*\]', _re.IGNORECASE),
+    # Word count meta: [Word count: 847 words], (Word count: 847)
+    _re.compile(r'[\[\(]Word count[^\]\)]*[\]\)]', _re.IGNORECASE),
+    # AI self-references (catastrophic in a paper)
+    _re.compile(r'(?:As (?:an? )?(?:AI|artificial intelligence|language model|LLM))[^\n.]*[.\n]', _re.IGNORECASE),
+    # Emoji (any non-ASCII emoji-range character at start of paragraph)
+    _re.compile(r'[\U0001F300-\U0001F9FF\U00002702-\U000027B0\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002600-\U000026FF]'),
+    # HTML tags
+    _re.compile(r'</?(?:b|i|em|strong|u|br|p|div|span|a|h[1-6]|ul|ol|li|table|tr|td|th|img)[^>]*>'),
+    # "As requested" / "As you asked" mid-document
+    _re.compile(r'\n[^\n]*(?:as (?:you )?(?:requested|asked)|per your (?:request|instructions))[^\n]*\n', _re.IGNORECASE),
+]
+
+
+# Predatory / low-quality DOI prefixes (known predatory publishers)
+PREDATORY_DOI_PREFIXES = [
+    "10.63544", "10.47857", "10.55248", "10.46254", "10.51594",
+    "10.36713", "10.36348", "10.52589", "10.46328", "10.55529",
+    "10.33552", "10.46568", "10.35940", "10.47772", "10.32996",
+    "10.47577", "10.46632", "10.52783", "10.55014", "10.36347",
+    "10.36346", "10.46471", "10.47176", "10.55708", "10.37394",
+    "10.51984", "10.53819", "10.55927", "10.46484", "10.36719",
+]
+
+
+def _is_predatory_doi(doi: str) -> bool:
+    """Check if a DOI belongs to a known predatory publisher."""
+    if not doi:
+        return False
+    doi_lower = doi.lower().strip()
+    # Strip common URL prefixes so we compare the raw DOI
+    for url_prefix in ("https://doi.org/", "http://doi.org/", "doi.org/", "doi:"):
+        if doi_lower.startswith(url_prefix):
+            doi_lower = doi_lower[len(url_prefix):]
+            break
+    return any(doi_lower.startswith(prefix) for prefix in PREDATORY_DOI_PREFIXES)
 
 
 def _strip_llm_meta_text(content: str) -> str:
     """Remove LLM-generated meta-commentary from section content."""
     original_len = len(content)
-    # Apply patterns iteratively (meta-text can be multi-line at the top)
+    # Apply top-of-content patterns iteratively (meta-text can be multi-line)
     for _ in range(5):  # Max 5 passes
         changed = False
         for pat in _LLM_META_PATTERNS:
@@ -42,6 +90,18 @@ def _strip_llm_meta_text(content: str) -> str:
                 changed = True
         if not changed:
             break
+    # Apply body patterns globally (placeholders, AI self-refs, HTML, emoji)
+    for pat in _LLM_BODY_PATTERNS:
+        content = pat.sub('', content)
+    # Replace em-dashes and en-dashes with appropriate punctuation
+    # " — " (surrounded by spaces) → ", " (most common usage: parenthetical)
+    content = _re.sub(r'\s*[\u2014\u2013]\s*', ', ', content)
+    # Clean up double commas or comma-period from replacement
+    content = _re.sub(r',\s*,', ',', content)
+    content = _re.sub(r',\s*\.', '.', content)
+    # Clean up double blank lines and trailing spaces left by removals
+    content = _re.sub(r'\n{3,}', '\n\n', content)
+    content = _re.sub(r' +\n', '\n', content)
     if len(content) < original_len:
         _log.info("WRITE_SECTION: Stripped %d chars of LLM meta-text", original_len - len(content))
     return content
@@ -103,11 +163,17 @@ def _get_min_citations(ctx: dict) -> dict[str, int]:
 #   Author (Year) — narrative citation
 #   Author and Author (Year) — narrative two authors
 #   Author et al. (Year) — narrative 3+ authors
+#   (Author, Year; Author, Year) — multi-citation parenthetical (semicolons)
+#   Handles hyphenated names like Al-Maktoum, De-Sousa
+_AUTHOR_FRAG = r'(?:[A-Z][a-z]+(?:-[A-Za-z]+)*)' # Single surname, optionally hyphenated
+_AUTHOR_PAIR = _AUTHOR_FRAG + r'(?:\s(?:&|and)\s' + _AUTHOR_FRAG + r')?'  # One or two authors
+_AUTHOR_FULL = _AUTHOR_PAIR + r'(?:\set\sal\.)?'  # With optional et al.
+
 _CITATION_PATTERN = re.compile(
     r'(?:'
-    r'\(([A-Z][a-z]+(?:\s(?:&|and)\s[A-Z][a-z]+)?(?:\set\sal\.)?),?\s*(\d{4})\)'  # parenthetical
+    r'(' + _AUTHOR_FULL + r'),?\s*(\d{4})'  # parenthetical or inside multi-cite
     r'|'
-    r'([A-Z][a-z]+(?:\s(?:&|and)\s[A-Z][a-z]+)?(?:\set\sal\.)?)\s*\((\d{4})\)'  # narrative
+    r'(' + _AUTHOR_FULL + r')\s*\((\d{4})\)'  # narrative
     r')'
 )
 
@@ -467,7 +533,10 @@ def get_citations(args: dict[str, Any], ctx: dict) -> str:
     ).fetchall()
     all_papers = [dict(r) for r in rows]
     for p in all_papers:
-        p["authors"] = json.loads(p.get("authors") or "[]")
+        try:
+            p["authors"] = json.loads(p.get("authors") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            p["authors"] = []
 
     # Also check central DB for papers not in this session (foundational works)
     central_db = ctx.get("central_db")
@@ -535,6 +604,33 @@ def get_citations(args: dict[str, Any], ctx: dict) -> str:
     if not papers:
         papers = all_papers  # Fallback if no matches
 
+    # Reference quality filter — remove predatory DOIs and invalid entries
+    filtered_papers = []
+    predatory_removed = 0
+    invalid_removed = 0
+    for p in papers:
+        doi = p.get("doi", "")
+        title = p.get("title", "") or ""
+        authors_list = p.get("authors", [])
+
+        # Skip entries with empty/missing authors or titles
+        if not title or title == "Untitled" or not authors_list:
+            invalid_removed += 1
+            continue
+
+        # Skip predatory DOIs
+        if _is_predatory_doi(doi):
+            predatory_removed += 1
+            _log.info("REFERENCES: Filtered predatory DOI: %s (%s)", doi, title[:60])
+            continue
+
+        filtered_papers.append(p)
+
+    if predatory_removed or invalid_removed:
+        _log.info("REFERENCES: Filtered %d predatory DOIs, %d invalid entries (no author/title)",
+                   predatory_removed, invalid_removed)
+    papers = filtered_papers if filtered_papers else papers  # Fallback if all filtered
+
     # Generate both BibTeX and APA formatted references
     bibtex_entries = []
     apa_entries = []
@@ -546,8 +642,16 @@ def get_citations(args: dict[str, Any], ctx: dict) -> str:
         doi = p.get("doi", "")
         key = f"paper_{p.get('paper_id', 0)}"
 
+        # Validate: skip entries with empty author strings after join
+        authors_bib = " and ".join(
+            (a if isinstance(a, str) else a.get("name", "")).strip()
+            for a in authors_list[:5]
+            if (a if isinstance(a, str) else a.get("name", "")).strip()
+        )
+        if not authors_bib or not title.strip():
+            continue  # Skip malformed entries
+
         # BibTeX entry
-        authors_bib = " and ".join(a if isinstance(a, str) else a.get("name", "") for a in authors_list[:5])
         entry = f"@article{{{key},\n"
         entry += f"  author = {{{authors_bib}}},\n"
         entry += f"  title = {{{title}}},\n"

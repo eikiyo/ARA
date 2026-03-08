@@ -197,12 +197,13 @@ class RLMEngine:
                 "name": "deep_read",
                 "prompt": "analyst_deep_read",
                 "objective": (
-                    "Extract structured claims from papers about {topic}. "
+                    "Extract ALL structured claims from papers — topic-agnostic comprehensive extraction. "
                     "STEP 1: Call list_papers(selected_only=true, needs_claims=true, limit=100) to get papers that STILL NEED claim extraction. "
                     "Papers that already have claims from the database are automatically excluded. "
                     "STEP 2: For EVERY listed paper: call read_paper(paper_id=ID, include_fulltext=true) to get the full paper text, "
                     "then extract_claims with specific quotes from the text, then assess_risk_of_bias. "
-                    "Each claim needs: claim_text, claim_type (finding/method/limitation/gap), "
+                    "Extract EVERY finding, theory, method, limitation, and gap — not just those about {topic}. "
+                    "This enables cross-topic reuse. Each claim needs: claim_text, claim_type (finding/theory/method/limitation/gap), "
                     "confidence (0-1), supporting_quotes (EXACT quotes from the paper text). "
                     "Also extract: sample_size, effect_size, p_value, study_design, population. "
                     "Process papers one at a time. Target: {min_claims}+ claims from {min_deep_read_papers}+ papers. "
@@ -353,13 +354,15 @@ class RLMEngine:
                 "name": "deep_read",
                 "prompt": "analyst_deep_read",
                 "objective": (
-                    "Extract theoretical arguments and evidence from papers about {topic}. "
+                    "Extract ALL theoretical arguments and evidence from papers — topic-agnostic comprehensive extraction. "
                     "STEP 1: Call list_papers(selected_only=true, needs_claims=true, limit=100) to get papers that STILL NEED claim extraction. "
                     "Papers that already have claims from the database are automatically excluded. "
                     "STEP 2: For EVERY listed paper: call read_paper(paper_id=ID, include_fulltext=true) to get the full paper text, then extract_claims. "
-                    "Focus on extracting: (a) theoretical arguments and frameworks proposed, "
-                    "(b) key constructs and definitions, (c) empirical findings that support/challenge theories, "
-                    "(d) research gaps and limitations identified, (e) boundary conditions discussed. "
+                    "Extract EVERYTHING from the paper, not just content about {topic}: "
+                    "(a) theoretical arguments and frameworks proposed, "
+                    "(b) key constructs and definitions, (c) ALL empirical findings, "
+                    "(d) research gaps and limitations identified, (e) boundary conditions discussed, "
+                    "(f) methodological insights. "
                     "Use claim_type: 'theory' for theoretical arguments, 'finding' for evidence, "
                     "'gap' for research gaps, 'method' for methodological insights. "
                     "Process papers one at a time. Target: {min_claims}+ claims from {min_deep_read_papers}+ papers. "
@@ -660,7 +663,7 @@ class RLMEngine:
                     # Pre-load claims from central DB so deep_read skips already-extracted papers
                     central_db = self.tools.central_db
                     if central_db and db and session_id:
-                        self._preload_claims_from_central(central_db, db, session_id)
+                        self._preload_claims_from_central(central_db, db, session_id, topic=topic)
 
                     # Run fetch_texts + embed + deep_read in parallel
                     # fetch gets full text; embed creates vectors; deep_read starts on available papers
@@ -1075,12 +1078,13 @@ class RLMEngine:
                 time.sleep(_BATCH_COOLDOWN)
 
             batch_objective = (
-                f"CONTINUE extracting claims from papers about {topic}. "
+                f"CONTINUE extracting ALL claims from papers — topic-agnostic comprehensive extraction. "
                 f"You have {len(claims)} claims from {papers_with_claims} papers so far. "
                 f"Target: {self.config.min_claims}+ claims from {self.config.min_deep_read_papers}+ papers. "
                 f"Call list_papers(selected_only=true, needs_claims=true, limit={_BATCH_SIZE}) to get papers that STILL NEED claims. "
                 f"Papers already processed are automatically excluded. "
                 f"Process ALL listed papers. "
+                f"Extract EVERY finding, theory, method, limitation, and gap from each paper — not just content about {topic}. "
                 f"For each: read_paper(paper_id=ID, include_fulltext=true) → extract_claims with EXACT quotes → assess_risk_of_bias. "
                 f"SKIP any paper with no full text — move to next. "
                 f"Stop after processing {_BATCH_SIZE} papers — another batch will follow."
@@ -1965,7 +1969,7 @@ class RLMEngine:
         # Pre-load claims from central DB
         central_db = self.tools.central_db
         if central_db:
-            self._preload_claims_from_central(central_db, db, session_id)
+            self._preload_claims_from_central(central_db, db, session_id, topic=topic)
 
         # ── Step 2: Parallel — fetch/deep_read selected + generate remaining embeddings ──
         selected_count = db._conn.execute(
@@ -2830,11 +2834,11 @@ class RLMEngine:
 
         # 1b. Word count MAXIMUM — enforce hard ceiling at 2x minimum (prevent bloat)
         max_words_map = {
-            "abstract": 350, "introduction": 1200, "methodology": 700,
-            "literature_review": 2500, "methods": 1500,
-            "results": 2000, "discussion": 1500,
-            "conclusion": 500,
-            "theoretical_background": 2500, "framework": 2000, "propositions": 1800,
+            "abstract": 280, "introduction": 960, "methodology": 560,
+            "literature_review": 2000, "methods": 1200,
+            "results": 1600, "discussion": 1200,
+            "conclusion": 400,
+            "theoretical_background": 2000, "framework": 1600, "propositions": 1440,
         }
         max_words = max_words_map.get(section_name, 0)
         if max_words > 0 and word_count > max_words:
@@ -2886,11 +2890,13 @@ class RLMEngine:
                 r'(?:Proposition\s+\d+|P\d+)\s*[:\.]\s*(.{30,200})',
                 content, _re2.IGNORECASE,
             )
-            # Check if there's a summary table
-            table_rows = _re2.findall(r'\|[^|]+\|[^|]+\|', content)
-            if prop_statements and table_rows:
-                # Verify proposition count matches table rows (minus header)
-                data_rows = [r for r in table_rows if '---' not in r and 'Proposition' not in r.split('|')[1]]
+            # Check if there's a summary table (line-based to avoid multi-column double-counting)
+            table_lines = [l.strip() for l in content.split('\n')
+                           if l.strip().startswith('|') and l.strip().endswith('|')]
+            if prop_statements and table_lines:
+                # Data rows: exclude header (first row) and separator (---) rows
+                data_rows = [l for l in table_lines
+                             if '---' not in l and table_lines.index(l) > 0]
                 if len(data_rows) > 0 and abs(len(prop_statements) - len(data_rows)) > 1:
                     issues.append(
                         f"Proposition count mismatch: {len(prop_statements)} in text vs "
@@ -2910,7 +2916,7 @@ class RLMEngine:
                     f"State the gap in the introduction only — reference it here, don't restate it."
                 )
 
-        # 7. Duplication check — compare with other sections (>60% overlap = problem)
+        # 7. Duplication check — compare body sections (skip abstract/conclusion — they summarize)
         _COMMON_ACADEMIC_WORDS = {
             "the", "and", "of", "to", "in", "a", "is", "that", "for", "was", "on", "are", "with",
             "as", "this", "by", "from", "be", "have", "an", "has", "their", "been", "were", "or",
@@ -2918,15 +2924,35 @@ class RLMEngine:
             "study", "studies", "research", "findings", "results", "evidence", "paper", "review",
             "analysis", "data", "based", "found", "literature", "may", "can", "however", "al",
             "et", "significant", "associated", "effect", "effects", "participants", "reported",
+            # Common academic structure words that inflate false positives
+            "section", "framework", "theory", "theoretical", "proposed", "model", "approach",
+            "context", "relationship", "suggests", "demonstrated", "implications", "contributes",
+            "previous", "existing", "present", "provides", "examines", "explores", "discusses",
+            "further", "particularly", "specifically", "importantly", "across", "during", "through",
+            "platform", "firms", "financial", "digital", "technology", "crisis", "crises",
         }
-        if sections_dir.exists():
+        # Abstract and conclusion naturally overlap with all sections — don't flag them
+        _overlap_exempt = {"abstract", "conclusion", "methodology", "protocol"}
+        if sections_dir.exists() and section_name not in _overlap_exempt:
             content_words = set(content.lower().split()) - _COMMON_ACADEMIC_WORDS
             for other_file in sections_dir.iterdir():
-                if other_file.suffix == ".md" and other_file.stem != section_name and other_file.stat().st_size > 200:
+                if (other_file.suffix == ".md" and other_file.stem != section_name
+                        and other_file.stem not in _overlap_exempt
+                        and other_file.stat().st_size > 200):
                     other_words = set(other_file.read_text(encoding="utf-8").lower().split()) - _COMMON_ACADEMIC_WORDS
+                    # Skip if either set too small — overlap metric is noisy below 100 unique words
+                    if len(content_words) < 100 or len(other_words) < 100:
+                        continue
                     if content_words and other_words:
                         overlap = len(content_words & other_words) / min(len(content_words), len(other_words))
-                        if overlap > 0.6:
+                        # Conceptual paper sections that build on each other get a higher threshold
+                        # (TB→framework→propositions share constructs by design)
+                        _construct_family = {"theoretical_background", "framework", "propositions"}
+                        if section_name in _construct_family and other_file.stem in _construct_family:
+                            threshold = 0.45  # Same construct family — allow more shared vocabulary
+                        else:
+                            threshold = 0.30
+                        if overlap > threshold:
                             issues.append(f"High overlap ({overlap:.0%}) with '{other_file.stem}' — likely duplication")
 
         # 8. Sentence length check — verbose academic writing kills readability
@@ -2951,6 +2977,9 @@ class RLMEngine:
             r'(?:plays? (?:a|an) (?:significant|crucial|vital|important|key|critical|pivotal) role)',
             r'(?:in the context of|within the (?:context|framework|domain) of)',
             r'(?:serves? as (?:a|an) (?:catalyst|driver|enabler|mechanism|conduit|vehicle))',
+            r'(?:deserve|warrant|merit)s?\s+(?:careful|further|close|special)\s+(?:consideration|attention|examination|investigation)',
+            r'(?:carry|have|hold|bear)s?\s+(?:significant|important|profound|substantial)\s+implications',
+            r'(?:the )?(?:broader|wider|larger)\s+context\s+(?:within\s+which|of|in\s+which)',
         ]
         hedge_count = 0
         for hp in _HEDGING_PHRASES:
@@ -2982,8 +3011,31 @@ class RLMEngine:
                         f"Definition tables belong in theoretical_background."
                     )
 
-        # 11. Construct naming consistency — check that key constructs use consistent names
-        # (programmatic: detect if same construct appears under multiple names)
+        # 11. Table content dedup — detect duplicate tables across sections
+        if section_name in ("framework", "discussion", "propositions"):
+            # Extract table blocks from this section
+            table_blocks = _re.findall(r'(\|[^\n]+\|\n(?:\|[^\n]+\|\n){2,})', content)
+            if table_blocks and sections_dir.exists():
+                for other_file in sections_dir.iterdir():
+                    if other_file.suffix == ".md" and other_file.stem != section_name and other_file.stat().st_size > 200:
+                        other_content = other_file.read_text(encoding="utf-8")
+                        other_tables = _re.findall(r'(\|[^\n]+\|\n(?:\|[^\n]+\|\n){2,})', other_content)
+                        for tbl in table_blocks:
+                            tbl_words = set(tbl.lower().split()) - _COMMON_ACADEMIC_WORDS
+                            for otbl in other_tables:
+                                otbl_words = set(otbl.lower().split()) - _COMMON_ACADEMIC_WORDS
+                                if tbl_words and otbl_words:
+                                    tbl_overlap = len(tbl_words & otbl_words) / min(len(tbl_words), len(otbl_words))
+                                    if tbl_overlap > 0.30:
+                                        issues.append(
+                                            f"Duplicate table detected: table in '{section_name}' has {tbl_overlap:.0%} "
+                                            f"overlap with a table in '{other_file.stem}'. "
+                                            f"Remove the duplicate — tables should appear only ONCE. "
+                                            f"Definition/comparison tables belong in theoretical_background only."
+                                        )
+                                        break  # One match is enough
+                            if issues and "Duplicate table" in issues[-1]:
+                                break  # Don't flag multiple duplicates per section
 
         # 12. Proposition count cap (propositions section only)
         if section_name == "propositions":
@@ -3017,13 +3069,17 @@ class RLMEngine:
             tb_file = sections_dir / "theoretical_background.md"
             if tb_file.exists():
                 tb_content = tb_file.read_text(encoding="utf-8")
-                # Extract italicized constructs from both sections
-                tb_constructs = set(c.strip() for c in _re.findall(r'\*([A-Z][^*]{3,50})\*', tb_content))
-                sec_constructs = set(c.strip() for c in _re.findall(r'\*([A-Z][^*]{3,50})\*', content))
+                # Extract italicized constructs (single *italic*, NOT **bold**)
+                # Pattern: non-asterisk before *, capture content, * followed by non-asterisk
+                _construct_pat = r'(?<!\*)\*([A-Z][^*]{3,50})\*(?!\*)'
+                tb_constructs = set(c.strip() for c in _re.findall(_construct_pat, tb_content))
+                sec_constructs = set(c.strip() for c in _re.findall(_construct_pat, content))
                 # Find constructs in this section that don't appear in theoretical_background
                 new_constructs = sec_constructs - tb_constructs
-                # Filter out common false positives (short strings, section names)
-                new_constructs = {c for c in new_constructs if len(c) > 10 and c.lower() not in (
+                # Filter out false positives: section names, proposition labels, short strings
+                new_constructs = {c for c in new_constructs if len(c) > 10
+                    and not _re.match(r'(?:Proposition|P)\s*\d', c, _re.IGNORECASE)
+                    and c.lower() not in (
                     "theoretical background", "literature review", "research question",
                     "future research", "practical implications",
                 )}
@@ -3034,6 +3090,82 @@ class RLMEngine:
                         f"{', '.join(sorted(new_constructs)[:4])}. "
                         f"Use the EXACT construct names from theoretical_background."
                     )
+
+        # 15. LLM artifact detection — catches patterns that survive meta-text stripping
+        _llm_artifacts = [
+            # AI self-references (catastrophic)
+            (r'(?:as (?:an? )?(?:AI|artificial intelligence|language model|LLM))', "AI self-reference"),
+            # Conversational preambles mid-text
+            (r'(?:as (?:you )?(?:requested|asked)|per your (?:request|instructions))', "conversational meta-text"),
+            # Placeholders
+            (r'\[(?:INSERT|TODO|PLACEHOLDER|ADD|INCLUDE|TBD)[^\]]*\]', "placeholder text"),
+            # Word count annotations
+            (r'[\[\(]word count[^\]\)]*[\]\)]', "word count annotation"),
+            # Emoji
+            (r'[\U0001F300-\U0001F9FF\U00002702-\U000027B0\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002600-\U000026FF]', "emoji"),
+            # HTML tags
+            (r'</?(?:b|i|em|strong|u|br|p|div|span|a|h[1-6])[^>]*>', "HTML tags"),
+        ]
+        for pat_str, label in _llm_artifacts:
+            if _re.search(pat_str, content, _re.IGNORECASE):
+                issues.append(
+                    f"LLM artifact: {label} detected. Remove ALL non-academic content. "
+                    f"A published paper must contain zero AI meta-commentary, placeholders, or markup."
+                )
+
+        # 16. Hollow topic sentences — "This section aims to discuss..."
+        if section_name not in ("abstract", "protocol"):
+            _hollow_patterns = [
+                r'(?:this|the)\s+(?:section|part|chapter)\s+(?:aims?|seeks?|attempts?|intends?|will)\s+(?:to\s+)?(?:discuss|examine|explore|analyze|present|address|investigate)',
+                r'(?:in|within)\s+this\s+(?:section|part),?\s+we\s+(?:will|shall|aim to|seek to)\s+(?:discuss|examine|explore)',
+                r'(?:the (?:purpose|aim|goal|objective) of this (?:section|part) is to)',
+            ]
+            hollow_count = 0
+            for hp in _hollow_patterns:
+                hollow_count += len(_re.findall(hp, content, _re.IGNORECASE))
+            if hollow_count > 0:
+                issues.append(
+                    f"Hollow topic sentence(s): {hollow_count} found. Do NOT announce what "
+                    f"the section will do — just DO it. Replace 'This section discusses X' "
+                    f"with the actual argument about X. Top journals reject self-referential writing."
+                )
+
+        # 17. Shopping-list literature review detection
+        # Pattern: 3+ consecutive "Author (Year) found/showed/demonstrated..." sentences
+        if section_name in ("discussion", "literature_review", "theoretical_background", "results"):
+            shopping_matches = _re.findall(
+                r'(?:^|\. )([A-Z][a-z]+(?:\s+(?:et\s+al\.|&\s+[A-Z][a-z]+))?)\s*\(\d{4}\)\s+'
+                r'(?:found|showed|demonstrated|reported|argued|suggested|observed|noted|indicated|revealed|concluded|proposed)',
+                content,
+            )
+            if len(shopping_matches) >= 4:
+                issues.append(
+                    f"Shopping-list writing: {len(shopping_matches)} consecutive 'Author (Year) found...' sentences. "
+                    f"SYNTHESIZE — group findings by theme, not by author. "
+                    f"A top-tier paper integrates evidence, it doesn't catalog it. "
+                    f"Use thematic topic sentences: 'Crisis-driven diversification follows three patterns: ...'"
+                )
+
+        # 18. Bullet-list detection — top journals use prose, not lists
+        if section_name not in ("abstract", "protocol", "methodology"):
+            bullet_lines = _re.findall(r'^\s*[-*•]\s+', content, _re.MULTILINE)
+            if len(bullet_lines) >= 3:
+                issues.append(
+                    f"Bullet list detected ({len(bullet_lines)} items). Top-tier journals require "
+                    f"continuous prose, not bullet points. Convert each bullet into a full sentence "
+                    f"within a paragraph. Use transition words to connect ideas."
+                )
+
+        # 19. Em-dash usage — replace with proper punctuation
+        em_dashes = content.count('\u2014')  # —
+        en_dashes = content.count('\u2013')  # –
+        total_dashes = em_dashes + en_dashes
+        if total_dashes > 0:
+            issues.append(
+                f"Em/en-dash found ({total_dashes} instances). Replace ALL dashes: "
+                f"use commas, semicolons, colons, or parentheses instead. "
+                f"No em-dashes (\u2014) or en-dashes (\u2013) anywhere in the paper."
+            )
 
         return issues
 
@@ -3147,6 +3279,18 @@ class RLMEngine:
             ))
             _log.warning("PRE-CRITIC: Only %d unique citations — need %d+", len(total_citations), _MIN_UNIQUE_CITATIONS)
 
+        # Global coherence passes (programmatic, no LLM cost)
+        prop_fixes = self._global_proposition_coherence(on_event)
+        table_fixes = self._global_table_dedup(on_event)
+        if prop_fixes or table_fixes:
+            _log.info("PRE-CRITIC: Global coherence fixes — %d proposition, %d table", prop_fixes, table_fixes)
+            # Re-scan word counts after table removal
+            total_words = 0
+            for section_name_iter in expected:
+                sf = section_files.get(section_name_iter)
+                if sf:
+                    total_words += len(sf.read_text(encoding="utf-8").split())
+
         _log.info("PRE-CRITIC: total_words=%d, unique_citations=%d, failing_sections=%d/%d",
                    total_words, len(total_citations), len(failing_sections), len(expected))
 
@@ -3230,6 +3374,376 @@ class RLMEngine:
 
     # NOTE: LLM paper_critic removed — peer review handles qualitative evaluation post-output.
     # The programmatic quality gate (_pre_critic_validation) catches mechanical issues.
+
+    def _global_proposition_coherence(self, on_event: StepCallback | None) -> int:
+        """Programmatic: ensure propositions are numbered consistently and appear only in the propositions section.
+
+        Returns number of fixes applied.
+        """
+        import re as _gpc_re
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        if not sections_dir.exists():
+            return 0
+
+        # 1. Extract canonical propositions from the propositions section
+        prop_file = sections_dir / "propositions.md"
+        if not prop_file.exists():
+            return 0
+
+        prop_content = prop_file.read_text(encoding="utf-8")
+        # Find all proposition labels: P1, P2, Proposition 1, Proposition 2, etc.
+        canonical_props = _gpc_re.findall(
+            r'(?:^|\n)\s*\*?\*?(?:Proposition\s+(\d+)|P(\d+))\s*[:.]\s*(.{10,200})',
+            prop_content, _gpc_re.IGNORECASE,
+        )
+        # Build canonical set of proposition numbers
+        canonical_nums = set()
+        for m in canonical_props:
+            num = m[0] or m[1]
+            if num:
+                canonical_nums.add(int(num))
+        _log.info("COHERENCE: Found %d canonical propositions: %s", len(canonical_nums), sorted(canonical_nums))
+
+        # 2. Renumber propositions in propositions.md to be sequential (P1, P2, P3, ...)
+        fixes = 0
+        if canonical_nums and canonical_nums != set(range(1, len(canonical_nums) + 1)):
+            sorted_nums = sorted(canonical_nums)
+            for new_num, old_num in enumerate(sorted_nums, 1):
+                if new_num != old_num:
+                    # Renumber in propositions section
+                    prop_content = _gpc_re.sub(
+                        rf'(Proposition\s+){old_num}(\s*[:.])' ,
+                        rf'\g<1>{new_num}\2', prop_content,
+                    )
+                    prop_content = _gpc_re.sub(
+                        rf'\bP{old_num}\b', f'P{new_num}', prop_content,
+                    )
+                    fixes += 1
+            if fixes:
+                prop_file.write_text(prop_content, encoding="utf-8")
+                _log.info("COHERENCE: Renumbered %d propositions to sequential P1-%d", fixes, len(canonical_nums))
+
+        # 3. Strip proposition DEFINITIONS from non-propositions sections
+        # (Allow references like "as P1 suggests" but strip full definitions like "P1: <statement>")
+        # Two patterns: line-start definitions AND inline definitions (mid-paragraph)
+        _prop_def_line = _gpc_re.compile(
+            r'\n\s*\*?\*?(?:Proposition\s+\d+|P\d+)\s*[:.].*?(?=\n\s*\*?\*?(?:Proposition\s+\d+|P\d+)\s*[:.])|\n\s*\*?\*?(?:Proposition\s+\d+|P\d+)\s*[:.][^\n]+',
+            _gpc_re.IGNORECASE | _gpc_re.DOTALL,
+        )
+        # Inline: "**Proposition N: <text>**" mid-sentence (bold wrapped)
+        _prop_def_inline = _gpc_re.compile(
+            r'\*{1,2}(?:Proposition\s+\d+|P\d+)\s*[:.][^*\n]*\*{1,2}',
+            _gpc_re.IGNORECASE,
+        )
+        for f in sections_dir.iterdir():
+            if f.suffix == ".md" and f.stem not in ("propositions", "protocol", "synthesis_data", "writing_brief",
+                                                     "advisory_report", "synthesis", "critic", "hypothesis", "brancher"):
+                content = f.read_text(encoding="utf-8")
+                # Count proposition definitions (not just references) — line-start OR inline
+                definitions = _gpc_re.findall(
+                    r'(?:^|\n|\*{1,2})\s*(?:Proposition\s+\d+|P\d+)\s*[:.]',
+                    content, _gpc_re.IGNORECASE,
+                )
+                if len(definitions) > 0 and f.stem != "abstract":
+                    # Strip proposition definitions, keep references
+                    new_content = _prop_def_line.sub('', content)
+                    new_content = _prop_def_inline.sub('', new_content)
+                    if new_content != content:
+                        f.write_text(new_content, encoding="utf-8")
+                        fixes += 1
+                        _log.info("COHERENCE: Stripped %d proposition definitions from %s", len(definitions), f.stem)
+
+        return fixes
+
+    def _global_table_dedup(self, on_event: StepCallback | None) -> int:
+        """Programmatic: remove duplicate tables from non-canonical sections.
+
+        Tables belong in theoretical_background (definitions/comparisons) and
+        propositions (one summary table). Strip from framework, discussion, conclusion.
+        Returns number of tables removed.
+        """
+        import re as _gtd_re
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        if not sections_dir.exists():
+            return 0
+
+        # Sections where tables should be stripped entirely (except propositions summary)
+        strip_sections = {"discussion", "conclusion"}
+        # Sections where duplicate tables should be removed (check against theoretical_background)
+        dedup_sections = {"framework"}
+
+        # Load canonical tables from theoretical_background
+        tb_file = sections_dir / "theoretical_background.md"
+        canonical_table_words: list[set[str]] = []
+        _STOP = {
+            "the", "and", "of", "to", "in", "a", "is", "that", "for", "was", "on", "are", "with",
+            "as", "this", "by", "from", "be", "have", "an", "has", "their", "been", "were", "|", "---",
+        }
+        if tb_file.exists():
+            tb_content = tb_file.read_text(encoding="utf-8")
+            for tbl in _gtd_re.findall(r'(\|[^\n]+\|\n(?:\|[^\n]+\|\n){2,})', tb_content):
+                canonical_table_words.append(set(tbl.lower().split()) - _STOP)
+
+        fixes = 0
+        _table_block_pattern = _gtd_re.compile(r'(\|[^\n]+\|\n(?:\|[^\n]+\|\n){2,})')
+
+        for f in sections_dir.iterdir():
+            if f.suffix != ".md" or f.stem not in (strip_sections | dedup_sections | {"propositions"}):
+                continue
+            content = f.read_text(encoding="utf-8")
+            tables = list(_table_block_pattern.finditer(content))
+            if not tables:
+                continue
+
+            if f.stem in strip_sections:
+                # Strip ALL tables from discussion/conclusion
+                new_content = _table_block_pattern.sub('', content)
+                if new_content != content:
+                    f.write_text(new_content.strip() + "\n", encoding="utf-8")
+                    fixes += len(tables)
+                    _log.info("TABLE_DEDUP: Stripped %d tables from %s", len(tables), f.stem)
+
+            elif f.stem in dedup_sections:
+                # Remove tables that duplicate canonical tables
+                removed = 0
+                for tbl_match in reversed(tables):  # Reverse to preserve indices
+                    tbl_words = set(tbl_match.group().lower().split()) - _STOP
+                    for canon in canonical_table_words:
+                        if tbl_words and canon:
+                            overlap = len(tbl_words & canon) / min(len(tbl_words), len(canon))
+                            if overlap > 0.30:
+                                content = content[:tbl_match.start()] + content[tbl_match.end():]
+                                removed += 1
+                                break
+                if removed:
+                    f.write_text(content.strip() + "\n", encoding="utf-8")
+                    fixes += removed
+                    _log.info("TABLE_DEDUP: Removed %d duplicate tables from %s", removed, f.stem)
+
+            elif f.stem == "propositions":
+                # Propositions: keep only the LAST table (summary), strip all others
+                if len(tables) > 1:
+                    # Remove all tables except the last one
+                    for tbl_match in reversed(tables[:-1]):
+                        content = content[:tbl_match.start()] + content[tbl_match.end():]
+                    f.write_text(content.strip() + "\n", encoding="utf-8")
+                    fixes += len(tables) - 1
+                    _log.info("TABLE_DEDUP: Stripped %d extra tables from propositions (kept summary)", len(tables) - 1)
+
+        return fixes
+
+    def post_peer_review_gate(self, on_event: StepCallback | None = None) -> dict[str, Any]:
+        """Programmatic quality gate that runs AFTER peer review Opus edits.
+
+        Catches regressions introduced by the revision agent:
+        - Word count bloat
+        - Citation integrity violations
+        - Proposition coherence breaks
+        - Section overlap (embedding-based)
+        - Reference quality (predatory DOI check)
+
+        Returns dict of issues found and fixes applied.
+        """
+        from .tools.writing import _extract_citations_from_text, _verify_citation_against_db
+
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        if not sections_dir.exists():
+            return {"error": "no sections directory"}
+
+        result: dict[str, Any] = {"issues": [], "fixes": 0}
+
+        if on_event:
+            on_event(StepEvent("subtask_start", data="Post-peer-review quality gate", depth=0))
+
+        # 1. Run global proposition coherence
+        prop_fixes = self._global_proposition_coherence(on_event)
+        result["fixes"] += prop_fixes
+        if prop_fixes:
+            result["issues"].append(f"Proposition coherence: {prop_fixes} fixes applied")
+
+        # 2. Run global table dedup
+        table_fixes = self._global_table_dedup(on_event)
+        result["fixes"] += table_fixes
+        if table_fixes:
+            result["issues"].append(f"Table dedup: {table_fixes} tables removed")
+
+        # 3. Total word count check
+        total_words = 0
+        section_words: dict[str, int] = {}
+        _paper_sections = {"abstract", "introduction", "methodology", "theoretical_background",
+                           "framework", "propositions", "discussion", "conclusion",
+                           "literature_review", "methods", "results"}
+        for f in sections_dir.iterdir():
+            if f.suffix == ".md" and f.stem in _paper_sections:
+                wc = len(f.read_text(encoding="utf-8").split())
+                total_words += wc
+                section_words[f.stem] = wc
+
+        _MAX_TOTAL = 12000
+        if total_words > _MAX_TOTAL:
+            overage = total_words - _MAX_TOTAL
+            result["issues"].append(f"Word count: {total_words} words (limit {_MAX_TOTAL}, over by {overage})")
+            _log.warning("POST-PEER-GATE: Total words %d exceeds %d by %d", total_words, _MAX_TOTAL, overage)
+
+        # 4. Citation integrity scan — strip unverified citations programmatically
+        import re as _ppg_re
+        db = self.tools.db
+        session_id = self.tools.session_id
+        if db and session_id:
+            total_verified = 0
+            total_unverified = 0
+            citations_stripped = 0
+            for f in sections_dir.iterdir():
+                if f.suffix == ".md" and f.stem in _paper_sections:
+                    content = f.read_text(encoding="utf-8")
+                    citations = _extract_citations_from_text(content)
+                    unverified_in_section = []
+                    for author, year in citations:
+                        check = _verify_citation_against_db(author, year, db, session_id)
+                        if check["verified"]:
+                            total_verified += 1
+                        else:
+                            total_unverified += 1
+                            unverified_in_section.append((author, year))
+                    # Programmatic fix: strip unverified citations
+                    if unverified_in_section:
+                        new_content = content
+                        for author, year in unverified_in_section:
+                            esc_author = _ppg_re.escape(author)
+                            esc_year = _ppg_re.escape(year)
+
+                            # 1. Remove from multi-cite parenthetical: (; Author, Year) or (Author, Year;)
+                            # Handles (Smith, 2020; Fake, 2019; Other, 2021) → (Smith, 2020; Other, 2021)
+                            new_content = _ppg_re.sub(
+                                rf';\s*{esc_author},?\s*{esc_year}', '', new_content,
+                            )
+                            new_content = _ppg_re.sub(
+                                rf'{esc_author},?\s*{esc_year}\s*;\s*', '', new_content,
+                            )
+
+                            # 2. Remove standalone parenthetical: (Author, Year)
+                            new_content = _ppg_re.sub(
+                                rf'\s*\({esc_author},?\s*{esc_year}\)', '', new_content,
+                            )
+
+                            # 3. Remove narrative: Author (Year)
+                            new_content = _ppg_re.sub(
+                                rf'(?:\s+by\s+)?{esc_author}\s*\({esc_year}\)', '', new_content,
+                            )
+
+                        # Clean up artifacts: empty parens, double spaces, orphaned semicolons
+                        new_content = _ppg_re.sub(r'\(\s*\)', '', new_content)  # ()
+                        new_content = _ppg_re.sub(r'\(\s*;\s*', '(', new_content)  # (; ...
+                        new_content = _ppg_re.sub(r'\s*;\s*\)', ')', new_content)  # ...; )
+                        # Orphaned lead-in phrases left after narrative citation removal
+                        new_content = _ppg_re.sub(r'(?:[Aa]ccording)\s+to\s*,\s*', '', new_content)
+                        new_content = _ppg_re.sub(r'(?:[Aa]s\s+)?(?:noted|identified|suggested|argued|proposed|demonstrated)\s+by\s*,\s*', '', new_content)
+                        new_content = _ppg_re.sub(r'\s{2,}', ' ', new_content)  # double spaces
+
+                        if new_content != content:
+                            stripped = len(content) - len(new_content)
+                            f.write_text(new_content, encoding="utf-8")
+                            citations_stripped += len(unverified_in_section)
+                            _log.info("POST-PEER-GATE: Stripped %d unverified citations from %s (%d chars)",
+                                       len(unverified_in_section), f.stem, stripped)
+            integrity = total_verified / max(total_verified + total_unverified, 1)
+            if total_unverified > 0:
+                result["issues"].append(
+                    f"Citation integrity: {total_unverified} unverified citations "
+                    f"({integrity:.0%} verified) — stripped {citations_stripped} from sections"
+                )
+                result["fixes"] += citations_stripped
+
+        # 5. Section overlap via embedding cosine similarity
+        if hasattr(self, '_embed_client') and self._embed_client:
+            try:
+                body_sections = [s for s in _paper_sections if s not in ("abstract", "conclusion", "methodology")]
+                section_embs: dict[str, list[float]] = {}
+                for s in body_sections:
+                    sf = sections_dir / f"{s}.md"
+                    if sf.exists():
+                        text = sf.read_text(encoding="utf-8")[:3000]
+                        res = self._embed_client.models.embed_content(
+                            model="gemini-embedding-001", contents=text,
+                        )
+                        if res.embeddings and len(res.embeddings) > 0:
+                            section_embs[s] = res.embeddings[0].values
+                names = list(section_embs.keys())
+                for i in range(len(names)):
+                    for j in range(i + 1, len(names)):
+                        sim = self._cosine_sim(section_embs[names[i]], section_embs[names[j]])
+                        if sim > self.config.max_section_overlap:
+                            result["issues"].append(
+                                f"Section overlap: '{names[i]}' and '{names[j]}' have {sim:.0%} cosine similarity"
+                            )
+            except Exception as exc:
+                _log.warning("POST-PEER-GATE: Embedding overlap check failed: %s", exc)
+
+        # 6. Reference quality — strip predatory DOIs from bib file
+        from .tools.writing import PREDATORY_DOI_PREFIXES
+        ref_file = ws / self.config.session_root_dir / "output" / "references.bib"
+        if ref_file.exists():
+            bib_content = ref_file.read_text(encoding="utf-8")
+            # Split into individual entries and filter
+            import re as _bib_re
+            entries = _bib_re.split(r'(?=@\w+\{)', bib_content)
+            clean_entries = []
+            predatory_removed = 0
+            for entry in entries:
+                entry = entry.strip()
+                if not entry:
+                    continue
+                is_predatory = False
+                for prefix in PREDATORY_DOI_PREFIXES:
+                    if prefix.lower() in entry.lower():
+                        is_predatory = True
+                        predatory_removed += 1
+                        _log.info("POST-PEER-GATE: Removed predatory DOI entry: %s", entry[:80])
+                        break
+                if not is_predatory:
+                    clean_entries.append(entry)
+            if predatory_removed > 0:
+                ref_file.write_text("\n".join(clean_entries), encoding="utf-8")
+                result["issues"].append(f"Reference quality: stripped {predatory_removed} predatory DOI entries from references.bib")
+                result["fixes"] += predatory_removed
+            # Also clean APA file
+            apa_file = ws / self.config.session_root_dir / "output" / "references_apa.txt"
+            if apa_file.exists():
+                apa_content = apa_file.read_text(encoding="utf-8")
+                apa_lines = apa_content.split("\n\n")
+                clean_apa = []
+                for line in apa_lines:
+                    is_pred = any(prefix.lower() in line.lower() for prefix in PREDATORY_DOI_PREFIXES)
+                    if not is_pred:
+                        clean_apa.append(line)
+                if len(clean_apa) < len(apa_lines):
+                    apa_file.write_text("\n\n".join(clean_apa), encoding="utf-8")
+
+        # 7. Em-dash / en-dash stripping — replace with commas across all sections
+        import re as _dash_re
+        dash_fixes = 0
+        for f in sections_dir.iterdir():
+            if f.suffix == ".md" and f.stem in _paper_sections:
+                content = f.read_text(encoding="utf-8")
+                new_content = _dash_re.sub(r'\s*[\u2014\u2013]\s*', ', ', content)
+                new_content = _dash_re.sub(r',\s*,', ',', new_content)
+                new_content = _dash_re.sub(r',\s*\.', '.', new_content)
+                if new_content != content:
+                    f.write_text(new_content, encoding="utf-8")
+                    dash_fixes += 1
+        if dash_fixes:
+            result["issues"].append(f"Em/en-dash: replaced dashes with commas in {dash_fixes} sections")
+            result["fixes"] += dash_fixes
+
+        _log.info("POST-PEER-GATE: %d issues found, %d fixes applied", len(result["issues"]), result["fixes"])
+        if on_event:
+            on_event(StepEvent("text", data=f"Post-peer-review gate: {len(result['issues'])} issues, {result['fixes']} fixes", depth=0))
+            on_event(StepEvent("subtask_end", data="Post-peer-review quality gate complete", depth=0))
+
+        return result
 
     def _prepopulate_verification_flags(self, central_db: Any, db: Any, session_id: int) -> None:
         """Bulk set verification flags from central DB cache — avoids per-paper API calls."""
@@ -3326,10 +3840,15 @@ class RLMEngine:
         if synced:
             _log.info("PIPELINE VERIFY: Synced %d new doi_validations to central DB", synced)
 
-    def _preload_claims_from_central(self, central_db: Any, db: Any, session_id: int) -> None:
-        """Pre-load claims from central DB into session DB so deep_read skips already-extracted papers."""
+    def _preload_claims_from_central(self, central_db: Any, db: Any, session_id: int, topic: str = "") -> None:
+        """Pre-load claims from central DB into session DB.
+
+        Two strategies:
+        1. DIRECT: Paper already fully extracted in central DB → load ALL its claims (topic-agnostic reuse)
+        2. COSINE: No direct match → search central claims by topic embedding similarity
+        """
         papers = db._conn.execute(
-            "SELECT paper_id, doi FROM papers WHERE session_id = ? AND doi IS NOT NULL AND selected_for_deep_read = 1",
+            "SELECT paper_id, doi, title FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
             (session_id,),
         ).fetchall()
         if not papers:
@@ -3342,36 +3861,104 @@ class RLMEngine:
         ).fetchall():
             papers_with_claims.add(row["paper_id"])
 
-        loaded = 0
+        loaded_direct = 0
         for paper in papers:
             if paper["paper_id"] in papers_with_claims:
                 continue
-            doi = paper["doi"].strip().lower()
-            central_claims = central_db.get_claims_for_paper(doi)
-            if not central_claims:
-                continue
-            for c in central_claims:
-                db.store_claim(
-                    session_id=session_id,
-                    paper_id=paper["paper_id"],
-                    claim_text=c.get("claim_text", ""),
-                    claim_type=c.get("claim_type", "finding"),
-                    confidence=c.get("confidence", 0.5),
-                    supporting_quotes=c.get("supporting_quotes", "[]"),
-                    section=c.get("section", ""),
-                    sample_size=c.get("sample_size", ""),
-                    effect_size=c.get("effect_size", ""),
-                    p_value=c.get("p_value", ""),
-                    confidence_interval=c.get("confidence_interval", ""),
-                    study_design=c.get("study_design", ""),
-                    population=c.get("population", ""),
-                    country=c.get("country", ""),
-                    year_range=c.get("year_range", ""),
-                )
-            loaded += 1
 
-        if loaded:
-            _log.info("PIPELINE: Pre-loaded claims for %d papers from central DB (skipping LLM deep read for those)", loaded)
+            # Strategy 1: Direct match — paper was fully extracted before
+            title = paper["title"] or ""
+            doi = (paper["doi"] or "").strip().lower()
+
+            central_claims = []
+            if doi:
+                central_claims = central_db.get_claims_for_paper(doi)
+            if not central_claims and title:
+                central_claims = central_db.get_claims_for_paper_by_title(title)
+
+            if central_claims:
+                for c in central_claims:
+                    db.store_claim(
+                        session_id=session_id,
+                        paper_id=paper["paper_id"],
+                        claim_text=c.get("claim_text", ""),
+                        claim_type=c.get("claim_type", "finding"),
+                        confidence=c.get("confidence", 0.5),
+                        supporting_quotes=c.get("supporting_quotes", "[]"),
+                        section=c.get("section", ""),
+                        sample_size=c.get("sample_size", ""),
+                        effect_size=c.get("effect_size", ""),
+                        p_value=c.get("p_value", ""),
+                        confidence_interval=c.get("confidence_interval", ""),
+                        study_design=c.get("study_design", ""),
+                        population=c.get("population", ""),
+                        country=c.get("country", ""),
+                        year_range=c.get("year_range", ""),
+                    )
+                loaded_direct += 1
+
+        if loaded_direct:
+            _log.info("PIPELINE: Pre-loaded claims for %d papers from central DB (direct match — skipping LLM deep read)", loaded_direct)
+
+        # Strategy 2: Cosine similarity search — find relevant claims across ALL papers in central DB
+        # This catches claims from papers not in this session but relevant to the topic
+        try:
+            if topic and central_db.claims_with_embeddings_count() > 0:
+                api_key = os.getenv("GOOGLE_API_KEY") or (self.config.google_api_key if self.config else None)
+                if api_key:
+                    from google import genai
+                    client = genai.Client(api_key=api_key)
+                    result = client.models.embed_content(model="gemini-embedding-001", contents=topic)
+                    if result.embeddings and len(result.embeddings) > 0:
+                        topic_emb = result.embeddings[0].values
+                        cosine_claims = central_db.search_claims_by_cosine(topic_emb, limit=100, min_cosine=0.55)
+                        if cosine_claims:
+                            _log.info("PIPELINE: Cosine search found %d relevant claims in central DB for topic '%s'",
+                                      len(cosine_claims), topic[:60])
+                            # Store cosine-matched claims into session DB (attach to best-matching paper)
+                            loaded_cosine = 0
+                            for c in cosine_claims:
+                                # Find if we have the same paper in session
+                                c_title = c.get("paper_title", "")
+                                if not c_title:
+                                    continue
+                                match_row = db._conn.execute(
+                                    "SELECT paper_id FROM papers WHERE session_id = ? AND title = ?",
+                                    (session_id, c_title),
+                                ).fetchone()
+                                if not match_row:
+                                    continue
+                                pid = match_row["paper_id"]
+                                if pid in papers_with_claims:
+                                    continue
+                                # Check if this exact claim already exists
+                                existing = db._conn.execute(
+                                    "SELECT claim_id FROM claims WHERE session_id = ? AND paper_id = ? AND claim_text = ?",
+                                    (session_id, pid, c.get("claim_text", "")),
+                                ).fetchone()
+                                if existing:
+                                    continue
+                                db.store_claim(
+                                    session_id=session_id, paper_id=pid,
+                                    claim_text=c.get("claim_text", ""),
+                                    claim_type=c.get("claim_type", "finding"),
+                                    confidence=c.get("confidence", 0.5),
+                                    supporting_quotes=c.get("supporting_quotes", "[]"),
+                                    section=c.get("section", ""),
+                                    sample_size=c.get("sample_size", ""),
+                                    effect_size=c.get("effect_size", ""),
+                                    p_value=c.get("p_value", ""),
+                                    confidence_interval=c.get("confidence_interval", ""),
+                                    study_design=c.get("study_design", ""),
+                                    population=c.get("population", ""),
+                                    country=c.get("country", ""),
+                                    year_range=c.get("year_range", ""),
+                                )
+                                loaded_cosine += 1
+                            if loaded_cosine:
+                                _log.info("PIPELINE: Pre-loaded %d claims via cosine similarity from central DB", loaded_cosine)
+        except Exception as exc:
+            _log.debug("PIPELINE: Cosine claim pre-loading failed: %s", exc)
 
     def _deduplicate_claims(self, db: Any, session_id: int) -> None:
         """Remove duplicate claims (same paper_id + near-identical claim_text)."""

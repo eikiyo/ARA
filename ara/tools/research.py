@@ -2,12 +2,53 @@
 # Purpose: Research tools — claim extraction, hypothesis scoring, branch search
 # Functions: extract_claims, score_hypothesis, branch_search
 # Calls: db.py
-# Imports: json
+# Imports: json, logging, os
 
 from __future__ import annotations
 
 import json
+import logging
+import os
 from typing import Any
+
+_log = logging.getLogger(__name__)
+
+
+def _embed_new_claims(central_db: Any, paper_title: str) -> None:
+    """Embed claims for a paper that don't yet have embeddings in central DB."""
+    try:
+        claims = central_db.get_claims_for_paper_by_title(paper_title)
+        need_embed = [c for c in claims if not c.get("embedding")]
+        if not need_embed:
+            return
+
+        api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            return
+
+        from google import genai
+        client = genai.Client(api_key=api_key)
+
+        # Batch embed up to 50 claims at a time
+        _BATCH = 50
+        embedded = 0
+        for i in range(0, len(need_embed), _BATCH):
+            batch = need_embed[i:i + _BATCH]
+            texts = [c["claim_text"][:500] for c in batch]
+            try:
+                result = client.models.embed_content(model="gemini-embedding-001", contents=texts)
+                if result.embeddings:
+                    for claim, emb_obj in zip(batch, result.embeddings):
+                        central_db.store_claim_embedding(claim["claim_id"], emb_obj.values)
+                        embedded += 1
+            except Exception as exc:
+                _log.debug("Claim embedding batch failed: %s", exc)
+                break
+
+        if embedded:
+            _log.info("Embedded %d/%d claims for '%s'", embedded, len(need_embed), paper_title[:60])
+    except Exception as exc:
+        _log.debug("_embed_new_claims failed: %s", exc)
 
 
 def extract_claims(args: dict[str, Any], ctx: dict) -> str:
@@ -82,6 +123,10 @@ def extract_claims(args: dict[str, Any], ctx: dict) -> str:
                 try:
                     topic = getattr(ctx.get("config"), "topic", "") if ctx.get("config") else ""
                     central_db.store_claims(central_claims, session_topic=topic)
+                    # Generate embeddings for newly stored claims (topic-agnostic reuse)
+                    _embed_new_claims(central_db, paper_title)
+                    # Mark paper as fully extracted for future skip
+                    central_db.mark_paper_fully_extracted(paper_title)
                 except Exception as exc:
                     _log.debug("Central DB claim store failed: %s", exc)
 

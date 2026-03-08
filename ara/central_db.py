@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS claims (
     country TEXT,
     year_range TEXT,
     session_topic TEXT,
+    embedding TEXT,
+    fully_extracted INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -208,6 +210,12 @@ class CentralDB:
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(papers)").fetchall()}
         if "unpaywall_checked" not in cols:
             self._conn.execute("ALTER TABLE papers ADD COLUMN unpaywall_checked INTEGER DEFAULT 0")
+        # Add embedding + fully_extracted columns to claims if missing
+        claim_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(claims)").fetchall()}
+        if "embedding" not in claim_cols:
+            self._conn.execute("ALTER TABLE claims ADD COLUMN embedding TEXT")
+        if "fully_extracted" not in claim_cols:
+            self._conn.execute("ALTER TABLE claims ADD COLUMN fully_extracted INTEGER DEFAULT 0")
 
     def close(self) -> None:
         self._conn.close()
@@ -616,8 +624,85 @@ class CentralDB:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_claims_for_paper_by_title(self, title: str) -> list[dict[str, Any]]:
+        """Get all claims for a paper by title hash."""
+        t_hash = _title_hash(title)
+        rows = self._conn.execute(
+            "SELECT * FROM claims WHERE paper_title_hash = ? ORDER BY claim_id",
+            (t_hash,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def is_paper_fully_extracted(self, title: str) -> bool:
+        """Check if a paper has been fully extracted (topic-agnostic)."""
+        t_hash = _title_hash(title)
+        row = self._conn.execute(
+            "SELECT fully_extracted FROM claims WHERE paper_title_hash = ? AND fully_extracted = 1 LIMIT 1",
+            (t_hash,),
+        ).fetchone()
+        return bool(row)
+
+    def mark_paper_fully_extracted(self, title: str) -> None:
+        """Mark all claims for a paper as fully extracted (topic-agnostic)."""
+        t_hash = _title_hash(title)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE claims SET fully_extracted = 1 WHERE paper_title_hash = ?",
+                (t_hash,),
+            )
+            self._conn.commit()
+
+    def store_claim_embedding(self, claim_id: int, embedding: list[float]) -> None:
+        """Store embedding for a claim in central DB."""
+        emb_json = json.dumps(embedding)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE claims SET embedding = ? WHERE claim_id = ?",
+                (emb_json, claim_id),
+            )
+            self._conn.commit()
+
+    def search_claims_by_cosine(
+        self, query_embedding: list[float], limit: int = 50, min_cosine: float = 0.5,
+    ) -> list[dict[str, Any]]:
+        """Find claims most relevant to a query embedding via cosine similarity."""
+        rows = self._conn.execute(
+            "SELECT claim_id, paper_doi, paper_title, claim_text, claim_type, "
+            "confidence, supporting_quotes, section, sample_size, effect_size, "
+            "p_value, confidence_interval, study_design, population, country, "
+            "year_range, embedding FROM claims WHERE embedding IS NOT NULL"
+        ).fetchall()
+
+        if not rows:
+            return []
+
+        import math
+        # Compute cosine similarity
+        def _cosine(a: list[float], b: list[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            norm_a = math.sqrt(sum(x * x for x in a))
+            norm_b = math.sqrt(sum(x * x for x in b))
+            if norm_a == 0 or norm_b == 0:
+                return 0.0
+            return dot / (norm_a * norm_b)
+
+        scored = []
+        for row in rows:
+            d = dict(row)
+            emb = json.loads(d.pop("embedding"))
+            sim = _cosine(query_embedding, emb)
+            if sim >= min_cosine:
+                d["cosine_similarity"] = round(sim, 4)
+                scored.append(d)
+
+        scored.sort(key=lambda x: x["cosine_similarity"], reverse=True)
+        return scored[:limit]
+
     def claim_count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
+
+    def claims_with_embeddings_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM claims WHERE embedding IS NOT NULL").fetchone()[0]
 
     # ── Risk of Bias ──────────────────────────────────────────
 
