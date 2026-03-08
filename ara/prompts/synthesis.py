@@ -34,6 +34,9 @@ These tools automate analysis that would otherwise take hours. Call ALL of them:
 - `analyze_temporal_trends()` — returns publication timeline, recency stats, method evolution. Use for Step 12 and to assess evidence currency.
 - `generate_evidence_table(table_type="study_characteristics")` — auto-generates study characteristics table. Use for Step 5 (Table Plan) as TABLE 1.
 - `compute_kappa()` — returns inter-rater agreement for RoB and triage. Use to report methodological rigor in quality assessment.
+- `extract_causal_chains()` — MANDATORY for Step 6 (Structural Causal Model). Returns X→M→Y mechanism graph from all claims with mediator/moderator classification. Use this OUTPUT directly to build Step 6a (causal chain diagram) and Step 6b (evidence by causal direction). Do NOT build the causal model manually when this tool does it automatically.
+- `find_natural_experiments()` — MANDATORY for Step 6d (Natural Experiments). Returns papers ranked by causal identification strategy strength (RCT > DiD/IV/RDD > panel > cross-sectional). Use this to populate Step 6d and to weight evidence in Step 6b.
+- `score_construct_consistency()` — MANDATORY. Returns whether key constructs are defined consistently across papers. If constructs are inconsistent, document this in Step 7 (Tension Documentation) and instruct the writer to define them explicitly in Theoretical Background.
 
 ---
 
@@ -369,8 +372,8 @@ statement, advisory instructions) as text output.
   every GRADE rating, every finding MUST trace back to an extracted claim.
 - Call `list_papers(compact=true)` to get paper metadata for citation formatting.
 - Call `get_risk_of_bias_table()` to retrieve stored RoB assessments.
-- Call ALL 9 evidence synthesis tools from Step 1b — these are NOT optional.
-  Their outputs replace manual analysis for Steps 5, 7, 10, 11, and 12.
+- Call ALL 12 evidence synthesis tools from Step 1b — these are NOT optional.
+  Their outputs replace manual analysis for Steps 5, 6, 7, 10, 11, and 12.
 - For the top 5-10 most important papers, call `read_paper(paper_id=ID, include_fulltext=true)`
   to read their full text.
 - Use `search_similar(text="<theme>")` to find papers related to each outcome theme.

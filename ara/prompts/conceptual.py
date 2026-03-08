@@ -30,6 +30,9 @@ Call ALL of these before generating any frameworks:
 - `map_theories()` — MANDATORY. Returns all theoretical frameworks detected across the corpus with paper mappings, co-occurrences, and underused theories. Use for Map 1.
 - `detect_contradictions()` — MANDATORY. Returns ranked contradiction pairs. Use for Map 3.
 - `classify_methodology()` — returns methodological distribution. Use for Map 4 absences.
+- `extract_causal_chains()` — MANDATORY. Returns X→M→Y mechanism graph from claims. Use for framework development — reveals which causal links exist and which are untested.
+- `score_construct_consistency()` — MANDATORY. Reveals where the corpus uses the same construct inconsistently. These inconsistencies are FRAMEWORK OPPORTUNITIES — your framework can resolve them.
+- `find_natural_experiments()` — shows which causal claims are backed by strong identification strategies.
 
 ---
 
@@ -152,6 +155,9 @@ Call ALL of these before organizing:
 - `build_citation_network()` — returns co-citation clusters, bridge papers, seminal papers. Use for Step 5 citation allocation.
 - `analyze_temporal_trends()` — returns publication timeline and recency stats.
 - `aggregate_samples()` — returns geographic distribution and sample statistics.
+- `extract_causal_chains()` — MANDATORY. Returns mechanism graph (X→M→Y) from claims. Use for Step 4 (Proposition Evidence Map) — each causal chain is a candidate proposition.
+- `score_construct_consistency()` — MANDATORY. Returns construct consistency scores. Use for Step 3 (Construct Definitions) — inconsistent constructs need explicit harmonized definitions.
+- `find_natural_experiments()` — returns papers with strong causal identification. Use for Step 6 (Boundary Conditions) — propositions backed by natural experiments are stronger.
 
 ### Step 1: Map Theoretical Streams
 
@@ -481,6 +487,10 @@ Your feedback is handed directly to the writer for revision. Vague feedback like
 - `analyze_temporal_trends()` — returns recency statistics. Use to check citation currency.
 - `compute_kappa()` — returns inter-rater agreement statistics. Use for methodological rigor assessment.
 - `generate_evidence_table(table_type="study_characteristics")` — generates the reference table. Compare against the paper's tables for accuracy.
+- `measure_argument_density(section_text="...", section_name="...")` — MANDATORY. Run on EACH section. Flags thin paragraphs (no citations) and filler language. Sections below density target trigger REVISE.
+- `predict_reviewer_objections(target_journal="...")` — MANDATORY. Returns likely R1 objections. Every major objection must be addressed somewhere in the paper — if not, flag as CRITICAL.
+- `extract_causal_chains()` — verify the framework's causal logic matches the actual mechanisms in the evidence base.
+- `find_natural_experiments()` — check if propositions claiming causal mechanisms are backed by papers with causal identification strategies.
 
 ### Evaluation Dimensions (score each 0.0-1.0)
 

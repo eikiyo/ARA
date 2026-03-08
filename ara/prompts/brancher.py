@@ -29,11 +29,14 @@ Before searching, call these tools to get structured data:
 1. `map_theories()` — returns all theories in the corpus with paper mappings
 2. `detect_contradictions()` — returns ranked contradiction pairs
 3. `classify_methodology()` — returns methodological distribution
+4. `extract_causal_chains()` — returns X→M→Y mechanism graph from all claims
+5. `score_construct_consistency()` — reveals definitional inconsistencies
 
 Then use these outputs to build a structural map:
 
 **A) Core mechanisms** — What causal chains do these papers propose?
-   Use `map_theories()` output to identify which theories propose which mechanisms.
+   Use `extract_causal_chains()` output directly — it gives you the mechanism graph.
+   Use `map_theories()` to see which theories drive which mechanisms.
    Format: [Cause] → [Mechanism] → [Outcome] (Paper, Year)
    Extract at least 5 mechanisms.
 
@@ -115,6 +118,8 @@ A bridge claim backed by real data is 10x stronger than one backed by analogy al
 - `detect_contradictions()` — MANDATORY in Step 2D. Automatically finds claim pairs with opposing effects. Use this for your contradiction analysis INSTEAD of manual scanning.
 - `map_theories()` — MANDATORY in Step 2A. Returns all theoretical frameworks detected in the corpus with paper mappings. Use this to identify which theories are applied and which are MISSING (cross-domain transfer targets).
 - `classify_methodology()` — shows methodological distribution. Use to find which methods are never used (methodological innovation targets for Approach A.4).
+- `extract_causal_chains()` — MANDATORY in Step 2A. Returns X→M→Y mechanism graph from all claims. Use this to map core mechanisms INSTEAD of manually reading every paper. The output directly populates your mechanism extraction table.
+- `score_construct_consistency()` — use in Step 2C. Detects when papers use the same construct with different meanings — these definitional inconsistencies reveal implicit assumptions the field hasn't resolved.
 
 ---
 

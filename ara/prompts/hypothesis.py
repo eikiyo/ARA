@@ -37,6 +37,21 @@ Call ALL of these before generating any hypotheses:
 - `detect_contradictions()` — MANDATORY for Map 3. Automatically finds claim pairs with opposing effect directions. Use this INSTEAD of manually scanning claims for contradictions.
 - `map_theories()` — MANDATORY for Map 1. Scans all claims for 20+ theoretical frameworks (Institutional Theory, RBV, TCE, TAM, etc.) and returns theory-paper mappings, co-occurrences, and underused theories. Use this INSTEAD of manually reading papers for theory mentions.
 - `classify_methodology()` — categorizes all papers by research design (RCT, cross-sectional, qualitative, etc.) with diversity index. Use for Map 4 (which methodologies are never used).
+- `extract_causal_chains()` — MANDATORY before Step 3. Extracts X→M→Y causal mechanisms from all claims with NLP. Returns directed mechanism graph, mediator/moderator classification, and construct roles. Use this to identify which mechanisms are proposed and which links are untested — the raw material for STITCHING hypotheses.
+- `score_construct_consistency()` — MANDATORY before Step 3. Auto-detects key constructs and checks if they are defined consistently across papers. If a construct is used inconsistently (e.g., "innovation" means product innovation in Paper A but process innovation in Paper B), this is a TAXONOMY hypothesis opportunity.
+- `find_natural_experiments()` — shows which papers have strong causal identification (DiD, IV, RDD, natural experiments). Hypotheses that build on papers with strong causal evidence are more feasible.
+
+---
+
+### STEP 1b: Run All Evidence Synthesis Tools (MANDATORY before maps)
+
+Call ALL of these before building any maps:
+1. `map_theories()` — populates Map 1
+2. `detect_contradictions()` — populates Map 3
+3. `classify_methodology()` — populates Map 4
+4. `extract_causal_chains()` — reveals mechanism graph for STITCHING hypotheses
+5. `score_construct_consistency()` — reveals definitional inconsistencies for TAXONOMY hypotheses
+6. `find_natural_experiments()` — identifies papers with strong causal evidence
 
 ---
 
@@ -45,8 +60,7 @@ Call ALL of these before generating any hypotheses:
 Complete all four maps. These ARE the raw material for hypothesis generation.
 
 #### Map 1: KNOWLEDGE MAP — What is established
-Call `map_theories()` FIRST — it returns all theoretical frameworks detected across the corpus
-with paper mappings and co-occurrences. Use this output to populate the map below.
+Use `map_theories()` output to populate this map.
 | Theme | Key Finding | Evidence Strength (GRADE) | # Papers | Consensus? |
 List the top 8-12 findings the field considers established.
 

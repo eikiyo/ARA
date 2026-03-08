@@ -24,6 +24,7 @@ publishable paper.
 3. Call `list_papers(compact=true)` — verify citation allocation covers available papers.
 4. Call `get_risk_of_bias_table()` — check evidence quality claims.
 5. Call `get_grade_table()` — verify GRADE ratings match synthesis assertions.
+6. Call `predict_reviewer_objections(target_journal="<journal>")` — MANDATORY. Returns likely R1 objections with severity and pre-built defenses. Use this to inform BOTH advisors: the Methodologist uses it for evidence gap assessment, the Strategist uses it for desk rejection risk. Every major objection MUST be addressed in the advisory report's CAUTION ZONES.
 
 ---
 

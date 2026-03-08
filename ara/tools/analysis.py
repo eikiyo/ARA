@@ -1,6 +1,6 @@
 # Location: ara/tools/analysis.py
-# Purpose: 10 analytical power tools for evidence synthesis and quality assurance
-# Functions: detect_contradictions, build_citation_network, classify_methodology, aggregate_samples, meta_analyze, map_theories, analyze_temporal_trends, generate_evidence_table, check_claim_consistency, compute_kappa
+# Purpose: 15 analytical power tools for evidence synthesis and quality assurance
+# Functions: detect_contradictions, build_citation_network, classify_methodology, aggregate_samples, meta_analyze, map_theories, analyze_temporal_trends, generate_evidence_table, check_claim_consistency, compute_kappa, extract_causal_chains, find_natural_experiments, score_construct_consistency, measure_argument_density, predict_reviewer_objections
 # Calls: ara.db for data access, numpy/scipy for statistics
 # Imports: json, logging, re, math, collections
 
@@ -1047,3 +1047,634 @@ def compute_kappa(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
         })
 
     return json.dumps({"error": f"Unknown assessment_type: {assessment_type}. Use: risk_of_bias, triage"})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. EXTRACT CAUSAL CHAINS
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CAUSAL_PATTERNS = [
+    # X leads to / results in / causes Y
+    re.compile(r'(\b[A-Z][a-z]+(?:\s+[a-z]+){0,3})\s+(?:leads?\s+to|results?\s+in|causes?|drives?|enables?|triggers?|produces?|generates?|facilitates?)\s+(\b[a-z]+(?:\s+[a-z]+){0,3})', re.I),
+    # X → Y through/via M
+    re.compile(r'(\b[A-Z][a-z]+(?:\s+[a-z]+){0,3})\s+(?:affects?|influences?|impacts?|shapes?)\s+(\b[a-z]+(?:\s+[a-z]+){0,3})\s+(?:through|via|by means of)\s+(\b[a-z]+(?:\s+[a-z]+){0,3})', re.I),
+    # mediated by / moderated by
+    re.compile(r'(?:mediated|moderated|explained)\s+by\s+(\b[a-z]+(?:\s+[a-z]+){0,3})', re.I),
+    # positive/negative effect/relationship
+    re.compile(r'(\b(?:positive|negative|significant|strong|weak)\s+(?:effect|relationship|association|correlation|impact|influence))\s+(?:of|between)\s+(\b[a-z]+(?:\s+[a-z]+){0,3})\s+(?:on|and)\s+(\b[a-z]+(?:\s+[a-z]+){0,3})', re.I),
+]
+
+_MECHANISM_TYPES = {
+    "mediator": re.compile(r'\b(?:mediat|indirect\s+effect|intervening|through\s+which|mechanism\s+by\s+which)', re.I),
+    "moderator": re.compile(r'\b(?:moderat|boundary\s+condition|contingent|interact|conditional|depends?\s+on)', re.I),
+    "antecedent": re.compile(r'\b(?:antecedent|precondition|prerequisite|precursor|driver|enabler|trigger)', re.I),
+    "outcome": re.compile(r'\b(?:outcome|consequence|result|performance|output|dependent)', re.I),
+    "feedback": re.compile(r'\b(?:feedback|recursive|reinforc|virtuous|vicious\s+cycle|bidirectional|reciprocal)', re.I),
+}
+
+
+def extract_causal_chains(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
+    """Extract causal mechanisms (X → M → Y) from claims."""
+    theme = arguments.get("theme", "")
+    claims = _get_claims(ctx)
+    papers = _get_papers(ctx)
+
+    if not claims:
+        return json.dumps({"error": "No claims in database"})
+
+    paper_map = {p.get("id"): p for p in papers}
+    chains: list[dict[str, Any]] = []
+    mechanism_counts: Counter[str] = Counter()
+    construct_roles: dict[str, set[str]] = defaultdict(set)  # construct → {mediator, moderator, ...}
+
+    for c in claims:
+        text = c.get("claim_text") or ""
+        if theme and theme.lower() not in text.lower():
+            continue
+
+        pid = c.get("paper_id")
+        p = paper_map.get(pid, {})
+        source = f"{str(p.get('authors', '')).split(',')[0].strip()} ({p.get('year', '')})"
+
+        # Detect mechanism type
+        mech_type = "direct"
+        for mtype, pat in _MECHANISM_TYPES.items():
+            if pat.search(text):
+                mech_type = mtype
+                mechanism_counts[mtype] += 1
+                break
+
+        # Extract causal links
+        for pat in _CAUSAL_PATTERNS:
+            for m in pat.finditer(text):
+                groups = [g.strip() for g in m.groups() if g]
+                if len(groups) >= 2:
+                    chain: dict[str, Any] = {
+                        "source_paper": source,
+                        "paper_id": pid,
+                        "cause": groups[0],
+                        "effect": groups[1],
+                        "mechanism_type": mech_type,
+                        "text_excerpt": text[:200],
+                    }
+                    if len(groups) >= 3:
+                        chain["mediator"] = groups[2]
+                        construct_roles[groups[2].lower()].add("mediator")
+                    construct_roles[groups[0].lower()].add("antecedent")
+                    construct_roles[groups[1].lower()].add("outcome")
+                    chains.append(chain)
+
+    # Deduplicate similar chains
+    seen: set[str] = set()
+    unique_chains: list[dict[str, Any]] = []
+    for ch in chains:
+        key = f"{ch['cause'].lower()[:15]}→{ch['effect'].lower()[:15]}"
+        if key not in seen:
+            seen.add(key)
+            unique_chains.append(ch)
+
+    # Build directed graph summary
+    graph_edges: Counter[str] = Counter()
+    for ch in chains:
+        edge = f"{ch['cause'][:30]} → {ch['effect'][:30]}"
+        graph_edges[edge] += 1
+
+    return json.dumps({
+        "total_causal_links": len(chains),
+        "unique_chains": len(unique_chains),
+        "chains": unique_chains[:30],
+        "mechanism_distribution": dict(mechanism_counts),
+        "construct_roles": {k: list(v) for k, v in list(construct_roles.items())[:25]},
+        "most_common_paths": [{"path": p, "frequency": f} for p, f in graph_edges.most_common(15)],
+        "total_claims_scanned": len(claims),
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12. FIND NATURAL EXPERIMENTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CAUSAL_ID_STRATEGIES = {
+    "randomized_experiment": {
+        "pattern": re.compile(r'\b(?:random(?:ized|ly\s+assign)|RCT|experiment(?:al\s+design)?|treatment\s+(?:group|arm)|control\s+group|placebo)', re.I),
+        "strength": 5,
+    },
+    "natural_experiment": {
+        "pattern": re.compile(r'\b(?:natural\s+experiment|exogenous\s+(?:shock|variation)|policy\s+(?:change|reform|shock)|lottery|random\s+(?:allocation|assignment)|quasi.?random)', re.I),
+        "strength": 4,
+    },
+    "difference_in_differences": {
+        "pattern": re.compile(r'\b(?:difference.?in.?difference|diff?.?in.?diff|DiD|parallel\s+trends?|pre.?(?:and\s+)?post)', re.I),
+        "strength": 4,
+    },
+    "instrumental_variable": {
+        "pattern": re.compile(r'\b(?:instrumental\s+variable|IV\s+(?:estimat|approach|strateg)|2SLS|two.?stage|exclusion\s+restriction|Bartik)', re.I),
+        "strength": 4,
+    },
+    "regression_discontinuity": {
+        "pattern": re.compile(r'\b(?:regression\s+discontinuity|RDD|discontinuity\s+design|cutoff|threshold\s+(?:effect|design)|running\s+variable)', re.I),
+        "strength": 4,
+    },
+    "propensity_score": {
+        "pattern": re.compile(r'\b(?:propensity\s+score|PSM|matching\s+estimat|nearest\s+neighbor\s+match|coarsened\s+exact\s+match)', re.I),
+        "strength": 3,
+    },
+    "panel_fixed_effects": {
+        "pattern": re.compile(r'\b(?:panel\s+(?:data|regression)|fixed\s+effects?|within.?estimat|entity\s+(?:fixed|dummies)|Hausman\s+test)', re.I),
+        "strength": 3,
+    },
+    "longitudinal": {
+        "pattern": re.compile(r'\b(?:longitudinal|panel\s+survey|repeated\s+measures?|follow.?up|waves?\s+of\s+data|cohort\s+study|prospective)', re.I),
+        "strength": 2,
+    },
+    "cross_sectional": {
+        "pattern": re.compile(r'\b(?:cross.?sectional|OLS|survey\s+(?:data|design)|snapshot|single\s+point\s+in\s+time)', re.I),
+        "strength": 1,
+    },
+}
+
+
+def find_natural_experiments(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
+    """Identify papers with causal identification strategies (natural experiments, DiD, IV, RDD)."""
+    min_strength = arguments.get("min_strength", 0)
+
+    claims = _get_claims(ctx)
+    papers = _get_papers(ctx)
+
+    if not papers:
+        return json.dumps({"error": "No papers in database"})
+
+    paper_map = {p.get("id"): p for p in papers}
+
+    # Scan each paper's claims + abstract for causal ID strategies
+    paper_strategies: dict[int, dict[str, Any]] = {}
+    for p in papers:
+        pid = p.get("id")
+        if not pid:
+            continue
+        searchable = (p.get("abstract") or "") + " " + (p.get("title") or "")
+        paper_strategies[pid] = {
+            "strategies": [],
+            "max_strength": 0,
+            "texts": [],
+        }
+
+    # Also scan claims
+    for c in claims:
+        pid = c.get("paper_id")
+        if pid and pid in paper_strategies:
+            paper_strategies[pid]["texts"].append(c.get("claim_text") or "")
+
+    results: list[dict[str, Any]] = []
+    strategy_counts: Counter[str] = Counter()
+
+    for pid, info in paper_strategies.items():
+        p = paper_map.get(pid, {})
+        all_text = (p.get("abstract") or "") + " " + " ".join(info["texts"])
+
+        found_strategies: list[dict[str, Any]] = []
+        max_s = 0
+
+        for strategy_name, cfg in _CAUSAL_ID_STRATEGIES.items():
+            matches = cfg["pattern"].findall(all_text)
+            if matches:
+                found_strategies.append({
+                    "strategy": strategy_name,
+                    "strength": cfg["strength"],
+                    "evidence": matches[:3],
+                })
+                max_s = max(max_s, cfg["strength"])
+                strategy_counts[strategy_name] += 1
+
+        if found_strategies and max_s >= min_strength:
+            authors = p.get("authors") or p.get("author") or ""
+            first = authors[0] if isinstance(authors, list) and authors else str(authors).split(",")[0].strip()
+            results.append({
+                "paper_id": pid,
+                "study": f"{first} ({p.get('year', '')})",
+                "title": (p.get("title") or "")[:100],
+                "strategies": found_strategies,
+                "max_strength": max_s,
+                "causal_tier": "strong" if max_s >= 4 else "moderate" if max_s >= 3 else "weak",
+            })
+
+    results.sort(key=lambda x: x["max_strength"], reverse=True)
+
+    # Summary
+    strong = sum(1 for r in results if r["max_strength"] >= 4)
+    moderate = sum(1 for r in results if r["max_strength"] == 3)
+    weak = sum(1 for r in results if r["max_strength"] <= 2)
+
+    return json.dumps({
+        "papers_with_causal_id": len(results),
+        "strong_causal_evidence": strong,
+        "moderate_causal_evidence": moderate,
+        "weak_causal_evidence": weak,
+        "strategy_distribution": dict(strategy_counts.most_common()),
+        "papers": results[:25],
+        "total_papers_scanned": len(papers),
+        "recommendation": (
+            "Strong causal evidence base — sufficient for causal claims"
+            if strong >= 3
+            else "Moderate causal evidence — use hedged causal language"
+            if strong >= 1 or moderate >= 3
+            else "Weak causal evidence — limit to associational claims only"
+        ),
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 13. SCORE CONSTRUCT CONSISTENCY
+# ─────────────────────────────────────────────────────────────────────────────
+
+def score_construct_consistency(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
+    """Check if key constructs are defined and used consistently across the corpus."""
+    construct = arguments.get("construct", "")
+    auto_detect = arguments.get("auto_detect", not bool(construct))
+
+    claims = _get_claims(ctx)
+    papers = _get_papers(ctx)
+
+    if not claims:
+        return json.dumps({"error": "No claims in database"})
+
+    paper_map = {p.get("id"): p for p in papers}
+
+    # Auto-detect key constructs if none specified
+    if auto_detect:
+        # Extract noun phrases that appear in 3+ claims
+        word_freq: Counter[str] = Counter()
+        # Common academic constructs — 2-3 word phrases
+        _CONSTRUCT_PAT = re.compile(r'\b([A-Z][a-z]+(?:\s+[a-z]+){1,2})\b')
+        _STOPWORDS = {"this study", "the results", "the findings", "our results",
+                       "these results", "the evidence", "the data", "our findings",
+                       "the analysis", "the relationship", "the effect", "the impact",
+                       "the present", "the current", "the paper", "this paper",
+                       "this research", "the authors", "the literature", "the review"}
+
+        for c in claims:
+            text = c.get("claim_text") or ""
+            for m in _CONSTRUCT_PAT.finditer(text):
+                phrase = m.group(1).lower()
+                if phrase not in _STOPWORDS and len(phrase) > 5:
+                    word_freq[phrase] += 1
+
+        # Top constructs that appear in 3+ claims
+        key_constructs = [w for w, cnt in word_freq.most_common(20) if cnt >= 3]
+        if construct:
+            key_constructs = [construct.lower()] + key_constructs
+    else:
+        key_constructs = [construct.lower()]
+
+    results: list[dict[str, Any]] = []
+
+    for constr in key_constructs[:10]:
+        # Find all claims mentioning this construct
+        mentions: list[dict[str, Any]] = []
+        papers_using: set[int] = set()
+
+        for c in claims:
+            text = (c.get("claim_text") or "").lower()
+            if constr in text:
+                pid = c.get("paper_id")
+                p = paper_map.get(pid, {})
+                papers_using.add(pid)
+
+                # Extract the sentence containing the construct
+                sentences = re.split(r'[.!?]', c.get("claim_text") or "")
+                relevant = [s.strip() for s in sentences if constr in s.lower()]
+
+                mentions.append({
+                    "paper_id": pid,
+                    "study": f"{str(p.get('authors', '')).split(',')[0].strip()} ({p.get('year', '')})",
+                    "usage": relevant[0][:150] if relevant else text[:150],
+                })
+
+        if len(mentions) < 2:
+            continue
+
+        # Detect definitional variants by comparing usage contexts
+        usage_texts = [m["usage"].lower() for m in mentions]
+
+        # Check for conflicting modifiers (positive vs negative, high vs low, etc.)
+        _CONFLICT_PAIRS = [
+            (r'\bpositive\b', r'\bnegative\b'),
+            (r'\bincreases?\b', r'\bdecreases?\b'),
+            (r'\benhances?\b', r'\binhibits?\b'),
+            (r'\bformal\b', r'\binformal\b'),
+            (r'\bdirect\b', r'\bindirect\b'),
+        ]
+
+        conflicts: list[str] = []
+        for pos_pat, neg_pat in _CONFLICT_PAIRS:
+            has_pos = any(re.search(pos_pat, t) for t in usage_texts)
+            has_neg = any(re.search(neg_pat, t) for t in usage_texts)
+            if has_pos and has_neg:
+                conflicts.append(f"{pos_pat.strip(chr(92)).strip('b')} vs {neg_pat.strip(chr(92)).strip('b')}")
+
+        # Consistency score: 1.0 = perfectly consistent, 0.0 = contradictory
+        n_papers = len(papers_using)
+        n_conflicts = len(conflicts)
+        consistency = max(0.0, 1.0 - (n_conflicts * 0.2))
+
+        results.append({
+            "construct": constr,
+            "mentions": len(mentions),
+            "papers_using": n_papers,
+            "consistency_score": round(consistency, 2),
+            "conflicts_detected": conflicts,
+            "sample_usages": [m["usage"][:120] for m in mentions[:5]],
+            "warning": (
+                "INCONSISTENT — construct used with conflicting meanings across papers"
+                if consistency < 0.6
+                else "CAUTION — some definitional variation detected"
+                if consistency < 0.8
+                else "CONSISTENT — uniform usage across corpus"
+            ),
+        })
+
+    results.sort(key=lambda x: x["consistency_score"])
+
+    return json.dumps({
+        "constructs_analyzed": len(results),
+        "inconsistent_constructs": [r["construct"] for r in results if r["consistency_score"] < 0.6],
+        "constructs": results,
+        "recommendation": (
+            "Define inconsistent constructs explicitly in Theoretical Background with clear boundaries"
+            if any(r["consistency_score"] < 0.6 for r in results)
+            else "Constructs are reasonably consistent across the corpus"
+        ),
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14. MEASURE ARGUMENT DENSITY
+# ─────────────────────────────────────────────────────────────────────────────
+
+def measure_argument_density(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
+    """Measure citations-per-paragraph, claims-per-section, and detect thin/filler passages."""
+    section_text = arguments.get("section_text", "")
+    section_name = arguments.get("section_name", "unknown")
+
+    if not section_text:
+        return json.dumps({"error": "section_text required"})
+
+    # Split into paragraphs
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', section_text) if p.strip() and len(p.strip()) > 30]
+
+    if not paragraphs:
+        return json.dumps({"error": "No substantive paragraphs found"})
+
+    # Count citations per paragraph
+    cite_pat = re.compile(r'\([A-Z][a-zà-ÿ]+(?:\s+(?:et\s+al\.?|&\s+[A-Z][a-zà-ÿ]+))?,?\s*\d{4}\)')
+    # Count unique factual claims (sentences with data: numbers, percentages, effect sizes)
+    data_pat = re.compile(r'(?:\d+(?:\.\d+)?%|\bp\s*[<=]\s*0?\.\d+|\bN\s*=\s*\d+|\bd\s*=\s*\d+|\bOR\s*=|\bRR\s*=|\bβ\s*=|\br\s*=|\bCI\s*[=:])')
+    # Filler patterns
+    filler_pats = [
+        re.compile(r'^(?:Furthermore|Additionally|Moreover|In addition|It is (?:well )?known|In recent years)', re.I),
+        re.compile(r'(?:comprehensive overview|holistic understanding|nuanced perspective|important to note|worth mentioning|cannot be overstated)', re.I),
+        re.compile(r'(?:has received (?:increasing|growing|considerable) attention|has been widely (?:studied|discussed|debated))', re.I),
+    ]
+
+    para_analysis: list[dict[str, Any]] = []
+    total_cites = 0
+    total_data = 0
+    thin_count = 0
+    filler_count = 0
+
+    for i, para in enumerate(paragraphs):
+        cites = cite_pat.findall(para)
+        data_points = data_pat.findall(para)
+        sentences = [s.strip() for s in re.split(r'[.!?](?:\s|$)', para) if s.strip()]
+        word_count = len(para.split())
+
+        is_filler = any(fp.search(para) for fp in filler_pats)
+        is_thin = len(cites) == 0 and word_count > 50
+
+        total_cites += len(cites)
+        total_data += len(data_points)
+        if is_thin:
+            thin_count += 1
+        if is_filler:
+            filler_count += 1
+
+        entry: dict[str, Any] = {
+            "paragraph": i + 1,
+            "words": word_count,
+            "sentences": len(sentences),
+            "citations": len(cites),
+            "data_points": len(data_points),
+        }
+        if is_thin:
+            entry["flag"] = "THIN — no citations in paragraph with 50+ words"
+        if is_filler:
+            entry["flag"] = entry.get("flag", "") + " FILLER — contains padding language"
+
+        para_analysis.append(entry)
+
+    total_words = sum(p["words"] for p in para_analysis)
+    cites_per_100w = round(total_cites / (total_words / 100), 2) if total_words > 0 else 0
+
+    # Section-level density targets
+    _DENSITY_TARGETS = {
+        "introduction": 3.0,
+        "literature_review": 5.0,
+        "theoretical_background": 5.0,
+        "methods": 2.0,
+        "methodology": 2.0,
+        "results": 4.0,
+        "discussion": 3.0,
+        "conclusion": 1.5,
+        "framework": 3.0,
+    }
+    target = _DENSITY_TARGETS.get(section_name.lower(), 3.0)
+    meets_target = cites_per_100w >= target
+
+    return json.dumps({
+        "section": section_name,
+        "total_words": total_words,
+        "total_paragraphs": len(paragraphs),
+        "total_citations": total_cites,
+        "total_data_points": total_data,
+        "citations_per_100_words": cites_per_100w,
+        "target_cites_per_100_words": target,
+        "meets_density_target": meets_target,
+        "thin_paragraphs": thin_count,
+        "filler_paragraphs": filler_count,
+        "argument_quality": (
+            "STRONG" if meets_target and thin_count == 0
+            else "ADEQUATE" if meets_target or thin_count <= 1
+            else "WEAK — add citations or remove filler"
+        ),
+        "paragraphs": para_analysis,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 15. PREDICT REVIEWER OBJECTIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def predict_reviewer_objections(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
+    """Generate likely R1 reviewer objections based on evidence base analysis."""
+    topic = arguments.get("topic", ctx.get("topic", ""))
+    target_journal = arguments.get("target_journal", "")
+
+    claims = _get_claims(ctx)
+    papers = _get_papers(ctx)
+    rob_data = _get_rob(ctx)
+    grade_data = _get_grade(ctx)
+
+    if not claims and not papers:
+        return json.dumps({"error": "No evidence in database to analyze"})
+
+    objections: list[dict[str, Any]] = []
+
+    # 1. Sample size & geographic coverage
+    sample_sizes: list[int] = []
+    countries: set[str] = set()
+    for c in claims:
+        ss = _parse_sample_size(c.get("sample_size"))
+        if ss:
+            sample_sizes.append(ss)
+        pop = str(c.get("population") or "")
+        if pop:
+            countries.add(pop[:30])
+
+    if len(countries) <= 2:
+        objections.append({
+            "type": "generalizability",
+            "severity": "major",
+            "objection": f"Evidence comes from only {len(countries)} context(s): {', '.join(countries)}. How do you claim generalizability?",
+            "defense": "Acknowledge as limitation. Frame contribution as context-specific with transferability rationale.",
+        })
+
+    if sample_sizes and np.median(sample_sizes) < 200:
+        objections.append({
+            "type": "statistical_power",
+            "severity": "major",
+            "objection": f"Median sample size is {int(np.median(sample_sizes))}. Studies may be underpowered to detect meaningful effects.",
+            "defense": "Report power analysis where available. Note effect sizes alongside significance.",
+        })
+
+    # 2. Methodological concerns
+    method_counts: Counter[str] = Counter()
+    for c in claims:
+        d = c.get("study_design", "")
+        if d:
+            method_counts[d.lower()] += 1
+
+    qual_pct = sum(v for k, v in method_counts.items() if "qualitative" in k or "case" in k or "interview" in k) / max(sum(method_counts.values()), 1) * 100
+    if qual_pct > 60:
+        objections.append({
+            "type": "methodological",
+            "severity": "major",
+            "objection": f"{qual_pct:.0f}% of evidence is qualitative/case-based. Reviewers at quantitative journals will question the rigor.",
+            "defense": "Justify qualitative dominance as appropriate for the phenomenon's maturity. Cite methodological precedent.",
+        })
+
+    cross_sectional_pct = sum(v for k, v in method_counts.items() if "cross" in k or "survey" in k) / max(sum(method_counts.values()), 1) * 100
+    if cross_sectional_pct > 50:
+        objections.append({
+            "type": "causal_inference",
+            "severity": "major",
+            "objection": f"{cross_sectional_pct:.0f}% of studies are cross-sectional. Cannot support causal claims.",
+            "defense": "Use associational language throughout. Highlight any longitudinal/experimental studies as stronger evidence.",
+        })
+
+    # 3. Evidence quality
+    high_rob = sum(1 for r in rob_data if str(r.get("overall_risk", "")).lower() == "high")
+    if rob_data and high_rob / len(rob_data) > 0.3:
+        objections.append({
+            "type": "evidence_quality",
+            "severity": "major",
+            "objection": f"{high_rob}/{len(rob_data)} papers ({high_rob/len(rob_data)*100:.0f}%) have high risk of bias. Are conclusions reliable?",
+            "defense": "Conduct sensitivity analysis excluding high-RoB studies. Report whether conclusions change.",
+        })
+
+    low_grade = sum(1 for g in grade_data if str(g.get("certainty", "")).lower() in ("low", "very low"))
+    if grade_data and low_grade / len(grade_data) > 0.5:
+        objections.append({
+            "type": "evidence_certainty",
+            "severity": "major",
+            "objection": f"{low_grade}/{len(grade_data)} outcomes have Low/Very Low GRADE certainty. Conclusions may be premature.",
+            "defense": "Use appropriate hedging language. Present findings as 'preliminary evidence suggests' rather than 'demonstrates'.",
+        })
+
+    # 4. Publication bias
+    if len(papers) < 30:
+        objections.append({
+            "type": "comprehensiveness",
+            "severity": "minor",
+            "objection": f"Only {len(papers)} papers included. Have you missed relevant literature?",
+            "defense": "Document search strategy thoroughly. Show sensitivity searches in additional databases.",
+        })
+
+    # 5. Recency
+    years = [p.get("year") for p in papers if p.get("year")]
+    if years:
+        recent = sum(1 for y in years if y >= 2021)
+        if recent / len(years) < 0.3:
+            objections.append({
+                "type": "currency",
+                "severity": "minor",
+                "objection": f"Only {recent/len(years)*100:.0f}% of papers are from last 5 years. Is this review current?",
+                "defense": "Explain that foundational works are necessarily older. Show that recent works are included for current state.",
+            })
+
+    # 6. Theoretical framing
+    if topic:
+        # Check if topic implies novel construct that needs operationalization
+        novel_words = ["arbitrage", "non-obvious", "cross-institutional", "hybrid"]
+        novel_constructs = [w for w in novel_words if w.lower() in topic.lower()]
+        if novel_constructs:
+            objections.append({
+                "type": "construct_validity",
+                "severity": "major",
+                "objection": f"Novel construct(s) '{', '.join(novel_constructs)}' need precise operationalization. How would you measure this?",
+                "defense": "Provide explicit construct definitions with clear boundaries. Reference analogous constructs from established literature.",
+            })
+
+    # 7. Selection bias in review itself
+    objections.append({
+        "type": "review_methodology",
+        "severity": "minor",
+        "objection": "How did you handle publication bias in your own review? Negative/null results are underrepresented in databases.",
+        "defense": "Search for grey literature, working papers, and conference proceedings. Report funnel plot asymmetry if doing meta-analysis.",
+    })
+
+    # 8. Target journal specifics
+    if target_journal:
+        jl = target_journal.lower()
+        if "research policy" in jl:
+            objections.append({
+                "type": "policy_relevance",
+                "severity": "major",
+                "objection": "Research Policy requires explicit policy implications. Generic 'policymakers should consider...' will trigger desk rejection.",
+                "defense": "Name specific policy instruments (visa categories, R&D tax credits, startup visas) and predict their effects based on evidence.",
+            })
+        if "strategic management" in jl or "smj" in jl:
+            objections.append({
+                "type": "theoretical_contribution",
+                "severity": "major",
+                "objection": "SMJ requires clear theoretical contribution beyond empirical findings. What does this ADD to theory?",
+                "defense": "Frame contribution as extending/challenging a specific theory (institutional theory, knowledge-based view) with a novel mechanism.",
+            })
+
+    # Sort by severity
+    severity_order = {"major": 0, "minor": 1}
+    objections.sort(key=lambda x: severity_order.get(x["severity"], 2))
+
+    return json.dumps({
+        "total_objections": len(objections),
+        "major_objections": sum(1 for o in objections if o["severity"] == "major"),
+        "minor_objections": sum(1 for o in objections if o["severity"] == "minor"),
+        "objections": objections,
+        "target_journal": target_journal,
+        "overall_risk": (
+            "HIGH — multiple major objections require preemptive defense"
+            if sum(1 for o in objections if o["severity"] == "major") >= 3
+            else "MODERATE — address major objections in limitations section"
+            if sum(1 for o in objections if o["severity"] == "major") >= 1
+            else "LOW — minor issues only"
+        ),
+    })

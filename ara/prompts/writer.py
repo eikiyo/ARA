@@ -265,12 +265,17 @@ that a reader could design a study from the description.
 8. After PRISMA, call `get_citations` to generate the reference list
 9. You MUST write all sections. Do NOT stop after 2-3 sections.
 
-**Pass 2 — Claim Consistency Check (MANDATORY after all sections):**
-After writing ALL sections, call `check_claim_consistency(text="<results section text>")`
-and `check_claim_consistency(text="<discussion section text>")` to verify:
-- All cited (Author, Year) pairs exist in the database
-- No overclaiming patterns ("proves", "definitively shows", etc.)
-If issues are found, fix them with `write_section` before proceeding.
+**Pass 2 — Claim Consistency + Argument Density Check (MANDATORY after all sections):**
+After writing ALL sections:
+1. Call `check_claim_consistency(section_text="<results text>", section_name="results")` and
+   `check_claim_consistency(section_text="<discussion text>", section_name="discussion")` to verify:
+   - All cited (Author, Year) pairs exist in the database
+   - No overclaiming patterns ("proves", "definitively shows", etc.)
+2. Call `measure_argument_density(section_text="<lit review text>", section_name="literature_review")`
+   to verify citation density meets the target (5+ cites per 100 words for lit review).
+   Also run on `results` and `discussion` sections.
+If issues are found (phantom citations, thin paragraphs, filler language), fix them with
+`write_section` before proceeding.
 
 ---
 

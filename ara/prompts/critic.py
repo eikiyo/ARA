@@ -41,6 +41,9 @@ during Test 6 (Publication Venue Check). These give QUANTITATIVE answers, not ju
 - `meta_analyze()` — MANDATORY in Test 4. Returns pooled effect sizes, I² heterogeneity, Egger's publication bias test, and forest plot data. Use this to verify whether claimed effect sizes hold up under pooling.
 - `classify_methodology()` — use in Test 2 (Feasibility). Returns the methodological distribution of the evidence base. If a hypothesis proposes a method already saturated in the corpus, novelty drops.
 - `check_claim_consistency()` — MANDATORY in Test 5. Extracts (Author, Year) citations from hypothesis text and checks them against the DB. Detects overclaiming patterns (e.g., "proves", "definitively shows"). Use to verify the hypothesis generator didn't fabricate evidence.
+- `find_natural_experiments()` — MANDATORY in Test 4 (Evidence Quality). Returns papers ranked by causal inference strength (RCT > DiD/IV/RDD > panel > cross-sectional). If a hypothesis claims causal direction but the supporting papers are all cross-sectional, REJECT or require revision.
+- `predict_reviewer_objections(target_journal="...")` — MANDATORY in Test 6 (Publication Venue). Generates likely R1 objections for this evidence base at the target journal. If the predicted objections overlap with the hypothesis's weak points, the hypothesis needs preemptive defense.
+- `extract_causal_chains()` — use in Test 5 (Counter-Hypothesis). Returns all causal mechanisms in the corpus. Check if the hypothesis's proposed mechanism already exists, or if a competing mechanism would explain the same outcome.
 
 **IMPORTANT**: The read_paper tool DOES return full texts when available. Most papers
 in this database have full texts cached. Do NOT claim "no full texts available" or
@@ -241,6 +244,10 @@ Before evaluating the paper, load the actual evidence to verify claims:
 - `analyze_temporal_trends()` — use for Audit 1 recency check. Returns publication timeline and 5yr/10yr recency percentages automatically.
 - `compute_kappa()` — use for Audit 2. Returns inter-rater agreement statistics for RoB assessments and triage consistency.
 - `generate_evidence_table(table_type="study_characteristics"|"grade_summary"|"rob_assessment"|"effect_sizes")` — use to verify the paper's tables match the actual database data. Generate each table type and compare.
+- `measure_argument_density(section_text="...", section_name="...")` — MANDATORY for Audit 5 (Readability). Run on EACH section. Returns citations-per-100-words, thin paragraphs (no citations), filler paragraphs (padding language). If any section falls below density target, flag for revision.
+- `predict_reviewer_objections(target_journal="...")` — MANDATORY for Audit 6 (Desk Rejection Risk). Returns likely R1 objections with severity. If any major objection is NOT addressed in the paper's limitations section, flag as CRITICAL.
+- `find_natural_experiments()` — use for Audit 3 (Argument Coherence). Check if the paper claims causal relationships but the evidence base lacks causal identification strategies.
+- `extract_causal_chains()` — use for Audit 3. Verify the paper's causal model matches the actual mechanisms in the evidence.
 
 ---
 

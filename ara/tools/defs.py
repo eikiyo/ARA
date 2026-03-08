@@ -972,4 +972,63 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    # ── Analysis power tools batch 2 (5 causal/quality tools) ──
+    {
+        "name": "extract_causal_chains",
+        "description": "Extract causal mechanisms (X → M → Y) from claims using NLP pattern matching. Returns directed causal graph, mechanism types (mediator/moderator/antecedent/feedback), and construct role mapping. MANDATORY in Synthesis for causal model building.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "theme": {"type": "string", "description": "Optional theme to filter claims (e.g., 'innovation', 'trust')"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "find_natural_experiments",
+        "description": "Identify papers with causal identification strategies (RCT, natural experiment, DiD, IV, RDD, PSM, panel fixed effects). Returns papers ranked by causal inference strength (1-5) with strategy evidence. MANDATORY in Critic and Synthesis for evidence weighting.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "min_strength": {"type": "integer", "description": "Minimum causal strength tier to include (0-5, default 0 = all)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "score_construct_consistency",
+        "description": "Check if key constructs are defined and used consistently across the corpus. Auto-detects key constructs or checks a specific one. Returns consistency scores, conflicting definitions, and usage samples. MANDATORY in Hypothesis and Synthesis for construct clarity.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "construct": {"type": "string", "description": "Specific construct to check (e.g., 'institutional distance'). Omit for auto-detection."},
+                "auto_detect": {"type": "boolean", "description": "Auto-detect key constructs from corpus (default true if no construct specified)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "measure_argument_density",
+        "description": "Measure citations-per-paragraph, data-points-per-section, and detect thin/filler passages. Returns paragraph-level analysis with flags for uncited passages and padding language. MANDATORY in Paper Critic for structural quality gate.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "section_text": {"type": "string", "description": "The written section text to analyze"},
+                "section_name": {"type": "string", "description": "Section name for density target lookup (e.g., 'literature_review', 'discussion')"},
+            },
+            "required": ["section_text"],
+        },
+    },
+    {
+        "name": "predict_reviewer_objections",
+        "description": "Generate likely R1 reviewer objections based on evidence base analysis. Checks sample sizes, geographic coverage, methodological balance, evidence quality, recency, and journal-specific requirements. Returns objections ranked by severity with pre-built defenses.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Research topic (auto-detected from session if omitted)"},
+                "target_journal": {"type": "string", "description": "Target journal name (e.g., 'Research Policy', 'Strategic Management Journal')"},
+            },
+            "required": [],
+        },
+    },
 ]
