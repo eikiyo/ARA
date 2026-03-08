@@ -833,8 +833,25 @@ class RLMEngine:
                         if self.cancel_flag.is_set():
                             break
                         # Check for REJECT signal in critic output
+                        # Parse per-hypothesis decisions — old logic ("reject" in text and "approve" not in text)
+                        # was broken: if critic approved P1 but rejected P2, "approve" being present
+                        # would disable ALL reject detection. Now we count individual decisions.
                         critic_lower = critic_text.lower()
-                        has_reject = "reject" in critic_lower and "approve" not in critic_lower
+                        import re as _crit_re
+                        reject_matches = _crit_re.findall(
+                            r'(?:reject|fail|insufficient|unsupported|not\s+supported|weak|unjustified)',
+                            critic_lower,
+                        )
+                        approve_matches = _crit_re.findall(
+                            r'(?:approv|accept|support|strong|well.founded|sufficient)',
+                            critic_lower,
+                        )
+                        # Reject if rejections outnumber approvals, or if explicit "REJECT" verdict present
+                        explicit_reject = bool(_crit_re.search(
+                            r'(?:^|\n)\s*(?:\*\*)?(?:overall\s+)?(?:verdict|decision|recommendation)\s*[:]\s*(?:\*\*)?\s*reject',
+                            critic_lower,
+                        ))
+                        has_reject = explicit_reject or (len(reject_matches) > len(approve_matches))
                         # D. Critic tool enforcement — if critic output is too short, it didn't use tools
                         critic_too_short = len(critic_text) < 500
                         if not has_reject and not critic_too_short:
@@ -2995,15 +3012,33 @@ class RLMEngine:
                 plan_valid = True
                 _log.info("ADVISORY BOARD: JSON plan parsed successfully")
 
-                # Validate required fields
-                missing = []
-                for req_field in ("sections", "constructs", "propositions", "framework_name"):
-                    if req_field not in plan:
-                        missing.append(req_field)
-                if missing:
-                    _log.warning("ADVISORY BOARD: Plan missing fields: %s", missing)
+                # Validate required fields — HARD REJECT if critical fields missing
+                _critical_fields = {"sections", "framework_name"}
+                _important_fields = {"constructs", "propositions"}
+                missing_critical = [f for f in _critical_fields if f not in plan or not plan[f]]
+                missing_important = [f for f in _important_fields if f not in plan or not plan[f]]
+                if missing_critical:
+                    _log.error("ADVISORY BOARD: Plan missing CRITICAL fields: %s — rejecting", missing_critical)
+                    plan_valid = False
+                    if plan_attempt < _MAX_PLAN_ATTEMPTS:
+                        plan_file.unlink(missing_ok=True)
+                        retry_objective = (
+                            f"Your plan is INVALID — missing critical fields: {missing_critical}.\n"
+                            f"The plan MUST include 'sections' (dict of section plans) and 'framework_name' (string).\n"
+                            f"RETRY: produce a complete JSON plan with ALL required fields.\n"
+                            f"Call write_section(section='paper_plan', content=<pure JSON>).\n\n"
+                            f"Data:\n{upstream_outputs[:6000]}"
+                        )
+                        self._solve_recursive(
+                            objective=retry_objective, context=context,
+                            depth=self.config.max_depth, on_event=on_event,
+                            system_prompt_override=system_prompt, phase="advisory_board", max_steps=15,
+                        )
+                    continue
+                if missing_important:
+                    _log.warning("ADVISORY BOARD: Plan missing important fields: %s", missing_important)
 
-                # Validate mechanism-proposition alignment
+                # Validate mechanism-proposition alignment — HARD REJECT if misaligned
                 mechanisms = plan.get("mechanisms", [])
                 propositions = plan.get("propositions", [])
                 if mechanisms and propositions:
@@ -3012,16 +3047,54 @@ class RLMEngine:
                     orphan_mechs = mech_names - prop_mechs
                     orphan_props = prop_mechs - mech_names
                     if orphan_mechs:
-                        _log.warning("ADVISORY BOARD: Mechanisms without propositions: %s", orphan_mechs)
+                        _log.warning("ADVISORY BOARD: Mechanisms without propositions: %s — this will cause abstract mismatch", orphan_mechs)
                     if orphan_props:
                         _log.warning("ADVISORY BOARD: Propositions referencing unknown mechanisms: %s", orphan_props)
+                elif not propositions and paper_type == "conceptual":
+                    _log.error("ADVISORY BOARD: Conceptual paper plan has NO propositions — rejecting")
+                    plan_valid = False
+                    if plan_attempt < _MAX_PLAN_ATTEMPTS:
+                        plan_file.unlink(missing_ok=True)
+                        retry_objective = (
+                            f"Your plan is INVALID — a conceptual paper MUST include 'propositions' (list of formal propositions).\n"
+                            f"Each proposition needs: id (P1, P2...), statement, mechanism, constructs_used, key_citations.\n"
+                            f"RETRY: produce a complete JSON plan.\n"
+                            f"Call write_section(section='paper_plan', content=<pure JSON>).\n\n"
+                            f"Data:\n{upstream_outputs[:6000]}"
+                        )
+                        self._solve_recursive(
+                            objective=retry_objective, context=context,
+                            depth=self.config.max_depth, on_event=on_event,
+                            system_prompt_override=system_prompt, phase="advisory_board", max_steps=15,
+                        )
+                    continue
 
                 # Log framework name for consistency tracking
                 fw_name = plan.get("framework_name", "")
+                fw_acronym = plan.get("framework_acronym", "")
                 if fw_name:
-                    _log.info("ADVISORY BOARD: Framework name locked: %s", fw_name)
+                    _log.info("ADVISORY BOARD: Framework name locked: %s (%s)", fw_name, fw_acronym)
                 else:
                     _log.warning("ADVISORY BOARD: No framework_name in plan — naming inconsistency risk")
+
+                # Identity crisis check — ensure plan doesn't contain multiple framework names
+                # Scan all section theses and key_points for competing framework names
+                if fw_name:
+                    _alt_fw_names = set()
+                    for _sec_key, _sec_val in plan.get("sections", {}).items():
+                        _sec_text = json.dumps(_sec_val, default=str)
+                        # Find capitalized multi-word names that look like framework names
+                        import re as _fw_check_re
+                        _fw_candidates = _fw_check_re.findall(r'(?:the\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})\s+(?:framework|model|theory|paradigm)', _sec_text)
+                        for cand in _fw_candidates:
+                            if cand.lower() != fw_name.lower() and len(cand) > 10:
+                                _alt_fw_names.add(cand)
+                    if _alt_fw_names:
+                        _log.warning(
+                            "ADVISORY BOARD: Identity crisis detected — plan references alternative "
+                            "framework names: %s (locked name: %s). Forcing consistency.",
+                            _alt_fw_names, fw_name,
+                        )
 
                 # Validate section coverage
                 plan_sections = set(plan.get("sections", {}).keys())
@@ -3205,6 +3278,12 @@ class RLMEngine:
             "- Do NOT cite the same paper 4+ times in one section.\n"
             "- No paragraph >300 words without a citation.\n"
             "- AI-assisted review: do NOT claim human dual-reviewer screening.\n"
+            "- ANTI-REDUNDANCY: Do NOT repeat boundary conditions, gap maps, or comparison tables "
+            "across sections. State each argument ONCE in its home section. Other sections may "
+            "reference it (e.g., 'as discussed in the theoretical background') but not restate it.\n"
+            "- PROPOSITION CONTAINMENT: Propositions (P1:, P2:, etc.) are ONLY defined in the "
+            "propositions section. All other sections may REFER to them by label only.\n"
+            "- CITATION FORMAT: Use ONLY (Author, Year) with comma. Never (Author Year) without comma.\n"
         )
 
         system_prompt = build_phase_system_prompt(
@@ -3326,11 +3405,20 @@ class RLMEngine:
 
                 propositions = plan.get("propositions", [])
                 if propositions and section_name not in ("abstract", "methodology"):
-                    section_instruction += f"\nPROPOSITIONS (locked by advisory board, do not modify):\n"
-                    for p in propositions:
-                        mech = p.get('mechanism', '')
-                        mech_label = f" [mechanism: {mech}]" if mech else ""
-                        section_instruction += f"  - {p.get('id', '?')}: {p.get('statement', '')[:150]}{mech_label}\n"
+                    if section_name == "propositions":
+                        section_instruction += f"\nPROPOSITIONS (locked by advisory board, do not modify):\n"
+                        for p in propositions:
+                            mech = p.get('mechanism', '')
+                            mech_label = f" [mechanism: {mech}]" if mech else ""
+                            section_instruction += f"  - {p.get('id', '?')}: {p.get('statement', '')[:150]}{mech_label}\n"
+                    else:
+                        # Other sections get proposition LABELS only — no definitions
+                        section_instruction += (
+                            f"\nPROPOSITION LABELS (for reference only — do NOT define or restate propositions here):\n"
+                            f"  {', '.join(p.get('id', '?') for p in propositions)}\n"
+                            f"  You may REFER to these by label (e.g., 'as P1 suggests') but "
+                            f"do NOT write 'Proposition 1: ...' statements outside the propositions section.\n"
+                        )
 
             else:
                 # Should not reach here — plan is mandatory
@@ -3351,22 +3439,30 @@ class RLMEngine:
                     # Also extract first sentence of each paragraph for argument tracking
                     paras = [p.strip() for p in prev_content.split("\n\n") if len(p.strip()) > 50 and not p.strip().startswith("|") and not p.strip().startswith("#")]
                     first_sentences = []
-                    for para in paras[:5]:
+                    for para in paras[:15]:  # Scan up to 15 paragraphs (was 5 — missed most arguments)
                         sent_end = min(
                             (para.find(". ") if para.find(". ") > 0 else 9999),
                             (para.find("? ") if para.find("? ") > 0 else 9999),
                         )
                         if sent_end < 9999:
-                            first_sentences.append(para[:sent_end + 1].strip()[:100])
+                            first_sentences.append(para[:sent_end + 1].strip()[:120])
+                    # Extract key comparison phrases that tend to get repeated
+                    import re as _aw_comp_re
+                    comparisons = _aw_comp_re.findall(
+                        r'(?:(?:unlike|whereas|in contrast to|compared to|departing from)\s+[^,.]{10,60})',
+                        prev_content, _aw_comp_re.IGNORECASE,
+                    )
                     summary_parts = []
                     if tables:
                         summary_parts.append(f"Tables: {', '.join(t[:60] for t in tables[:5])}")
                     if constructs:
-                        summary_parts.append(f"Constructs: {', '.join(set(c[:40] for c in constructs[:6]))}")
+                        summary_parts.append(f"Constructs: {', '.join(set(c[:40] for c in constructs[:8]))}")
                     if headers:
-                        summary_parts.append(f"Subsections: {', '.join(h[:40] for h in headers[:6])}")
+                        summary_parts.append(f"Subsections: {', '.join(h[:40] for h in headers[:8])}")
                     if first_sentences:
-                        summary_parts.append(f"Arguments: {'; '.join(first_sentences[:3])}")
+                        summary_parts.append(f"Arguments: {'; '.join(first_sentences[:6])}")
+                    if comparisons:
+                        summary_parts.append(f"Comparisons: {'; '.join(c[:60] for c in comparisons[:4])}")
                     if summary_parts:
                         already_written_summary += f"\n- {prev_name}: " + " | ".join(summary_parts)
 
@@ -3487,8 +3583,13 @@ class RLMEngine:
             if should_auto_save:
                 from .tools.writing import _strip_llm_meta_text
                 result = _strip_llm_meta_text(result)
-                _log.info("PIPELINE WRITER: Auto-saving %s (%d chars)", section_name, len(result))
-                section_file.write_text(result, encoding="utf-8")
+                _log.info("PIPELINE WRITER: Auto-saving %s via write_section (%d chars)", section_name, len(result))
+                # Route through write_section so validation gates apply
+                auto_save_result = self.tools.dispatch("write_section", {
+                    "section": section_name,
+                    "content": result,
+                })
+                _log.info("PIPELINE WRITER: Auto-save result for %s: %s", section_name, auto_save_result[:200])
 
             # Inline quality check — safety net (plan should prevent most issues)
             section_issues = self._check_section_quality(section_name, sections_dir, context)
@@ -3704,8 +3805,8 @@ class RLMEngine:
         min_words_map = {
             "abstract": cfg.words_abstract, "introduction": cfg.words_introduction,
             "literature_review": cfg.words_literature_review, "methods": cfg.words_methods,
-            "results": cfg.words_results, "discussion": cfg.words_discussion,
-            "conclusion": cfg.words_conclusion,
+            "methodology": cfg.words_methodology, "results": cfg.words_results,
+            "discussion": cfg.words_discussion, "conclusion": cfg.words_conclusion,
             "theoretical_background": cfg.words_theoretical_background,
             "framework": cfg.words_framework, "propositions": cfg.words_propositions,
         }
@@ -3785,16 +3886,19 @@ class RLMEngine:
                     )
 
         # 6. Gap statement repetition detection
-        if section_name in ("discussion", "conclusion", "theoretical_background", "framework"):
+        if section_name in ("discussion", "conclusion", "theoretical_background", "framework", "propositions"):
             gap_phrases = _re.findall(
                 r'(?:gap|lacuna|understudied|under-explored|overlooked|neglected|'
-                r'limited attention|little is known|remains unclear|yet to)',
+                r'limited attention|little is known|remains unclear|yet to|no (?:study|research) has)',
                 content, _re.IGNORECASE,
             )
-            if len(gap_phrases) > 3:
+            # Stricter threshold: 2 max for non-intro sections (gap belongs in intro)
+            max_gap = 2
+            if len(gap_phrases) > max_gap:
                 issues.append(
-                    f"Gap statement repeated {len(gap_phrases)} times in this section. "
-                    f"State the gap in the introduction only — reference it here, don't restate it."
+                    f"Gap statement repeated {len(gap_phrases)} times in {section_name} (max {max_gap}). "
+                    f"State the gap ONCE in the introduction. Other sections should reference "
+                    f"it briefly, not restate it. Cut {len(gap_phrases) - max_gap} redundant gap claims."
                 )
 
         # 7. Duplication check — compare body sections (skip abstract/conclusion — they summarize)
@@ -3826,11 +3930,11 @@ class RLMEngine:
                         continue
                     if content_words and other_words:
                         overlap = len(content_words & other_words) / min(len(content_words), len(other_words))
-                        # Conceptual paper sections that build on each other get a higher threshold
-                        # (TB→framework→propositions share constructs by design)
+                        # Conceptual paper sections build on each other but must NOT repeat arguments
+                        # TB defines theories, framework integrates them, propositions derive from them
                         _construct_family = {"theoretical_background", "framework", "propositions"}
                         if section_name in _construct_family and other_file.stem in _construct_family:
-                            threshold = 0.45  # Same construct family — allow more shared vocabulary
+                            threshold = 0.38  # Same construct family — shared terms OK, repeated arguments NOT OK
                         else:
                             threshold = 0.30
                         if overlap > threshold:
@@ -3932,17 +4036,20 @@ class RLMEngine:
                     f"Drop any that restate well-established findings."
                 )
 
-        # 13. Discussion must NOT contain new propositions (P1, P2, Proposition 1, etc.)
-        if section_name == "discussion":
+        # 13. Proposition CONTAINMENT — propositions ONLY in the propositions section
+        # Discussion, conclusion, framework, and introduction may REFER to propositions
+        # but must NOT define/state them with "Proposition N:" format
+        if section_name in ("discussion", "conclusion", "framework", "introduction"):
             disc_props = _re.findall(
                 r'(?:^|\n)\s*\*?\*?(?:Proposition|P)\s*\d+\s*[:.]',
                 content, _re.IGNORECASE,
             )
             if disc_props:
                 issues.append(
-                    f"Discussion contains {len(disc_props)} proposition labels (P1, P2, etc.) — "
-                    f"propositions belong ONLY in the propositions section. "
-                    f"REFER to existing propositions by label, do NOT define new ones here."
+                    f"{section_name.title()} contains {len(disc_props)} proposition definitions "
+                    f"(P1:, P2:, Proposition 1:, etc.). Propositions belong ONLY in the "
+                    f"propositions section. You may REFERENCE them (e.g., 'as P1 suggests') "
+                    f"but do NOT restate or define them here."
                 )
 
         # 14. Construct naming consistency — check this section against theoretical_background
@@ -4145,11 +4252,13 @@ class RLMEngine:
         # 26. Future year citations — data integrity check
         import datetime as _dt
         current_year = _dt.datetime.now().year
-        future_cites = _re.findall(rf'\([A-Z][a-z]+.*?,\s*({current_year + 2}\d*)\)', content)
+        # Catch any citation year > current_year (papers from the future cannot exist)
+        all_cite_years = _re.findall(r'\([A-Z][a-z]+[^)]*?,\s*(\d{4})\)', content)
+        future_cites = [y for y in all_cite_years if int(y) > current_year]
         if future_cites:
             issues.append(
-                f"Future year citation(s): year {', '.join(set(future_cites))} is implausible. "
-                f"Check for typos in citation years."
+                f"Future year citation(s): year {', '.join(set(future_cites))} exceeds current year {current_year}. "
+                f"Papers from the future cannot exist. Fix citation years or remove these references."
             )
 
         # 27. Excessive self-referential language — "this paper" > 5 times
@@ -4248,6 +4357,68 @@ class RLMEngine:
                             f"in the citation menu. Top-tier journals include: AMJ, SMJ, JIBS, "
                             f"Research Policy, Nature, Science, Lancet, JF, AER."
                         )
+
+        # 33. Boundary conditions / comparison table repetition — these should appear ONCE
+        if section_name in ("framework", "propositions", "discussion", "conclusion"):
+            boundary_mentions = len(_re.findall(
+                r'(?:boundary\s+condition|scope\s+condition|applicab(?:ility|le)\s+(?:only\s+)?(?:to|when|in)|'
+                r'does\s+not\s+apply|limitation(?:s)?\s+of\s+(?:the\s+)?framework)',
+                content, _re.IGNORECASE,
+            ))
+            if boundary_mentions > 3 and section_name != "discussion":
+                issues.append(
+                    f"Boundary conditions stated {boundary_mentions} times in {section_name}. "
+                    f"Define boundary conditions ONCE in the framework section. "
+                    f"Discussion may revisit them briefly, other sections should not restate them."
+                )
+
+        # 34a. Citation format consistency — detect mixed (Author Year) vs (Author, Year) styles
+        if section_name not in ("abstract", "protocol"):
+            # Standard APA: (Author, Year) with comma
+            apa_cites = _re.findall(r'\([A-Z][a-z]+(?:\s+et\s+al\.?)?,\s*\d{4}\)', content)
+            # Non-standard: (Author Year) without comma, or Author Year in parens
+            non_apa_cites = _re.findall(r'\([A-Z][a-z]+(?:\s+et\s+al\.?)?\s+\d{4}\)', content)
+            if apa_cites and non_apa_cites and len(non_apa_cites) >= 2:
+                issues.append(
+                    f"Citation format inconsistency: {len(apa_cites)} APA-style (Author, Year) "
+                    f"and {len(non_apa_cites)} non-APA (Author Year) without comma. "
+                    f"Use ONLY (Author, Year) format with comma throughout."
+                )
+
+        # 34. Section numbering — detect broken numbering like 5b, 5c, 5d without 5a
+        if section_name not in ("abstract", "protocol", "methodology"):
+            # Find subsection numbering patterns: 5.1, 5.2 or 5a, 5b
+            alpha_subsections = sorted(_re.findall(r'\b(\d+[a-z])\b', content))
+            if alpha_subsections:
+                # Check for gaps (e.g. 5b without 5a)
+                for sub in alpha_subsections:
+                    digit, letter = sub[:-1], sub[-1]
+                    if letter != 'a':
+                        expected_first = f"{digit}a"
+                        if expected_first not in alpha_subsections:
+                            issues.append(
+                                f"Broken section numbering: found '{sub}' but no '{expected_first}'. "
+                                f"Use continuous numeric subsection numbering (5.1, 5.2, 5.3) "
+                                f"instead of letter suffixes, and ensure no gaps."
+                            )
+                            break
+
+        # 35. Overstated departure claims — claiming novelty while heavily using existing theories
+        if section_name in ("introduction", "theoretical_background", "framework"):
+            departure_claims = _re.findall(
+                r'(?:depart(?:s|ure|ing) from|break(?:s|ing)? (?:with|from)|'
+                r'challenge(?:s|ing)?\s+(?:the\s+)?(?:conventional|dominant|prevailing|existing)|'
+                r'reject(?:s|ing)?\s+(?:the\s+)?(?:assumption|premise|notion)|'
+                r'fundamentally\s+(?:new|different|novel)|paradigm\s+shift)',
+                content, _re.IGNORECASE,
+            )
+            if len(departure_claims) >= 2:
+                issues.append(
+                    f"Overstated departure: {len(departure_claims)} claims of departing from/challenging "
+                    f"existing theories. If the paper builds ON existing frameworks (even to extend them), "
+                    f"use 'extends', 'integrates', 'builds upon' instead of 'departs from'. "
+                    f"Only claim departure if you genuinely reject a prior framework's core assumptions."
+                )
 
         return issues
 
@@ -5326,6 +5497,27 @@ class RLMEngine:
         if dash_fixes:
             result["issues"].append(f"Em/en-dash: replaced dashes with commas in {dash_fixes} sections")
             result["fixes"] += dash_fixes
+
+        # 11. Full section quality checks — catch regressions peer review may have introduced
+        plan_file = ws / self.config.session_root_dir / "output" / "pipeline" / "paper_plan.json"
+        plan = None
+        if plan_file.exists():
+            try:
+                import json as _ppg_json
+                plan = _ppg_json.loads(plan_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        quality_issues_total = 0
+        for f in sections_dir.iterdir():
+            if f.suffix == ".md" and f.stem in _paper_sections:
+                content = f.read_text(encoding="utf-8")
+                sec_issues = self._check_section_quality(f.stem, content, plan=plan)
+                if sec_issues:
+                    quality_issues_total += len(sec_issues)
+                    for qi in sec_issues[:3]:  # Log top 3 per section
+                        _log.warning("POST-PEER-GATE quality [%s]: %s", f.stem, qi[:120])
+        if quality_issues_total:
+            result["issues"].append(f"Section quality checks: {quality_issues_total} issues detected across sections")
 
         _log.info("POST-PEER-GATE: %d issues found, %d fixes applied", len(result["issues"]), result["fixes"])
         if on_event:

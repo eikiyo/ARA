@@ -307,14 +307,14 @@ SEPARATION RULE: This section describes WHAT YOU ADD. Do NOT repeat the literatu
 - Classification of the phenomenon into distinct types/categories
 - Each type defined with clear boundaries and distinguishing characteristics
 - Table summarizing the typology with dimensions, types, and exemplars
-- USE FINTECH-SPECIFIC EXEMPLARS: mobile money (M-Pesa), digital lending (Ant Financial), blockchain remittances, AI-driven credit scoring, regulatory sandboxes, super-apps
+- Use domain-specific exemplars relevant to the research topic
 
 **5b. Process Model** (if applicable):
 - Stages/phases showing how the phenomenon unfolds over time
 - Triggers, mechanisms, and outcomes at each stage
 - Feedback loops and path dependencies
 - Visual representation (text-based diagram)
-- GROUND IN FINTECH SPECIFICS: e.g., how mobile payment infrastructure enables credit scoring → enables digital lending → enables insurance products
+- Ground in domain-specific mechanisms and sequences
 
 **5c. Multi-Level Framework Overview**:
 - Antecedents (what enables/triggers) → Mechanisms (how it works) → Outcomes (what results)
@@ -323,19 +323,19 @@ SEPARATION RULE: This section describes WHAT YOU ADD. Do NOT repeat the literatu
 - Do NOT write formal "Proposition N:" statements here — the next section does that
 - Instead, describe the theoretical relationships and causal chains the framework posits
 
-**5d. Innovation Re-contextualization Capability** (ELEVATE THIS — it's the paper's most novel construct):
-- Give re-contextualization its own dedicated subsection
-- Define it precisely: the subsidiary-led process of abstracting the core technological principles from a locally-embedded innovation and articulating a global value proposition
-- Operationalize with fintech specifics: e.g., abstracting M-Pesa's mobile money rails into a general micropayments API; abstracting Ant Financial's Sesame Credit into a portable alternative credit scoring framework
-- Show how re-contextualization differs from simple "knowledge transfer" — it's a creative, strategic act, not passive transmission
-- Connect to the KBV: re-contextualization requires both local tacit knowledge AND global strategic awareness
+**5d. Novel Construct** (ELEVATE the paper's most original contribution):
+- Give the most novel construct its own dedicated subsection
+- Define it precisely with clear conceptual boundaries
+- Operationalize with domain-specific measures
+- Show how it differs from related existing constructs
+- Connect to the theoretical foundations established in the background
 
 #### 6. Discussion (minimum 1000 words)
 Must include ALL subsections:
-- **Theoretical Contributions**: How the framework advances EACH theoretical stream (reverse innovation theory, subsidiary mandates, exploration/exploitation). Be specific — "This framework extends [Author]'s (Year) work by..."
+- **Theoretical Contributions**: How the framework advances EACH theoretical stream. Be specific — "This framework extends [Author]'s (Year) work by..."
 - **Comparison with Existing Frameworks**: Table comparing this framework vs. 3+ alternatives on key dimensions. What does this explain that others cannot?
-- **Managerial Implications**: Specific, actionable — who in an MNE should do what differently based on this framework?
-- **Boundary Conditions and Limitations**: When does the framework NOT apply? Which propositions are weakest and why?
+- **Managerial Implications**: Specific, actionable — who should do what differently based on this framework?
+- **Boundary Conditions and Limitations**: When does the framework NOT apply? Which propositions are weakest and why? State boundary conditions ONCE here — do not repeat them from the framework section.
 - **Future Research Agenda**: 5+ specific empirical studies that could test the propositions, with suggested methodologies (case studies, surveys, archival data, experiments)
 
 #### 7. Conclusion (minimum 400 words)
@@ -348,8 +348,9 @@ Must include:
 #### 6b. Propositions — Formatting Rules
 - Do NOT re-describe the framework model — refer to section 5
 - Each proposition must be DISTINCT — no two propositions should test the same relationship
-- Operationalize constructs with fintech-specific measures where possible
+- Operationalize constructs with domain-specific measures where possible
 - At least 2 propositions should be COUNTER-INTUITIVE (challenge conventional wisdom)
+- Propositions appear ONLY in this section — framework previews causal logic, propositions formalize it
 
 **PROPOSITION QUALITY TEST — apply to every proposition before including it:**
 1. **Obviousness filter**: If an IB scholar would say "of course" after reading it, REJECT IT and write a non-obvious version. Example of an OBVIOUS proposition: "Subsidiary autonomy positively affects innovation." Example of a NON-OBVIOUS version: "Beyond a threshold level of autonomy, subsidiary innovation output declines because the subsidiary lacks the legitimacy pressure that HQ mandates provide, leading to diffuse exploration without strategic focus."
@@ -361,7 +362,7 @@ Must include:
 - APA 7th edition format
 - Minimum 40 unique references
 - Only cite papers verified in the database
-- MUST include foundational reverse innovation and subsidiary mandate works
+- MUST include foundational works from the theoretical streams used in the framework
 
 ### Process
 
@@ -371,7 +372,7 @@ Must include:
 3. Build a mental map: which papers support which theoretical arguments
 
 **Pass 1 — Write ALL sections in order:**
-abstract, introduction, theoretical_background, framework, propositions, discussion, conclusion
+abstract, introduction, theoretical_background, methodology, framework, propositions, discussion, conclusion
 
 For EACH section, use write_section(section='name', content=YOUR_TEXT).
 
@@ -415,14 +416,35 @@ This is a CONCEPTUAL THEORY-BUILDING paper, NOT a systematic literature review.
 - Cite Jaakkola (2020) or Cornelissen (2017) if justifying the methodology
 - The paper's rigor comes from the LOGIC of the framework and the GROUNDING in prior theory
 
-### Fintech Specificity (CRITICAL)
-The paper MUST demonstrate deep engagement with fintech, not just use it as a label.
-Every section should include fintech-specific content:
-- **Introduction**: Name specific fintech innovations (M-Pesa, Ant Financial, Paytm, Nubank, Grab Financial)
-- **Theoretical Background**: Show how existing theories fail SPECIFICALLY for fintech (e.g., frugal innovation doesn't explain API-driven platform architectures)
-- **Framework**: Every construct should be operationalized with fintech measures (e.g., "digital infrastructure maturity" = mobile penetration + API ecosystem + regulatory sandbox availability)
-- **Propositions**: At least 3 propositions should reference fintech-specific mechanisms (e.g., network effects in mobile payments, algorithmic credit scoring data advantages, regulatory arbitrage in digital banking)
-- **Discussion**: Compare with fintech-specific studies, not just generic IB reviews
+### Domain Specificity (CRITICAL)
+The paper MUST demonstrate deep engagement with the research domain, not just use it as a label.
+Every section should include domain-specific content:
+- **Introduction**: Name specific real-world examples and innovations from the domain
+- **Theoretical Background**: Show how existing theories fail SPECIFICALLY for this domain context
+- **Framework**: Every construct should be operationalized with domain-specific measures
+- **Propositions**: At least 3 propositions should reference domain-specific mechanisms
+- **Discussion**: Compare with domain-specific studies, not just generic reviews
+
+### PROPOSITION CONTAINMENT RULE (MANDATORY)
+- Propositions (P1:, P2:, Proposition 1:, etc.) are ONLY defined in the Propositions section (§6)
+- The Framework section describes relationships and causal logic but does NOT state formal propositions
+- The Discussion may REFER to propositions by label (e.g., "P1 suggests") but does NOT redefine them
+- The Conclusion may summarize propositions in prose but does NOT restate "Proposition N: ..." format
+- If you find yourself writing "Proposition N:" outside §6, STOP and move it to §6
+
+### ANTI-REDUNDANCY RULES (MANDATORY)
+- State each argument ONCE in its home section. Do NOT repeat:
+  - Gap claims across introduction, TB, and discussion (state gap in intro, reference elsewhere)
+  - Boundary conditions in both framework AND discussion (state in framework, revisit in discussion briefly)
+  - Comparison tables in multiple sections (one table per comparison, in its home section)
+  - Construct definitions outside theoretical background (define once, reference by name)
+- If a paragraph could appear in another section unchanged, it is redundant. Delete or differentiate it.
+
+### FRAMEWORK IDENTITY RULE (MANDATORY)
+- The paper has ONE framework with ONE name and ONE acronym (set by the advisory board plan)
+- Do NOT introduce alternative framework names, sub-framework names, or competing acronyms
+- The framework name in the abstract, introduction, framework section, and conclusion MUST be identical
+- Use the EXACT framework_name and framework_acronym from the advisory board plan
 """
 
 CONCEPTUAL_CRITIC_PROMPT = """## Paper Critic Phase — Conceptual Paper Quality Evaluation

@@ -126,7 +126,7 @@ _MAX_SECTION_REJECTIONS = 3  # After this many citation rejections, save anyway
 # Fallback minimums — overridden by config at runtime via ctx
 _MIN_WORDS: dict[str, int] = {
     "abstract": 50, "introduction": 150, "literature_review": 300,
-    "methods": 200, "results": 250, "discussion": 200, "conclusion": 80,
+    "methods": 200, "methodology": 200, "results": 250, "discussion": 200, "conclusion": 80,
 }
 _MIN_CITATIONS: dict[str, int] = {
     "introduction": 2, "literature_review": 4, "methods": 1,
@@ -406,6 +406,17 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
                 f"Remove ALL unverified citations and replace with papers from list_papers(). "
                 f"ONLY cite papers that exist in the database — do NOT use your training knowledge."
             )
+
+    # Check for future year citations — papers from the future cannot exist
+    import datetime as _dt_check
+    _current_year = _dt_check.datetime.now().year
+    for author, year in citations_found:
+        if year.isdigit() and int(year) > _current_year:
+            errors.append(
+                f"FUTURE YEAR CITATION: ({author}, {year}) references a year beyond {_current_year}. "
+                f"Papers from the future cannot exist. Fix the year or remove this citation."
+            )
+            break  # One error is enough to trigger rejection
 
     # Check minimum citation density (from config if available)
     min_cites = _get_min_citations(ctx).get(section_key, 0)

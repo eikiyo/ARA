@@ -1006,22 +1006,26 @@ class CentralDB:
             return ([], None)
 
         items = []
-        embs_raw = []
+        embs_list = []
         for row in rows:
             d = dict(row)
             emb = json.loads(d.pop("embedding"))
             items.append(d)
-            embs_raw.append(emb)
+            embs_list.append(emb)
 
-        embs_np = np.array(embs_raw, dtype=np.float32)
+        embs_np = np.array(embs_list, dtype=np.float32)
+        del embs_list  # free raw python list immediately
         # Pre-compute norms for fast cosine
         norms = np.linalg.norm(embs_np, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         embs_normed = embs_np / norms
+        del embs_np  # only keep normed copy — saves 50% RAM
 
-        result = (items, embs_normed, embs_raw)
+        result = (items, embs_normed, embs_normed)  # both point to same array
         setattr(self, cache_attr, result)
-        _log.info("Cached %d %s embeddings (%d dims)", len(items), table, embs_np.shape[1])
+        _log.info("Cached %d %s embeddings (%d dims, %.0fMB)",
+                  len(items), table, embs_normed.shape[1],
+                  embs_normed.nbytes / 1024 / 1024)
         return result
 
     def invalidate_embedding_cache(self, table: str = "all") -> None:
@@ -1050,11 +1054,10 @@ class CentralDB:
             new_embs_normed = new_embs_np / norms
 
             if cached is not None and cached[1] is not None:
-                old_items, old_normed, old_raw = cached
+                old_items, old_normed, _ = cached
                 merged_items = old_items + new_items
                 merged_normed = np.vstack([old_normed, new_embs_normed])
-                merged_raw = old_raw + new_embeddings
-                setattr(self, cache_attr, (merged_items, merged_normed, merged_raw))
+                setattr(self, cache_attr, (merged_items, merged_normed, merged_normed))
                 _log.info("Extended %s cache: %d → %d items (hot append)",
                           table, len(old_items), len(merged_items))
             else:
@@ -1187,8 +1190,8 @@ class CentralDB:
             return candidates
 
     def search_claims_mmr(
-        self, query_embedding: list[float], limit: int = 30,
-        min_cosine: float = 0.45, lam: float = 0.7, paper_cap: int = 3,
+        self, query_embedding: list[float], limit: int = 150,
+        min_cosine: float = 0.6, lam: float = 0.5, paper_cap: int = 3,
     ) -> list[dict[str, Any]]:
         """Find diverse, relevant claims using MMR. Max paper_cap claims per paper."""
         return self._cached_mmr_search("claims", query_embedding, limit, min_cosine, lam, paper_cap)
@@ -1196,8 +1199,8 @@ class CentralDB:
     # ── Chunk Search (MMR-diversified) ────────────────────
 
     def search_chunks_mmr(
-        self, query_embedding: list[float], limit: int = 20,
-        min_cosine: float = 0.45, lam: float = 0.7, paper_cap: int = 2,
+        self, query_embedding: list[float], limit: int = 100,
+        min_cosine: float = 0.6, lam: float = 0.5, paper_cap: int = 2,
     ) -> list[dict[str, Any]]:
         """Find diverse, relevant full-text chunks using MMR."""
         return self._cached_mmr_search("chunks", query_embedding, limit, min_cosine, lam, paper_cap)
@@ -1205,8 +1208,8 @@ class CentralDB:
     # ── Paper Search (MMR-diversified) ────────────────────
 
     def search_papers_mmr(
-        self, query_embedding: list[float], limit: int = 30,
-        min_cosine: float = 0.45, lam: float = 0.7,
+        self, query_embedding: list[float], limit: int = 60,
+        min_cosine: float = 0.6, lam: float = 0.5,
     ) -> list[dict[str, Any]]:
         """Find diverse, relevant papers using MMR."""
         return self._cached_mmr_search("papers", query_embedding, limit, min_cosine, lam, paper_cap=0)

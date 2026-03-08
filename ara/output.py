@@ -22,7 +22,7 @@ _SECTION_ORDER = [
 
 _SECTION_ORDER_CONCEPTUAL = [
     "title", "abstract", "introduction", "theoretical_background",
-    "framework", "propositions", "discussion", "conclusion",
+    "methodology", "framework", "propositions", "discussion", "conclusion",
 ]
 
 _SECTION_HEADINGS = {
@@ -31,8 +31,9 @@ _SECTION_HEADINGS = {
     "introduction": "Introduction",
     "literature_review": "Literature Review",
     "theoretical_background": "Theoretical Background",
-    "framework": "Framework",
+    "framework": "Conceptual Framework",
     "propositions": "Propositions",
+    "methodology": "Methodology",
     "methods": "Methods",
     "results": "Results",
     "results_analysis": "Results Analysis",

@@ -99,6 +99,7 @@ class ARAConfig:
     words_theoretical_background: int = 2000
     words_framework: int = 1500
     words_propositions: int = 1000
+    words_methodology: int = 400  # Conceptual paper methodology section
 
     # Writing quality constraints
     max_propositions: int = 5  # Hard cap on propositions per paper

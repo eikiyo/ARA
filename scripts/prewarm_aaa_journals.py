@@ -324,6 +324,174 @@ AA_JOURNAL_QUERIES = [
         "platform ecosystem startup",
         "financial crisis entrepreneurial response",
     ]),
+
+    # ── ROUND 2: New journals + deeper queries ──
+
+    # ── Accounting & Finance (AA) ──
+    ("source:\"Journal of Accounting Research\"", [
+        "fintech financial reporting technology",
+        "digital platform audit technology",
+        "financial crisis disclosure transparency",
+    ]),
+    ("source:\"Financial Management\"", [
+        "fintech corporate finance innovation",
+        "financial crisis firm value technology",
+        "digital transformation capital structure",
+    ]),
+    ("source:\"Journal of Financial Markets\"", [
+        "fintech market microstructure",
+        "algorithmic trading platform",
+        "digital finance market liquidity crisis",
+    ]),
+    ("source:\"Journal of International Money and Finance\"", [
+        "fintech cross-border payment",
+        "digital currency emerging markets",
+        "financial crisis capital flows technology",
+        "mobile money remittance developing",
+    ]),
+    ("source:\"Journal of Financial Services Research\"", [
+        "fintech banking competition",
+        "digital lending regulation",
+        "insurtech financial innovation",
+        "neobank digital challenger",
+    ]),
+
+    # ── Regional / Area Studies (core for South/SE Asia) ──
+    ("source:\"Asian Business and Management\"", [
+        "fintech Asia platform economy",
+        "digital transformation Asian firms",
+        "financial crisis response Asian economy",
+    ]),
+    ("source:\"Journal of Asian Economics\"", [
+        "fintech Southeast Asia financial inclusion",
+        "digital economy ASEAN crisis",
+        "mobile payment adoption Asia",
+        "financial technology regulation Asia",
+    ]),
+    ("source:\"Pacific-Basin Finance Journal\"", [
+        "fintech Asia Pacific banking",
+        "digital finance emerging Asia",
+        "financial crisis technology response Pacific",
+        "platform lending Asia",
+    ]),
+    ("source:\"Asian Journal of Technology Innovation\"", [
+        "fintech innovation Asian economy",
+        "technology portfolio management Asia",
+        "digital platform strategy emerging Asia",
+    ]),
+    ("source:\"Journal of Southeast Asian Economies\"", [
+        "fintech ASEAN digital economy",
+        "financial inclusion technology Southeast Asia",
+        "platform economy digitalization ASEAN",
+    ]),
+    ("source:\"Asia Pacific Business Review\"", [
+        "digital transformation platform firms Asia",
+        "fintech adoption emerging market Asia",
+        "crisis response technology Asian business",
+    ]),
+
+    # ── Operations & Supply Chain (platform/ecosystem angle) ──
+    ("source:\"Journal of Operations Management\"", [
+        "digital platform operations supply chain",
+        "technology portfolio operational resilience",
+        "platform ecosystem coordination",
+    ]),
+    ("source:\"Production and Operations Management\"", [
+        "fintech operational innovation",
+        "platform marketplace operations",
+        "digital supply chain financial crisis",
+    ]),
+
+    # ── Public Policy & Regulation ──
+    ("source:\"Journal of Financial Regulation and Compliance\"", [
+        "fintech regulation sandbox",
+        "digital banking regulatory framework",
+        "financial technology compliance emerging",
+        "regtech regulatory technology",
+    ]),
+    ("source:\"Regulation and Governance\"", [
+        "fintech regulatory governance",
+        "digital platform regulation emerging markets",
+        "financial innovation governance framework",
+    ]),
+
+    # ── Sustainability & Impact ──
+    ("source:\"Journal of Cleaner Production\"", [
+        "fintech sustainable finance green",
+        "digital platform circular economy",
+        "ESG technology financial innovation",
+    ]),
+    ("source:\"Sustainability\"", [
+        "fintech financial inclusion sustainability",
+        "digital economy sustainable development Asia",
+        "green fintech environmental technology",
+    ]),
+
+    # ── Marketing & Consumer (adoption angle) ──
+    ("source:\"Journal of Marketing\"", [
+        "digital platform consumer adoption",
+        "fintech consumer behavior trust",
+        "mobile payment adoption intention",
+    ]),
+    ("source:\"Journal of the Academy of Marketing Science\"", [
+        "platform business model customer value",
+        "digital service innovation fintech",
+        "technology adoption consumer financial",
+    ]),
+    ("source:\"Journal of Retailing\"", [
+        "digital platform marketplace retail",
+        "fintech payment consumer experience",
+        "mobile commerce adoption emerging",
+    ]),
+
+    # ── Deeper queries on existing high-yield journals ──
+    ("source:\"Journal of Banking and Finance\"", [
+        "neobank challenger bank digital",
+        "financial resilience technology shock",
+        "ASEAN banking digital transformation",
+        "pandemic COVID fintech adoption",
+    ]),
+    ("source:\"Technological Forecasting and Social Change\"", [
+        "super app platform ecosystem Asia",
+        "COVID pandemic fintech acceleration",
+        "artificial intelligence financial services",
+        "digital wallet mobile payment emerging",
+    ]),
+    ("source:\"World Development\"", [
+        "COVID pandemic digital finance developing",
+        "fintech regulation developing country",
+        "platform gig economy emerging market",
+    ]),
+    ("source:\"Journal of International Business Studies\"", [
+        "digital platform born global",
+        "fintech subsidiary emerging market multinational",
+        "technology transfer South Asia",
+    ]),
+    ("source:\"Research Policy\"", [
+        "platform innovation ecosystem governance",
+        "technology diversification portfolio",
+        "crisis driven innovation policy",
+    ]),
+    ("source:\"Journal of Business Venturing\"", [
+        "fintech unicorn scaling emerging",
+        "digital platform venture ecosystem",
+        "crisis entrepreneurship technology opportunity",
+    ]),
+    ("source:\"Small Business Economics\"", [
+        "alternative finance SME developing",
+        "pandemic fintech SME lending",
+        "digital platform gig microenterprise",
+    ]),
+    ("source:\"International Business Review\"", [
+        "super app platform internationalization Asia",
+        "digital ecosystem cross-border emerging",
+        "fintech subsidiary reverse innovation",
+    ]),
+    ("source:\"Emerging Markets Review\"", [
+        "COVID fintech emerging market resilience",
+        "digital banking transformation developing",
+        "platform economy regulation emerging",
+    ]),
 ]
 
 
