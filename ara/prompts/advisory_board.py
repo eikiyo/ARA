@@ -24,7 +24,18 @@ publishable paper.
 3. Call `list_papers(compact=true)` — verify citation allocation covers available papers.
 4. Call `get_risk_of_bias_table()` — check evidence quality claims.
 5. Call `get_grade_table()` — verify GRADE ratings match synthesis assertions.
-6. Call `predict_reviewer_objections(target_journal="<journal>")` — MANDATORY. Returns likely R1 objections with severity and pre-built defenses. Use this to inform BOTH advisors: the Methodologist uses it for evidence gap assessment, the Strategist uses it for desk rejection risk. Every major objection MUST be addressed in the advisory report's CAUTION ZONES.
+
+### STEP 0b: Run Analytical Tools (MANDATORY — these inform both advisors)
+
+6. `predict_reviewer_objections(target_journal="<journal>")` — Returns likely R1 objections with severity and pre-built defenses. Every major objection MUST be addressed in the advisory report's CAUTION ZONES.
+7. `extract_causal_chains()` — Returns mechanism graph. The Methodologist uses this to verify causal model validity (1.4). If the synthesis proposes mechanisms not in the data, flag immediately.
+8. `find_natural_experiments()` — Returns causal evidence strength. If the thesis claims causal direction but evidence is mostly cross-sectional, the Methodologist must flag this.
+9. `detect_contradictions()` — Returns contradiction pairs. Cross-check that the synthesis tension table captured ALL contradictions, not just the convenient ones.
+10. `build_citation_network()` — Returns citation concentration and clusters. The Methodologist uses this for citation coverage (1.2) — if one paper dominates, flag it.
+11. `score_construct_consistency()` — Returns construct definitional conflicts. If key constructs are used inconsistently, the brief must instruct the writer to define them explicitly.
+12. `classify_methodology()` — Returns method distribution. Informs the Strategist's assessment of whether the evidence base is methodologically diverse enough for the target journal.
+13. `meta_analyze()` — Returns pooled effects and heterogeneity. The Methodologist uses this to verify the synthesis's quantitative claims.
+14. `map_theories()` — Returns theory distribution. The Strategist uses this to verify the theoretical framing is grounded in the actual evidence, not imposed.
 
 ---
 
