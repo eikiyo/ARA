@@ -25,9 +25,15 @@ lowest risk of bias, clearest effect sizes).
 
 ### STEP 2: Mechanism Extraction (MANDATORY before any search)
 
-Before searching, analyze the existing claims to build a structural map:
+Before searching, call these tools to get structured data:
+1. `map_theories()` — returns all theories in the corpus with paper mappings
+2. `detect_contradictions()` — returns ranked contradiction pairs
+3. `classify_methodology()` — returns methodological distribution
+
+Then use these outputs to build a structural map:
 
 **A) Core mechanisms** — What causal chains do these papers propose?
+   Use `map_theories()` output to identify which theories propose which mechanisms.
    Format: [Cause] → [Mechanism] → [Outcome] (Paper, Year)
    Extract at least 5 mechanisms.
 
@@ -104,6 +110,11 @@ A bridge claim backed by real data is 10x stronger than one backed by analogy al
 - `identify_gaps(query="...")` — find underdeveloped areas in the literature
 - `compute_effect_size(metric="cohens_d", ...)` — compute effect sizes from reported stats
 - `check_journal_ranking(journal_name="...")` — verify source journal quality (ABS/FT50)
+
+### Evidence Synthesis Tools (USE THESE for mechanism extraction)
+- `detect_contradictions()` — MANDATORY in Step 2D. Automatically finds claim pairs with opposing effects. Use this for your contradiction analysis INSTEAD of manual scanning.
+- `map_theories()` — MANDATORY in Step 2A. Returns all theoretical frameworks detected in the corpus with paper mappings. Use this to identify which theories are applied and which are MISSING (cross-domain transfer targets).
+- `classify_methodology()` — shows methodological distribution. Use to find which methods are never used (methodological innovation targets for Approach A.4).
 
 ---
 

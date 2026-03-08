@@ -33,6 +33,11 @@ Call ALL of these before generating any hypotheses:
 - `compute_effect_size(metric="cohens_d"|"odds_ratio"|"risk_ratio"|"r_to_d"|"eta_squared", ...)` — compute effect sizes from reported statistics (with 95% CI and interpretation)
 - `check_journal_ranking(journal_name="...")` — verify journal quality tier (AAA/AA/A/B per ABS/FT50)
 
+### Evidence Synthesis Tools (USE THESE — they replace manual analysis)
+- `detect_contradictions()` — MANDATORY for Map 3. Automatically finds claim pairs with opposing effect directions. Use this INSTEAD of manually scanning claims for contradictions.
+- `map_theories()` — MANDATORY for Map 1. Scans all claims for 20+ theoretical frameworks (Institutional Theory, RBV, TCE, TAM, etc.) and returns theory-paper mappings, co-occurrences, and underused theories. Use this INSTEAD of manually reading papers for theory mentions.
+- `classify_methodology()` — categorizes all papers by research design (RCT, cross-sectional, qualitative, etc.) with diversity index. Use for Map 4 (which methodologies are never used).
+
 ---
 
 ### STEP 2: Four Evidence Maps (MANDATORY before ANY hypothesis)
@@ -40,6 +45,8 @@ Call ALL of these before generating any hypotheses:
 Complete all four maps. These ARE the raw material for hypothesis generation.
 
 #### Map 1: KNOWLEDGE MAP — What is established
+Call `map_theories()` FIRST — it returns all theoretical frameworks detected across the corpus
+with paper mappings and co-occurrences. Use this output to populate the map below.
 | Theme | Key Finding | Evidence Strength (GRADE) | # Papers | Consensus? |
 List the top 8-12 findings the field considers established.
 
@@ -48,10 +55,14 @@ List the top 8-12 findings the field considers established.
 At least 5 assumptions. These are hypotheses hiding in plain sight.
 
 #### Map 3: CONTRADICTION MAP — What is disputed
+Call `detect_contradictions()` FIRST — it automatically identifies claim pairs with opposing
+effect directions and ranks them by confidence. Use these results to populate the map below.
+Do NOT manually scan claims when the tool does this for you.
 | Claim A (Paper) | Claim B (Paper) | Possible moderator | Tested? |
 At least 3 contradictions. Every contradiction is a potential research question.
 
 #### Map 4: ABSENCE MAP — What is never discussed
+Call `classify_methodology()` to see which research designs are used and which are absent.
 This is the hardest and most valuable map.
 - Which populations are never studied?
 - Which geographies are absent?

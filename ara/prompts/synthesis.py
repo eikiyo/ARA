@@ -22,6 +22,19 @@ Call ALL of these before building anything:
 - `search_similar(text="<theme>")` per major theme — embedding-based retrieval
 - `read_paper(paper_id=ID, include_fulltext=true)` for the 5-10 most important papers
 
+### STEP 1b: Run Evidence Synthesis Tools (MANDATORY — do ALL of these)
+
+These tools automate analysis that would otherwise take hours. Call ALL of them:
+- `detect_contradictions()` — returns ranked contradiction pairs. Use for Step 7 (Tension Documentation) and Step 2 thesis selection.
+- `build_citation_network()` — returns co-citation clusters, bridge papers, citation concentration risk, seminal papers. Use for Step 4 (Citation Allocation) and Step 10 (Evidence Concentration).
+- `classify_methodology()` — returns methodological distribution with diversity index. Use for Step 12 (Geographic Comparison) and your methodology analysis.
+- `aggregate_samples()` — returns sample size statistics, geographic distribution, WEIRD bias percentage. Use for Step 12 and to ground your claims about evidence breadth.
+- `meta_analyze()` — returns pooled effect sizes, I² heterogeneity, Egger's publication bias, forest plot data. Use for Step 11 (Quantitative Summary) and Step 8 (GRADE rating — inform publication_bias and inconsistency fields).
+- `map_theories()` — returns all theoretical frameworks in the corpus with paper mappings and co-occurrences. Use for Step 2 (thesis selection) and Stream identification.
+- `analyze_temporal_trends()` — returns publication timeline, recency stats, method evolution. Use for Step 12 and to assess evidence currency.
+- `generate_evidence_table(table_type="study_characteristics")` — auto-generates study characteristics table. Use for Step 5 (Table Plan) as TABLE 1.
+- `compute_kappa()` — returns inter-rater agreement for RoB and triage. Use to report methodological rigor in quality assessment.
+
 ---
 
 ### STEP 2: Select the Central Thesis
@@ -356,10 +369,16 @@ statement, advisory instructions) as text output.
   every GRADE rating, every finding MUST trace back to an extracted claim.
 - Call `list_papers(compact=true)` to get paper metadata for citation formatting.
 - Call `get_risk_of_bias_table()` to retrieve stored RoB assessments.
+- Call ALL 9 evidence synthesis tools from Step 1b — these are NOT optional.
+  Their outputs replace manual analysis for Steps 5, 7, 10, 11, and 12.
 - For the top 5-10 most important papers, call `read_paper(paper_id=ID, include_fulltext=true)`
   to read their full text.
 - Use `search_similar(text="<theme>")` to find papers related to each outcome theme.
 - Call `rate_grade_evidence(...)` for EACH major outcome (5-8 outcomes minimum).
+- Use `meta_analyze()` output to inform GRADE `publication_bias` and `inconsistency` fields.
+- Use `build_citation_network()` output instead of manually counting citation concentration.
+- Use `generate_evidence_table(table_type="study_characteristics")` for TABLE 1 instead of
+  building it manually — the tool auto-generates it from the database.
 - Build ALL outputs in one response.
 - Author names must EXACTLY match database entries.
 - Report effect sizes wherever available — pull these from claims, not from memory.

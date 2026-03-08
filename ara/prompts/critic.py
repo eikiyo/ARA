@@ -36,6 +36,12 @@ A critique that doesn't cite evidence is worthless.
 Use `score_novelty` during Test 1 (Novelty Kill Test) and `check_journal_ranking`
 during Test 6 (Publication Venue Check). These give QUANTITATIVE answers, not just opinions.
 
+### Evidence Synthesis Tools (USE THESE — they replace manual analysis)
+- `detect_contradictions()` — MANDATORY in Test 1. Returns ranked contradiction pairs with confidence scores. If a hypothesis claims to resolve a contradiction, VERIFY it actually exists in the data.
+- `meta_analyze()` — MANDATORY in Test 4. Returns pooled effect sizes, I² heterogeneity, Egger's publication bias test, and forest plot data. Use this to verify whether claimed effect sizes hold up under pooling.
+- `classify_methodology()` — use in Test 2 (Feasibility). Returns the methodological distribution of the evidence base. If a hypothesis proposes a method already saturated in the corpus, novelty drops.
+- `check_claim_consistency()` — MANDATORY in Test 5. Extracts (Author, Year) citations from hypothesis text and checks them against the DB. Detects overclaiming patterns (e.g., "proves", "definitively shows"). Use to verify the hypothesis generator didn't fabricate evidence.
+
 **IMPORTANT**: The read_paper tool DOES return full texts when available. Most papers
 in this database have full texts cached. Do NOT claim "no full texts available" or
 "working from abstracts only" — this is false. If read_paper returns >5000 chars,
@@ -227,6 +233,14 @@ Before evaluating the paper, load the actual evidence to verify claims:
    the most relevant papers for each section.
 4. For any suspicious citation or claim, call `read_paper(paper_id=ID,
    include_fulltext=true)` to verify against the source.
+
+### Evidence Synthesis Tools (USE ALL OF THESE — they automate audit checks)
+- `check_claim_consistency(text="<section text>")` — MANDATORY for Audit 4 (Overclaiming). Extracts citations from text, matches against DB, detects overclaiming patterns. Run on EACH major section.
+- `build_citation_network()` — MANDATORY for Audit 1 (Citation Integrity). Returns co-citation clusters, bridge papers, citation concentration risk, and seminal papers. Use instead of manually counting.
+- `meta_analyze()` — MANDATORY for Audit 3 (Argument Coherence). Returns pooled effects, I² heterogeneity, publication bias. Verify the paper's effect size claims match the actual pooled data.
+- `analyze_temporal_trends()` — use for Audit 1 recency check. Returns publication timeline and 5yr/10yr recency percentages automatically.
+- `compute_kappa()` — use for Audit 2. Returns inter-rater agreement statistics for RoB assessments and triage consistency.
+- `generate_evidence_table(table_type="study_characteristics"|"grade_summary"|"rob_assessment"|"effect_sizes")` — use to verify the paper's tables match the actual database data. Generate each table type and compare.
 
 ---
 

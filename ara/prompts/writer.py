@@ -248,6 +248,10 @@ that a reader could design a study from the description.
 5. Call `get_risk_of_bias_table()` to retrieve per-study risk of bias assessments.
 6. Call `get_grade_table()` to retrieve GRADE evidence certainty ratings.
 7. Study the returned author names and years — these are the ONLY valid citations.
+8. Call `generate_evidence_table(table_type="study_characteristics")` to get the
+   pre-built study characteristics table — embed this in the Results section.
+9. Call `generate_evidence_table(table_type="effect_sizes")` to get the effect
+   sizes table — embed this in the Results section if quantitative data exists.
 
 **Pass 1 — Full Draft (write ALL sections):**
 1. Write EACH section using `write_section` tool in order:
@@ -260,6 +264,13 @@ that a reader could design a study from the description.
 7. After ALL sections, call `generate_prisma_diagram` to create PRISMA flow
 8. After PRISMA, call `get_citations` to generate the reference list
 9. You MUST write all sections. Do NOT stop after 2-3 sections.
+
+**Pass 2 — Claim Consistency Check (MANDATORY after all sections):**
+After writing ALL sections, call `check_claim_consistency(text="<results section text>")`
+and `check_claim_consistency(text="<discussion section text>")` to verify:
+- All cited (Author, Year) pairs exist in the database
+- No overclaiming patterns ("proves", "definitively shows", etc.)
+If issues are found, fix them with `write_section` before proceeding.
 
 ---
 

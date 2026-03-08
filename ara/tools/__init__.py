@@ -14,7 +14,7 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from .defs import TOOL_DEFINITIONS
-from . import search, papers, verification, research, writing, pipeline, quality, fulltext, economic_data, novelty
+from . import search, papers, verification, research, writing, pipeline, quality, fulltext, economic_data, novelty, analysis
 
 # Phase → allowed tool names (from arch.md §4.2)
 # "search_*" is a wildcard matching all search_ tools
@@ -23,14 +23,14 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "analyst_triage": ["list_papers", "read_paper", "rate_papers"],
     "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "assess_risk_of_bias", "search_similar", "list_papers", "list_claims"],
     "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "verify_claim"],
-    "hypothesis": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "score_hypothesis", "score_novelty", "identify_gaps", "get_risk_of_bias_table", "get_grade_table", "compute_effect_size", "check_journal_ranking"],
-    "brancher": ["search_*", "search_similar", "search_evidence", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "identify_gaps", "compute_effect_size", "check_journal_ranking"],
-    "critic": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "compute_effect_size", "check_journal_ranking"],
-    "synthesis": ["list_papers", "read_paper", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section"],
+    "hypothesis": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "score_hypothesis", "score_novelty", "identify_gaps", "get_risk_of_bias_table", "get_grade_table", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "map_theories", "classify_methodology"],
+    "brancher": ["search_*", "search_similar", "search_evidence", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "identify_gaps", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "map_theories", "classify_methodology"],
+    "critic": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "compute_effect_size", "check_journal_ranking", "detect_contradictions", "meta_analyze", "classify_methodology", "check_claim_consistency"],
+    "synthesis": ["list_papers", "read_paper", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section", "detect_contradictions", "build_citation_network", "classify_methodology", "aggregate_samples", "meta_analyze", "map_theories", "analyze_temporal_trends", "generate_evidence_table", "compute_kappa"],
     "protocol": ["list_papers", "write_section"],
-    "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "search_evidence", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table", "generate_prisma_diagram"],
+    "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "search_evidence", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table", "generate_prisma_diagram", "generate_evidence_table", "check_claim_consistency"],
     "advisory_board": ["write_section"],  # All data pre-gathered — advisory only needs to save the JSON plan
-    "paper_critic": ["read_paper", "search_similar", "search_evidence", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
+    "paper_critic": ["read_paper", "search_similar", "search_evidence", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section", "check_claim_consistency", "build_citation_network", "meta_analyze", "analyze_temporal_trends", "compute_kappa", "generate_evidence_table"],
 }
 
 
@@ -109,6 +109,17 @@ TOOL_DISPATCH: dict[str, Any] = {
     "validate_all_citations": quality.validate_all_citations,
     # Fulltext tools
     "batch_fetch_fulltext": fulltext.batch_fetch_fulltext,
+    # Analysis power tools (10 evidence synthesis & QA tools)
+    "detect_contradictions": analysis.detect_contradictions,
+    "build_citation_network": analysis.build_citation_network,
+    "classify_methodology": analysis.classify_methodology,
+    "aggregate_samples": analysis.aggregate_samples,
+    "meta_analyze": analysis.meta_analyze,
+    "map_theories": analysis.map_theories,
+    "analyze_temporal_trends": analysis.analyze_temporal_trends,
+    "generate_evidence_table": analysis.generate_evidence_table,
+    "check_claim_consistency": analysis.check_claim_consistency,
+    "compute_kappa": analysis.compute_kappa,
     # Embedding tools
     "batch_embed_papers": pipeline.batch_embed_papers,
     # Pipeline tools

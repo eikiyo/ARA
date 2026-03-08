@@ -26,11 +26,17 @@ Call ALL of these before generating any frameworks:
 - `search_similar(text="<theme>")` per major theoretical stream
 - `read_paper(paper_id=ID, include_fulltext=true)` for the 3-5 foundational papers
 
+### STEP 1b: Run Evidence Synthesis Tools (MANDATORY)
+- `map_theories()` — MANDATORY. Returns all theoretical frameworks detected across the corpus with paper mappings, co-occurrences, and underused theories. Use for Map 1.
+- `detect_contradictions()` — MANDATORY. Returns ranked contradiction pairs. Use for Map 3.
+- `classify_methodology()` — returns methodological distribution. Use for Map 4 absences.
+
 ---
 
 ### STEP 2: Four Evidence Maps (MANDATORY before ANY framework)
 
 #### Map 1: THEORY MAP — What frameworks exist
+Use `map_theories()` output to populate this. The tool has already identified all theories.
 | Theory/Framework | Key Scholars | What it explains | What it CANNOT explain |
 List the top 5-8 existing theories. The "cannot explain" column is where your contribution lives.
 
@@ -137,9 +143,19 @@ CONCEPTUAL_SYNTHESIS_PROMPT = """## Theoretical Synthesis Phase — Framework Da
 
 Your task is to organize ALL theoretical evidence the writer needs to build the conceptual framework. The writer should focus on ARGUMENTATION, not evidence compilation.
 
+### Step 0: Run Evidence Synthesis Tools (MANDATORY FIRST)
+
+Call ALL of these before organizing:
+- `map_theories()` — returns all theoretical frameworks in the corpus with paper mappings and co-occurrences. Use for Step 1 stream identification and Step 7 competing frameworks.
+- `detect_contradictions()` — returns ranked contradiction pairs. Use for Step 2 tension map.
+- `classify_methodology()` — returns methodological distribution. Use for method-related boundary conditions.
+- `build_citation_network()` — returns co-citation clusters, bridge papers, seminal papers. Use for Step 5 citation allocation.
+- `analyze_temporal_trends()` — returns publication timeline and recency stats.
+- `aggregate_samples()` — returns geographic distribution and sample statistics.
+
 ### Step 1: Map Theoretical Streams
 
-Call `list_papers(compact=true)` to get all papers. Organize them into 2-4 theoretical streams.
+Call `list_papers(compact=true)` to get all papers. Use `map_theories()` output to identify streams. Organize them into 2-4 theoretical streams.
 RULE: Only include streams that will DIRECTLY generate at least one proposition. If a stream doesn't contribute a proposition, merge it as a mechanism within another stream or drop it.
 
 **Stream 1: [Theory Name]** (e.g., Reverse Innovation Theory)
@@ -458,6 +474,13 @@ Your feedback is handed directly to the writer for revision. Vague feedback like
 - Give a CONCRETE example of what the revised text should look like
 - Specify WHICH papers from the database (Author, Year) should be cited WHERE
 - If a proposition is weak, write a BETTER version of it as an example
+
+### Evidence Synthesis Tools (USE ALL OF THESE — they automate evaluation)
+- `check_claim_consistency(text="<section text>")` — MANDATORY. Run on each major section to detect overclaiming and phantom citations.
+- `build_citation_network()` — MANDATORY. Returns citation concentration risk, co-citation clusters, bridge papers. Use for citation balance evaluation.
+- `analyze_temporal_trends()` — returns recency statistics. Use to check citation currency.
+- `compute_kappa()` — returns inter-rater agreement statistics. Use for methodological rigor assessment.
+- `generate_evidence_table(table_type="study_characteristics")` — generates the reference table. Compare against the paper's tables for accuracy.
 
 ### Evaluation Dimensions (score each 0.0-1.0)
 

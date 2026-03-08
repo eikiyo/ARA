@@ -859,4 +859,117 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    # ── Analysis power tools (10 evidence synthesis & QA tools) ──
+    {
+        "name": "detect_contradictions",
+        "description": "Find conflicting claims in the evidence base. Identifies claim pairs with opposing effect directions on the same topic. Use in Brancher (contradiction map), Hypothesis (contradiction map), and Synthesis (tension documentation).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "theme": {"type": "string", "description": "Optional theme to filter claims (e.g., 'trust', 'adoption')"},
+                "min_confidence": {"type": "number", "description": "Minimum claim confidence to include (default 0.5)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "build_citation_network",
+        "description": "Analyze citation patterns: co-citation clusters, seminal papers, bridge papers, citation concentration risk. Use in Synthesis (citation allocation) and Paper Critic (citation diversity audit).",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "classify_methodology",
+        "description": "Auto-classify papers by research methodology (RCT, cohort, cross-sectional, qualitative, mixed-methods, etc.) using abstract/claim keyword analysis. Returns distribution and diversity index.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "integer", "description": "Classify a single paper (optional — omit for batch)"},
+                "batch": {"type": "boolean", "description": "Classify all papers (default true)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "aggregate_samples",
+        "description": "Aggregate sample sizes, geographies, and populations across the evidence base. Returns total N, regional distribution, WEIRD bias %, sample size statistics.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "theme": {"type": "string", "description": "Optional theme to filter claims"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "meta_analyze",
+        "description": "Run meta-analysis on extracted effect sizes: inverse-variance weighted pooled estimate, I² heterogeneity, Q statistic, Egger's publication bias test, forest plot data. Requires >= 2 claims with numeric effect sizes.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "outcome": {"type": "string", "description": "Outcome theme to filter claims (e.g., 'financial inclusion')"},
+                "metric": {"type": "string", "enum": ["auto", "cohens_d", "odds_ratio", "correlation"], "description": "Effect size metric (default 'auto')"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "map_theories",
+        "description": "Extract and map theoretical frameworks (institutional theory, RBV, TAM, agency theory, etc.) used across the corpus. Returns theory-paper mapping, co-occurrence, and underused theories.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "integer", "description": "Map theories for a single paper (optional)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "analyze_temporal_trends",
+        "description": "Analyze publication trends, method evolution, and finding consistency over time. Returns timeline, recency stats, and method shifts between early and recent periods.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "theme": {"type": "string", "description": "Optional theme to filter analysis"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "generate_evidence_table",
+        "description": "Auto-generate structured evidence tables from DB data. Types: 'study_characteristics' (author, year, design, N, finding), 'grade_summary' (GRADE assessment), 'rob_assessment' (risk of bias), 'effect_sizes' (all reported effects).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table_type": {"type": "string", "enum": ["study_characteristics", "grade_summary", "rob_assessment", "effect_sizes"], "description": "Type of table to generate"},
+            },
+            "required": ["table_type"],
+        },
+    },
+    {
+        "name": "check_claim_consistency",
+        "description": "Cross-check written section text against actual DB claims. Detects phantom citations (not in DB), overclaiming patterns ('proves', 'all evidence'), and ungrounded assertions. Use in Paper Critic and Writer phases.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "section_text": {"type": "string", "description": "The written section text to check"},
+                "section_name": {"type": "string", "description": "Section name (e.g., 'introduction', 'discussion')"},
+            },
+            "required": ["section_text"],
+        },
+    },
+    {
+        "name": "compute_kappa",
+        "description": "Compute inter-rater reliability (Cohen's kappa) for RoB assessments or triage ratings. For RoB: compares individual bias dimensions against overall rating. Reports kappa, agreement, and interpretation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "assessment_type": {"type": "string", "enum": ["risk_of_bias", "triage"], "description": "Type of assessment to evaluate (default 'risk_of_bias')"},
+            },
+            "required": [],
+        },
+    },
 ]
