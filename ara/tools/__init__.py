@@ -14,7 +14,7 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 from .defs import TOOL_DEFINITIONS
-from . import search, papers, verification, research, writing, pipeline, quality, fulltext
+from . import search, papers, verification, research, writing, pipeline, quality, fulltext, economic_data, novelty
 
 # Phase → allowed tool names (from arch.md §4.2)
 # "search_*" is a wildcard matching all search_ tools
@@ -23,9 +23,9 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "analyst_triage": ["list_papers", "read_paper", "rate_papers"],
     "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "assess_risk_of_bias", "search_similar", "list_papers", "list_claims"],
     "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "verify_claim"],
-    "hypothesis": ["read_paper", "list_papers", "score_hypothesis", "get_risk_of_bias_table", "get_grade_table"],
-    "brancher": ["search_*", "search_similar", "search_evidence", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table"],
-    "critic": ["read_paper", "list_papers", "get_risk_of_bias_table", "get_grade_table"],
+    "hypothesis": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "score_hypothesis", "score_novelty", "identify_gaps", "get_risk_of_bias_table", "get_grade_table", "compute_effect_size", "check_journal_ranking"],
+    "brancher": ["search_*", "search_similar", "search_evidence", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "identify_gaps", "compute_effect_size", "check_journal_ranking"],
+    "critic": ["read_paper", "list_papers", "list_claims", "search_similar", "search_evidence", "get_risk_of_bias_table", "get_grade_table", "score_novelty", "compute_effect_size", "check_journal_ranking"],
     "synthesis": ["list_papers", "read_paper", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section"],
     "protocol": ["list_papers", "write_section"],
     "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "search_evidence", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table", "generate_prisma_diagram"],
@@ -55,6 +55,26 @@ TOOL_DISPATCH: dict[str, Any] = {
     "search_base": search.search_base,
     "search_all": search.search_all,
     "snowball_references": search.snowball_references,
+    # Economic data tools (7 IFC/economic sources)
+    "search_world_bank": economic_data.search_world_bank,
+    "search_fred": economic_data.search_fred,
+    "search_imf": economic_data.search_imf,
+    "search_oecd": economic_data.search_oecd,
+    "search_comtrade": economic_data.search_comtrade,
+    "search_eurostat": economic_data.search_eurostat,
+    "search_countries": economic_data.search_countries,
+    # Tier 1 data tools
+    "search_exchange_rates": economic_data.search_exchange_rates,
+    "search_patents": economic_data.search_patents,
+    "search_wto": economic_data.search_wto,
+    "search_transparency": economic_data.search_transparency,
+    # Tier 2 data tools
+    "search_sec_edgar": economic_data.search_sec_edgar,
+    "search_open_corporates": economic_data.search_open_corporates,
+    "search_un_sdg": economic_data.search_un_sdg,
+    "search_who": economic_data.search_who,
+    "search_ilo": economic_data.search_ilo,
+    "search_air_quality": economic_data.search_air_quality,
     # Paper tools
     "fetch_fulltext": papers.fetch_fulltext,
     "read_paper": papers.read_paper,
@@ -76,6 +96,11 @@ TOOL_DISPATCH: dict[str, Any] = {
     "get_grade_table": research.get_grade_table,
     "score_hypothesis": research.score_hypothesis,
     "branch_search": research.branch_search,
+    # Novelty & gap analysis tools
+    "score_novelty": novelty.score_novelty,
+    "identify_gaps": novelty.identify_gaps,
+    "compute_effect_size": novelty.compute_effect_size,
+    "check_journal_ranking": novelty.check_journal_ranking,
     # Writing tools
     "write_section": writing.write_section,
     "get_citations": writing.get_citations,

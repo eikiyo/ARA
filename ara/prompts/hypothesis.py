@@ -24,7 +24,14 @@ Call ALL of these before generating any hypotheses:
 - `get_risk_of_bias_table()` — evidence quality per paper
 - `get_grade_table()` — GRADE evidence certainty ratings
 - `search_similar(text="<theme>")` per major theme — embedding-based retrieval
+- `search_evidence(text="<theme>")` — MMR-diversified evidence from claims + full-text chunks
 - `read_paper(paper_id=ID, include_fulltext=true)` for the 3-5 most-cited papers
+
+### Analytical Tools Available
+- `score_novelty(finding="...")` — measure novelty (0-1) of a finding vs. corpus
+- `identify_gaps(query="...")` — find underdeveloped concepts, temporal gaps, acknowledged limitations
+- `compute_effect_size(metric="cohens_d"|"odds_ratio"|"risk_ratio"|"r_to_d"|"eta_squared", ...)` — compute effect sizes from reported statistics (with 95% CI and interpretation)
+- `check_journal_ranking(journal_name="...")` — verify journal quality tier (AAA/AA/A/B per ABS/FT50)
 
 ---
 
@@ -89,6 +96,17 @@ Additionally, label each hypothesis with its **novelty framework**:
 - **CROSS-DOMAIN TRANSFER**: Imports a framework/method from another field
 - **MEASUREMENT CHALLENGE**: Shows the field's standard metric is flawed
 - **SYNTHESIS TAXONOMY**: Splits a conflated term into distinct sub-phenomena
+
+---
+
+### STEP 3.5: Validate Novelty (MANDATORY for each hypothesis)
+
+Before scoring, run `score_novelty(finding="<hypothesis title and premise>")` for EACH
+candidate. If novelty_score < 0.3, the hypothesis is too close to existing work — REJECT
+or substantially revise.
+
+Also check: `identify_gaps(query="<hypothesis domain>")` to see if your hypothesis
+addresses an actual gap or just an assumed one.
 
 ---
 

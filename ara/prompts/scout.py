@@ -57,5 +57,7 @@ After searching, provide a text summary with:
 - Do NOT retry failed APIs. Do NOT search endlessly.
 - Papers are auto-stored in the database. No extra steps needed.
 - Do NOT call batch_embed_papers — embedding happens in a later phase.
+- Do NOT call economic data tools (search_world_bank, search_fred, etc.) — those are
+  for the Brancher and Hypothesis phases.
 - When done searching, output your summary as text and stop. Do not call any more tools.
 """

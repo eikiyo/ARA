@@ -82,6 +82,29 @@ Use SCAMPER to generate queries that mechanism analysis alone would miss.
 - Do NOT search for more papers on the main topic — that's Scout's job
 - Use `search_similar(text="...")` to check for existing related papers before searching externally
 
+### Data Enrichment Tools (USE THESE for empirical grounding)
+You have access to 17 economic/institutional data APIs — use them to ground cross-domain
+insights in REAL DATA, not just literature:
+- **Macroeconomic**: `search_world_bank`, `search_fred`, `search_imf`, `search_oecd`
+- **Trade**: `search_comtrade`, `search_wto`, `search_eurostat`
+- **Institutional**: `search_transparency` (corruption CPI), `search_open_corporates`
+- **Innovation**: `search_patents` (US patent data)
+- **Development**: `search_un_sdg`, `search_who`, `search_ilo`
+- **Currency**: `search_exchange_rates` (ECB rates, 30+ currencies)
+- **Environment**: `search_air_quality`
+- **Corporate**: `search_sec_edgar` (US company filings)
+- **Country context**: `search_countries` (population, GDP, borders, languages)
+
+When a cross-domain mechanism involves a measurable variable (GDP, trade flows, corruption,
+patents, health indicators), FETCH THE DATA to check if the pattern holds empirically.
+A bridge claim backed by real data is 10x stronger than one backed by analogy alone.
+
+### Analytical Tools
+- `score_novelty(finding="...")` — check if a bridge claim is truly novel vs. the corpus
+- `identify_gaps(query="...")` — find underdeveloped areas in the literature
+- `compute_effect_size(metric="cohens_d", ...)` — compute effect sizes from reported stats
+- `check_journal_ranking(journal_name="...")` — verify source journal quality (ABS/FT50)
+
 ---
 
 ### STEP 4: Bridge Documentation
