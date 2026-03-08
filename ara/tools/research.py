@@ -15,7 +15,7 @@ _log = logging.getLogger(__name__)
 
 
 def _embed_new_claims(central_db: Any, paper_title: str) -> None:
-    """Embed claims for a paper that don't yet have embeddings in central DB."""
+    """Embed claims for a paper and hot-append into the live MMR cache."""
     try:
         claims = central_db.get_claims_for_paper_by_title(paper_title)
         need_embed = [c for c in claims if not c.get("embedding")]
@@ -29,9 +29,11 @@ def _embed_new_claims(central_db: Any, paper_title: str) -> None:
         from google import genai
         client = genai.Client(api_key=api_key)
 
-        # Batch embed up to 50 claims at a time
         _BATCH = 50
         embedded = 0
+        new_cache_items: list[dict] = []
+        new_cache_embeddings: list[list[float]] = []
+
         for i in range(0, len(need_embed), _BATCH):
             batch = need_embed[i:i + _BATCH]
             texts = [c["claim_text"][:500] for c in batch]
@@ -39,14 +41,22 @@ def _embed_new_claims(central_db: Any, paper_title: str) -> None:
                 result = client.models.embed_content(model="gemini-embedding-001", contents=texts)
                 if result.embeddings:
                     for claim, emb_obj in zip(batch, result.embeddings):
-                        central_db.store_claim_embedding(claim["claim_id"], emb_obj.values)
+                        emb_values = emb_obj.values
+                        central_db.store_claim_embedding(claim["claim_id"], emb_values)
                         embedded += 1
+                        # Collect for hot cache append
+                        cache_item = {k: v for k, v in claim.items() if k != "embedding"}
+                        new_cache_items.append(cache_item)
+                        new_cache_embeddings.append(emb_values)
             except Exception as exc:
                 _log.debug("Claim embedding batch failed: %s", exc)
                 break
 
         if embedded:
-            _log.info("Embedded %d/%d claims for '%s'", embedded, len(need_embed), paper_title[:60])
+            # Hot-append into live cache — immediate MMR availability
+            central_db.extend_embedding_cache("claims", new_cache_items, new_cache_embeddings)
+            _log.info("Embedded %d/%d claims for '%s', hot-appended to cache",
+                       embedded, len(need_embed), paper_title[:60])
     except Exception as exc:
         _log.debug("_embed_new_claims failed: %s", exc)
 

@@ -173,6 +173,7 @@ def search_and_store(central_db: CentralDB, query: str, api_key: str) -> dict:
                 break
             data = resp.json()
 
+            page_new = 0  # Track new papers on this page
             for item in data.get("organic_results", []):
                 title = item.get("title", "")
                 if not title:
@@ -249,6 +250,7 @@ def search_and_store(central_db: CentralDB, query: str, api_key: str) -> dict:
                 result = central_db.store_papers([paper])
                 if result.get("stored", 0) > 0:
                     stats["new"] += 1
+                    page_new += 1
 
                     # Download PDF
                     pdf_urls = [r.get("link", "") for r in item.get("resources", []) if r.get("link")]
@@ -269,6 +271,12 @@ def search_and_store(central_db: CentralDB, query: str, api_key: str) -> dict:
         except Exception as exc:
             _log.warning("SerpAPI error: %s", exc)
             break
+
+        # Early exit: if page 1 had zero new papers, skip pages 2-3 (all duplicates)
+        if page == 0 and page_new == 0:
+            _log.info("  Page 1 all duplicates — skipping remaining pages to save SerpAPI budget")
+            break
+
         time.sleep(1.5)
 
     return stats

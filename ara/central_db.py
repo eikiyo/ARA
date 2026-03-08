@@ -227,6 +227,11 @@ class CentralDB:
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(papers)").fetchall()}
         if "unpaywall_checked" not in cols:
             self._conn.execute("ALTER TABLE papers ADD COLUMN unpaywall_checked INTEGER DEFAULT 0")
+        # Add journal_tier column if missing + backfill from DOI classification
+        if "journal_tier" not in cols:
+            self._conn.execute("ALTER TABLE papers ADD COLUMN journal_tier TEXT")
+            self._conn.execute("ALTER TABLE papers ADD COLUMN journal_name TEXT")
+            self._backfill_journal_tiers()
         # Add embedding + fully_extracted columns to claims if missing
         claim_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(claims)").fetchall()}
         if "embedding" not in claim_cols:
@@ -235,6 +240,64 @@ class CentralDB:
             self._conn.execute("ALTER TABLE claims ADD COLUMN fully_extracted INTEGER DEFAULT 0")
         # Purge blacklisted papers from central DB
         self._purge_blacklisted()
+
+    def _backfill_journal_tiers(self) -> None:
+        """One-time backfill: classify all papers with DOIs by journal tier."""
+        from .db import classify_journal
+        rows = self._conn.execute(
+            "SELECT paper_id, doi FROM papers WHERE doi IS NOT NULL AND doi != ''"
+        ).fetchall()
+        classified = 0
+        for r in rows:
+            j_name, j_tier = classify_journal(r[1])
+            if j_tier:
+                self._conn.execute(
+                    "UPDATE papers SET journal_tier = ?, journal_name = ? WHERE paper_id = ?",
+                    (j_tier, j_name, r[0]),
+                )
+                classified += 1
+        self._conn.commit()
+        _log.info("Central DB: backfilled journal tiers — %d/%d papers classified", classified, len(rows))
+
+    def get_top_tier_papers(self, tier: str = "AAA", limit: int = 100) -> list[dict]:
+        """Get all papers from a specific journal tier."""
+        rows = self._conn.execute(
+            "SELECT paper_id, title, abstract, authors, year, doi, journal_name, journal_tier, citation_count "
+            "FROM papers WHERE journal_tier = ? ORDER BY citation_count DESC LIMIT ?",
+            (tier, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_top_tier_relevant(self, query_embedding: list[float], tiers: list[str] | None = None,
+                                  limit: int = 20, min_cosine: float = 0.40) -> list[dict]:
+        """MMR search filtered to top-tier journal papers only."""
+        if tiers is None:
+            tiers = ["AAA", "AA"]
+        # Get all top-tier paper IDs
+        placeholders = ",".join("?" * len(tiers))
+        tier_ids = {r[0] for r in self._conn.execute(
+            f"SELECT paper_id FROM papers WHERE journal_tier IN ({placeholders})", tiers,
+        ).fetchall()}
+        if not tier_ids:
+            return []
+
+        # Search claims from top-tier papers using MMR
+        all_claims = self.search_claims_mmr(
+            query_embedding, limit=limit * 3, min_cosine=min_cosine, lam=0.7, paper_cap=2,
+        )
+        # Filter to only top-tier paper claims
+        # Claims store paper_title, need to map to paper_ids
+        tier_titles = {r[1].lower() for r in self._conn.execute(
+            f"SELECT paper_id, title FROM papers WHERE journal_tier IN ({placeholders})", tiers,
+        ).fetchall()}
+
+        top_tier_claims = []
+        for c in all_claims:
+            if c.get("paper_title", "").lower() in tier_titles:
+                top_tier_claims.append(c)
+                if len(top_tier_claims) >= limit:
+                    break
+        return top_tier_claims
 
     def _purge_blacklisted(self) -> None:
         """Delete all papers from blacklisted publishers, including their claims, chunks, and embeddings."""
@@ -969,6 +1032,39 @@ class CentralDB:
             self._chunk_emb_cache = None
         if table in ("papers", "all"):
             self._paper_emb_cache = None
+
+    def extend_embedding_cache(self, table: str, new_items: list[dict], new_embeddings: list[list[float]]) -> None:
+        """Append new embeddings directly into the live cache — no cold reload needed.
+        If cache isn't loaded yet, stores for next load. Thread-safe via GIL."""
+        if not new_items or not new_embeddings:
+            return
+        try:
+            import numpy as np
+
+            cache_attr = f"_{table}_emb_cache"
+            cached = getattr(self, cache_attr, None)
+
+            new_embs_np = np.array(new_embeddings, dtype=np.float32)
+            norms = np.linalg.norm(new_embs_np, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            new_embs_normed = new_embs_np / norms
+
+            if cached is not None and cached[1] is not None:
+                old_items, old_normed, old_raw = cached
+                merged_items = old_items + new_items
+                merged_normed = np.vstack([old_normed, new_embs_normed])
+                merged_raw = old_raw + new_embeddings
+                setattr(self, cache_attr, (merged_items, merged_normed, merged_raw))
+                _log.info("Extended %s cache: %d → %d items (hot append)",
+                          table, len(old_items), len(merged_items))
+            else:
+                # Cache not loaded yet — invalidate so next load picks up new data
+                setattr(self, cache_attr, None)
+                _log.info("Cache not loaded for %s — will include %d new items on next load",
+                          table, len(new_items))
+        except Exception as exc:
+            _log.warning("extend_embedding_cache failed for %s: %s — invalidating", table, exc)
+            setattr(self, f"_{table}_emb_cache", None)
 
     def _cached_mmr_search(
         self, table: str, query_embedding: list[float],

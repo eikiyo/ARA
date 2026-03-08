@@ -79,6 +79,36 @@ def _strip_xml(xml: str) -> str | None:
     return text[:_MAX_FULLTEXT_CHARS] if len(text) > 200 else None
 
 
+_CHUNK_CHARS = 2000
+_CHUNK_OVERLAP = 200
+
+
+def _chunk_text(text: str, chunk_chars: int = _CHUNK_CHARS, overlap: int = _CHUNK_OVERLAP) -> list[str]:
+    """Split text into overlapping chunks at sentence boundaries."""
+    if not text or len(text) < 200:
+        return []
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_chars
+        if end < len(text):
+            search_start = end - int(chunk_chars * 0.2)
+            best_break = -1
+            for sep in ['. ', '.\n', '? ', '! ', '\n\n']:
+                pos = text.rfind(sep, search_start, end)
+                if pos > best_break:
+                    best_break = pos + len(sep)
+            if best_break > search_start:
+                end = best_break
+        chunk = text[start:end].strip()
+        if len(chunk) >= 100:
+            chunks.append(chunk)
+        start = end - overlap
+        if start >= len(text):
+            break
+    return chunks
+
+
 # ══════════════════════════════════════════════════════════════════════
 # SOURCE 1: Semantic Scholar (batch 500 DOIs/call)
 # ══════════════════════════════════════════════════════════════════════
@@ -98,7 +128,7 @@ def _fetch_s2_batch(dois: list[str]) -> dict[str, str]:
                 resp = client.post(
                     "https://api.semanticscholar.org/graph/v1/paper/batch",
                     json={"ids": ids},
-                    params={"fields": "externalIds,openAccessPdf"},
+                    params={"fields": "externalIds,openAccessPdf,abstract,tldr"},
                     headers=headers,
                 )
                 client.close()
@@ -107,16 +137,42 @@ def _fetch_s2_batch(dois: list[str]) -> dict[str, str]:
                     continue
                 if resp.status_code != 200:
                     break
+
+                # Collect PDF URLs for parallel download + abstracts as fallback
+                pdf_tasks: list[tuple[str, str]] = []
                 for paper in resp.json():
                     if not paper or not isinstance(paper, dict):
                         continue
+                    paper_doi = (paper.get("externalIds") or {}).get("DOI", "")
+                    if not paper_doi:
+                        continue
+                    doi_lower = paper_doi.lower()
+
+                    # Store abstract/tldr as fallback immediately
+                    abstract = paper.get("abstract") or ""
+                    tldr = (paper.get("tldr") or {}).get("text", "")
+                    fallback = abstract or tldr
+                    if fallback and len(fallback) > 100 and doi_lower not in results:
+                        results[doi_lower] = fallback[:_MAX_FULLTEXT_CHARS]
+
+                    # Queue PDF for parallel download (will overwrite abstract)
                     pdf_url = (paper.get("openAccessPdf") or {}).get("url")
                     if pdf_url:
-                        paper_doi = (paper.get("externalIds") or {}).get("DOI", "")
-                        if paper_doi:
-                            text = _download_and_extract(pdf_url)
-                            if text:
-                                results[paper_doi.lower()] = text
+                        pdf_tasks.append((doi_lower, pdf_url))
+
+                # Parallel PDF downloads (10 concurrent)
+                if pdf_tasks:
+                    with ThreadPoolExecutor(max_workers=10) as pool:
+                        futures = {pool.submit(_download_and_extract, url): doi
+                                   for doi, url in pdf_tasks}
+                        for fut in as_completed(futures, timeout=120):
+                            doi_key = futures[fut]
+                            try:
+                                text = fut.result()
+                                if text:
+                                    results[doi_key] = text  # Full text overwrites abstract
+                            except Exception:
+                                pass
                 break
             except Exception:
                 if attempt < 2:
@@ -172,7 +228,8 @@ def _fetch_openalex_batch(dois: list[str]) -> dict[str, str]:
 
 def _fetch_epmc_batch(dois: list[str]) -> dict[str, str]:
     results: dict[str, str] = {}
-    batch_size = 20
+    lock = _th.Lock()
+    batch_size = 100  # Europe PMC supports up to 1000
     for i in range(0, len(dois), batch_size):
         batch = dois[i:i + batch_size]
         query = " OR ".join(f'DOI:"{d}"' for d in batch)
@@ -184,11 +241,17 @@ def _fetch_epmc_batch(dois: list[str]) -> dict[str, str]:
             )
             if resp.status_code != 200:
                 continue
+
+            # Collect PMC IDs for parallel fulltext fetch
+            pmc_tasks: list[tuple[str, str]] = []
             for item in resp.json().get("resultList", {}).get("result", []):
                 item_doi = (item.get("doi") or "").lower()
                 pmcid = item.get("pmcid")
-                if not pmcid or not item_doi:
-                    continue
+                if pmcid and item_doi:
+                    pmc_tasks.append((item_doi, pmcid))
+
+            def _fetch_xml(task: tuple[str, str]) -> None:
+                doi, pmcid = task
                 try:
                     ft_resp = rate_limited_get(
                         f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML",
@@ -197,9 +260,14 @@ def _fetch_epmc_batch(dois: list[str]) -> dict[str, str]:
                     if ft_resp.status_code == 200:
                         text = _strip_xml(ft_resp.text)
                         if text:
-                            results[item_doi] = text
+                            with lock:
+                                results[doi] = text
                 except Exception:
                     pass
+
+            if pmc_tasks:
+                with ThreadPoolExecutor(max_workers=10) as pool:
+                    list(pool.map(_fetch_xml, pmc_tasks))
         except Exception:
             pass
     return results
@@ -211,8 +279,8 @@ def _fetch_epmc_batch(dois: list[str]) -> dict[str, str]:
 
 def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
     results: dict[str, str] = {}
-    batch_size = 20
-    dois = dois[:150]
+    batch_size = 100  # CORE v3 supports up to 100 per call
+    dois = dois[:300]
     for i in range(0, len(dois), batch_size):
         batch = dois[i:i + batch_size]
         query = " OR ".join(f'doi:"{d}"' for d in batch)
@@ -222,13 +290,16 @@ def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
                     "https://api.core.ac.uk/v3/search/works",
                     headers={"Authorization": f"Bearer {api_key}"},
                     params={"q": query, "limit": batch_size},
-                    timeout=15,
+                    timeout=30,
                 )
                 if resp.status_code == 429:
                     time.sleep(5 * (attempt + 1))
                     continue
                 if resp.status_code != 200:
                     break
+
+                # Collect items with downloadUrl for parallel fetch
+                download_tasks: list[tuple[str, str]] = []
                 for item in resp.json().get("results", []):
                     item_doi = _normalize_doi(item.get("doi", ""))
                     if not item_doi:
@@ -237,9 +308,21 @@ def _fetch_core_batch(dois: list[str], api_key: str) -> dict[str, str]:
                     if full_text and len(full_text) > 200:
                         results[item_doi] = full_text[:_MAX_FULLTEXT_CHARS]
                     elif item.get("downloadUrl"):
-                        text = _download_and_extract(item["downloadUrl"])
-                        if text:
-                            results[item_doi] = text
+                        download_tasks.append((item_doi, item["downloadUrl"]))
+
+                # Parallel download for items without inline fullText
+                if download_tasks:
+                    with ThreadPoolExecutor(max_workers=8) as pool:
+                        futures = {pool.submit(_download_and_extract, url): doi
+                                   for doi, url in download_tasks}
+                        for fut in as_completed(futures, timeout=60):
+                            doi_key = futures[fut]
+                            try:
+                                text = fut.result()
+                                if text:
+                                    results[doi_key] = text
+                            except Exception:
+                                pass
                 break
             except Exception:
                 if attempt < 2:
@@ -306,9 +389,13 @@ _UNPAYWALL_EMAILS = ["syedmosayebalam@gmail.com", "eikiyo.netflix@gmail.com"]
 
 def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
     results: dict[str, str] = {}
-    current_email = email
-    dois = dois[:150]
-    for doi in dois:
+    lock = _th.Lock()
+    email_idx = [0]  # mutable for threads
+    dois = dois[:200]
+
+    def _fetch_one(doi: str) -> None:
+        eidx = email_idx[0] % len(_UNPAYWALL_EMAILS)
+        current_email = _UNPAYWALL_EMAILS[eidx]
         for attempt in range(2):
             try:
                 resp = rate_limited_get(
@@ -316,8 +403,8 @@ def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
                     params={"email": current_email}, timeout=15,
                 )
                 if resp.status_code == 429 or resp.status_code == 422:
-                    idx = _UNPAYWALL_EMAILS.index(current_email) if current_email in _UNPAYWALL_EMAILS else -1
-                    current_email = _UNPAYWALL_EMAILS[(idx + 1) % len(_UNPAYWALL_EMAILS)]
+                    email_idx[0] += 1
+                    current_email = _UNPAYWALL_EMAILS[email_idx[0] % len(_UNPAYWALL_EMAILS)]
                     time.sleep(2)
                     continue
                 if resp.status_code != 200:
@@ -327,10 +414,14 @@ def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
                 if url:
                     text = _download_and_extract(url)
                     if text:
-                        results[doi] = text
+                        with lock:
+                            results[doi] = text
                 break
             except Exception:
                 break
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        list(pool.map(_fetch_one, dois))
     return results
 
 
@@ -339,10 +430,12 @@ def _fetch_unpaywall_batch(dois: list[str], email: str) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_crossref_tdm(dois: list[str]) -> dict[str, str]:
-    """CrossRef text-and-data-mining links → direct full text."""
+    """CrossRef text-and-data-mining links → direct full text (parallelized)."""
     results: dict[str, str] = {}
-    dois = dois[:100]
-    for doi in dois:
+    lock = _th.Lock()
+    dois = dois[:200]
+
+    def _fetch_one(doi: str) -> None:
         try:
             resp = rate_limited_get(
                 f"https://api.crossref.org/works/{doi}",
@@ -350,7 +443,7 @@ def _fetch_crossref_tdm(dois: list[str]) -> dict[str, str]:
                 timeout=15,
             )
             if resp.status_code != 200:
-                continue
+                return
             links = resp.json().get("message", {}).get("link", [])
             for link in links:
                 ct = link.get("content-type", "")
@@ -358,10 +451,14 @@ def _fetch_crossref_tdm(dois: list[str]) -> dict[str, str]:
                 if url and ("xml" in ct or "plain" in ct or "pdf" in ct):
                     text = _download_and_extract(url)
                     if text:
-                        results[doi] = text
+                        with lock:
+                            results[doi] = text
                         break
         except Exception:
             pass
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        list(pool.map(_fetch_one, dois))
     return results
 
 
@@ -370,40 +467,50 @@ def _fetch_crossref_tdm(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_arxiv_batch(dois: list[str]) -> dict[str, str]:
-    """arXiv: extract arXiv IDs from DOIs and fetch PDFs directly."""
+    """arXiv: extract arXiv IDs from DOIs and fetch PDFs directly (parallelized)."""
     results: dict[str, str] = {}
+    lock = _th.Lock()
     # arXiv DOIs look like 10.48550/arXiv.XXXX.XXXXX
     arxiv_dois = [(d, re.search(r'arxiv\.(\d+\.\d+)', d, re.I)) for d in dois]
     arxiv_papers = [(d, m.group(1)) for d, m in arxiv_dois if m]
 
-    for doi, arxiv_id in arxiv_papers[:100]:
+    def _fetch_pdf(task: tuple[str, str]) -> None:
+        doi, arxiv_id = task
         try:
             text = _download_and_extract(f"https://arxiv.org/pdf/{arxiv_id}")
             if text:
-                results[doi] = text
+                with lock:
+                    results[doi] = text
         except Exception:
             pass
-        time.sleep(0.5)
+
+    if arxiv_papers:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(_fetch_pdf, arxiv_papers[:100]))
 
     # Also try S2 to find arXiv PDFs for non-arXiv DOIs
     non_arxiv = [d for d in dois if not any(d == ad[0] for ad in arxiv_papers)]
-    if non_arxiv:
-        for doi in non_arxiv[:50]:
-            try:
-                resp = rate_limited_get(
-                    f"https://export.arxiv.org/api/query?search_query=doi:{doi}&max_results=1",
-                    timeout=15,
-                )
-                if resp.status_code == 200 and "<entry>" in resp.text:
-                    id_match = re.search(r'<id>http://arxiv.org/abs/([^<]+)</id>', resp.text)
-                    if id_match:
-                        arxiv_id = id_match.group(1)
-                        text = _download_and_extract(f"https://arxiv.org/pdf/{arxiv_id}")
-                        if text:
+
+    def _search_arxiv(doi: str) -> None:
+        try:
+            resp = rate_limited_get(
+                f"https://export.arxiv.org/api/query?search_query=doi:{doi}&max_results=1",
+                timeout=15,
+            )
+            if resp.status_code == 200 and "<entry>" in resp.text:
+                id_match = re.search(r'<id>http://arxiv.org/abs/([^<]+)</id>', resp.text)
+                if id_match:
+                    arxiv_id = id_match.group(1)
+                    text = _download_and_extract(f"https://arxiv.org/pdf/{arxiv_id}")
+                    if text:
+                        with lock:
                             results[doi] = text
-            except Exception:
-                pass
-            time.sleep(1)
+        except Exception:
+            pass
+
+    if non_arxiv:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(_search_arxiv, non_arxiv[:50]))
     return results
 
 
@@ -412,21 +519,25 @@ def _fetch_arxiv_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_biorxiv_batch(dois: list[str]) -> dict[str, str]:
-    """bioRxiv/medRxiv: DOI → direct PDF download."""
+    """bioRxiv/medRxiv: DOI → direct PDF download (parallelized)."""
     results: dict[str, str] = {}
+    lock = _th.Lock()
     biorxiv_dois = [d for d in dois if "10.1101/" in d]
-    for doi in biorxiv_dois[:100]:
+
+    def _fetch_one(doi: str) -> None:
         try:
-            pdf_url = f"https://www.biorxiv.org/content/{doi}v1.full.pdf"
-            text = _download_and_extract(pdf_url)
+            text = _download_and_extract(f"https://www.biorxiv.org/content/{doi}v1.full.pdf")
             if not text:
-                pdf_url = f"https://www.medrxiv.org/content/{doi}v1.full.pdf"
-                text = _download_and_extract(pdf_url)
+                text = _download_and_extract(f"https://www.medrxiv.org/content/{doi}v1.full.pdf")
             if text:
-                results[doi] = text
+                with lock:
+                    results[doi] = text
         except Exception:
             pass
-        time.sleep(0.5)
+
+    if biorxiv_dois:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(_fetch_one, biorxiv_dois[:100]))
     return results
 
 
@@ -435,16 +546,18 @@ def _fetch_biorxiv_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_doaj_batch(dois: list[str]) -> dict[str, str]:
-    """DOAJ: search by DOI, get full text link."""
+    """DOAJ: search by DOI, get full text link (parallelized)."""
     results: dict[str, str] = {}
-    for doi in dois[:80]:
+    lock = _th.Lock()
+
+    def _fetch_one(doi: str) -> None:
         try:
             resp = rate_limited_get(
                 f"https://doaj.org/api/search/articles/doi:{doi}",
                 timeout=15,
             )
             if resp.status_code != 200:
-                continue
+                return
             items = resp.json().get("results", [])
             if items:
                 bibjson = items[0].get("bibjson", {})
@@ -454,10 +567,14 @@ def _fetch_doaj_batch(dois: list[str]) -> dict[str, str]:
                     if url:
                         text = _download_and_extract(url)
                         if text:
-                            results[doi] = text
+                            with lock:
+                                results[doi] = text
                             break
         except Exception:
             pass
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_fetch_one, dois[:100]))
     return results
 
 
@@ -466,22 +583,23 @@ def _fetch_doaj_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_zenodo_batch(dois: list[str]) -> dict[str, str]:
-    """Zenodo: DOI lookup → download attached PDF."""
+    """Zenodo: DOI lookup → download attached PDF (parallelized)."""
     results: dict[str, str] = {}
+    lock = _th.Lock()
     zenodo_dois = [d for d in dois if "zenodo" in d.lower()]
-    for doi in zenodo_dois[:50]:
+
+    def _fetch_one(doi: str) -> None:
         try:
-            # Extract Zenodo record ID from DOI
             match = re.search(r'zenodo\.(\d+)', doi, re.I)
             if not match:
-                continue
+                return
             record_id = match.group(1)
             resp = rate_limited_get(
                 f"https://zenodo.org/api/records/{record_id}",
                 timeout=15,
             )
             if resp.status_code != 200:
-                continue
+                return
             files = resp.json().get("files", [])
             for f in files:
                 if f.get("key", "").endswith(".pdf"):
@@ -489,10 +607,15 @@ def _fetch_zenodo_batch(dois: list[str]) -> dict[str, str]:
                     if url:
                         text = _download_and_extract(url)
                         if text:
-                            results[doi] = text
+                            with lock:
+                                results[doi] = text
                             break
         except Exception:
             pass
+
+    if zenodo_dois:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(_fetch_one, zenodo_dois[:50]))
     return results
 
 
@@ -501,9 +624,11 @@ def _fetch_zenodo_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_hal_batch(dois: list[str]) -> dict[str, str]:
-    """HAL: search by DOI, get PDF if available."""
+    """HAL: search by DOI, get PDF if available (parallelized)."""
     results: dict[str, str] = {}
-    for doi in dois[:80]:
+    lock = _th.Lock()
+
+    def _fetch_one(doi: str) -> None:
         try:
             resp = rate_limited_get(
                 "https://api.archives-ouvertes.fr/search/",
@@ -511,16 +636,20 @@ def _fetch_hal_batch(dois: list[str]) -> dict[str, str]:
                 timeout=15,
             )
             if resp.status_code != 200:
-                continue
+                return
             docs = resp.json().get("response", {}).get("docs", [])
             if docs:
                 pdf_url = docs[0].get("fileMain_s") or docs[0].get("uri_s")
                 if pdf_url:
                     text = _download_and_extract(pdf_url)
                     if text:
-                        results[doi] = text
+                        with lock:
+                            results[doi] = text
         except Exception:
             pass
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_fetch_one, dois[:100]))
     return results
 
 
@@ -529,9 +658,11 @@ def _fetch_hal_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_dblp_batch(dois: list[str]) -> dict[str, str]:
-    """DBLP: DOI lookup → electronic edition link → PDF."""
+    """DBLP: DOI lookup → electronic edition link → PDF (parallelized)."""
     results: dict[str, str] = {}
-    for doi in dois[:80]:
+    lock = _th.Lock()
+
+    def _fetch_one(doi: str) -> None:
         try:
             resp = rate_limited_get(
                 "https://dblp.org/search/publ/api",
@@ -539,7 +670,7 @@ def _fetch_dblp_batch(dois: list[str]) -> dict[str, str]:
                 timeout=15,
             )
             if resp.status_code != 200:
-                continue
+                return
             hits = resp.json().get("result", {}).get("hits", {}).get("hit", [])
             if hits:
                 info = hits[0].get("info", {})
@@ -549,9 +680,13 @@ def _fetch_dblp_batch(dois: list[str]) -> dict[str, str]:
                 if ee:
                     text = _download_and_extract(ee)
                     if text:
-                        results[doi] = text
+                        with lock:
+                            results[doi] = text
         except Exception:
             pass
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_fetch_one, dois[:100]))
     return results
 
 
@@ -560,9 +695,11 @@ def _fetch_dblp_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_base_batch(dois: list[str]) -> dict[str, str]:
-    """BASE: search by DOI → OA full text link."""
+    """BASE: search by DOI → OA full text link (parallelized)."""
     results: dict[str, str] = {}
-    for doi in dois[:80]:
+    lock = _th.Lock()
+
+    def _fetch_one(doi: str) -> None:
         try:
             resp = rate_limited_get(
                 "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi",
@@ -571,16 +708,20 @@ def _fetch_base_batch(dois: list[str]) -> dict[str, str]:
                 timeout=15,
             )
             if resp.status_code != 200:
-                continue
+                return
             docs = resp.json().get("response", {}).get("docs", [])
             if docs:
                 url = docs[0].get("dclink") or docs[0].get("dcidentifier")
                 if url and isinstance(url, str):
                     text = _download_and_extract(url)
                     if text:
-                        results[doi] = text
+                        with lock:
+                            results[doi] = text
         except Exception:
             pass
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_fetch_one, dois[:100]))
     return results
 
 
@@ -589,9 +730,11 @@ def _fetch_base_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_ia_scholar_batch(dois: list[str]) -> dict[str, str]:
-    """Internet Archive Scholar: search cached academic papers."""
+    """Internet Archive Scholar: search cached academic papers (parallelized)."""
     results: dict[str, str] = {}
-    for doi in dois[:80]:
+    lock = _th.Lock()
+
+    def _fetch_one(doi: str) -> None:
         try:
             resp = rate_limited_get(
                 "https://scholar.archive.org/search",
@@ -599,7 +742,7 @@ def _fetch_ia_scholar_batch(dois: list[str]) -> dict[str, str]:
                 timeout=15,
             )
             if resp.status_code != 200:
-                continue
+                return
             hits = resp.json().get("results", [])
             if hits:
                 for hit in hits[:1]:
@@ -609,10 +752,14 @@ def _fetch_ia_scholar_batch(dois: list[str]) -> dict[str, str]:
                         if url:
                             text = _download_and_extract(url)
                             if text:
-                                results[doi] = text
-                                break
+                                with lock:
+                                    results[doi] = text
+                                return
         except Exception:
             pass
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_fetch_one, dois[:100]))
     return results
 
 
@@ -621,17 +768,23 @@ def _fetch_ia_scholar_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_scielo_batch(dois: list[str]) -> dict[str, str]:
-    """SciELO: DOI redirect → scrape article page."""
+    """SciELO: DOI redirect → scrape article page (parallelized)."""
     results: dict[str, str] = {}
+    lock = _th.Lock()
     scielo_dois = [d for d in dois if "scielo" in d.lower() or "10.1590/" in d]
-    for doi in scielo_dois[:50]:
+
+    def _fetch_one(doi: str) -> None:
         try:
             text = _download_and_extract(f"https://doi.org/{doi}")
             if text:
-                results[doi] = text
+                with lock:
+                    results[doi] = text
         except Exception:
             pass
-        time.sleep(0.5)
+
+    if scielo_dois:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(_fetch_one, scielo_dois[:50]))
     return results
 
 
@@ -640,9 +793,11 @@ def _fetch_scielo_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_figshare_batch(dois: list[str]) -> dict[str, str]:
-    """Figshare: search by DOI, download attached files."""
+    """Figshare: search by DOI, download attached files (parallelized)."""
     results: dict[str, str] = {}
-    for doi in dois[:50]:
+    lock = _th.Lock()
+
+    def _fetch_one(doi: str) -> None:
         try:
             resp = httpx.post(
                 "https://api.figshare.com/v2/articles/search",
@@ -651,11 +806,11 @@ def _fetch_figshare_batch(dois: list[str]) -> dict[str, str]:
                 timeout=15,
             )
             if resp.status_code != 200 or not resp.json():
-                continue
+                return
             article = resp.json()[0]
             article_id = article.get("id")
             if not article_id:
-                continue
+                return
             detail = rate_limited_get(
                 f"https://api.figshare.com/v2/articles/{article_id}",
                 timeout=15,
@@ -665,10 +820,14 @@ def _fetch_figshare_batch(dois: list[str]) -> dict[str, str]:
                     if f.get("name", "").endswith(".pdf"):
                         text = _download_and_extract(f.get("download_url", ""))
                         if text:
-                            results[doi] = text
+                            with lock:
+                                results[doi] = text
                             break
         except Exception:
             pass
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        list(pool.map(_fetch_one, dois[:50]))
     return results
 
 
@@ -677,16 +836,22 @@ def _fetch_figshare_batch(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_doi_direct(dois: list[str]) -> dict[str, str]:
-    """Resolve DOI → publisher page → extract HTML text."""
+    """Resolve DOI → publisher page → extract HTML text (parallelized)."""
     results: dict[str, str] = {}
-    for doi in dois[:100]:
+    lock = _th.Lock()
+    dois = dois[:200]
+
+    def _fetch_one(doi: str) -> None:
         try:
             text = _download_and_extract(f"https://doi.org/{doi}")
             if text:
-                results[doi] = text
+                with lock:
+                    results[doi] = text
         except Exception:
             pass
-        time.sleep(0.3)
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        list(pool.map(_fetch_one, dois))
     return results
 
 
@@ -695,19 +860,25 @@ def _fetch_doi_direct(dois: list[str]) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════
 
 def _fetch_ssrn_batch(dois: list[str]) -> dict[str, str]:
-    """SSRN: DOIs with 10.2139/ssrn → direct PDF download."""
+    """SSRN: DOIs with 10.2139/ssrn → direct PDF download (parallelized)."""
     results: dict[str, str] = {}
+    lock = _th.Lock()
     ssrn_dois = [d for d in dois if "10.2139/ssrn" in d]
-    for doi in ssrn_dois[:50]:
+
+    def _fetch_one(doi: str) -> None:
         try:
             ssrn_id = doi.replace("10.2139/ssrn.", "")
             pdf_url = f"https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID{ssrn_id}_code.pdf"
             text = _download_and_extract(pdf_url)
             if text:
-                results[doi] = text
+                with lock:
+                    results[doi] = text
         except Exception:
             pass
-        time.sleep(0.5)
+
+    if ssrn_dois:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(_fetch_one, ssrn_dois[:50]))
     return results
 
 

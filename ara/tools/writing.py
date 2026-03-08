@@ -118,8 +118,8 @@ _section_too_short_counts: dict[str, int] = {}  # Track too-short rejections sep
 # Internal working sections that should NOT appear in final paper output
 _INTERNAL_SECTIONS = frozenset({
     "protocol", "synthesis_data", "writing_brief", "advisor_1",
-    "advisor_2", "advisory_report", "evaluation",
-    "hypothesis", "critic", "synthesis",  # pipeline working notes, not paper content
+    "advisor_2", "advisory_report", "evaluation", "paper_plan",
+    "hypothesis", "critic", "synthesis", "brancher",  # pipeline working notes, not paper content
 })
 _MAX_SECTION_REJECTIONS = 3  # After this many citation rejections, save anyway
 
@@ -331,7 +331,11 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
     db = ctx.get("db")
     session_id = ctx.get("session_id")
     workspace = ctx.get("workspace", Path("."))
-    output_dir = workspace / "ara_data" / "output" / "sections"
+    # Internal pipeline artifacts go to a separate directory
+    if section_key in _INTERNAL_SECTIONS:
+        output_dir = workspace / "ara_data" / "output" / "pipeline"
+    else:
+        output_dir = workspace / "ara_data" / "output" / "sections"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     word_count = len(content.split())

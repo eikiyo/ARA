@@ -232,11 +232,11 @@ class RLMEngine:
                 "prompt": "hypothesis",
                 "objective": (
                     "Generate 15+ research hypotheses from the evidence on {topic}. "
-                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "MMR-diversified evidence is pre-loaded below — this is your PRIMARY evidence source. "
+                    "It covers causal, moderator, contrarian, synthesis, and methodological themes from {papers_with_claims} papers. "
                     "Call get_risk_of_bias_table() to understand which evidence is strongest. "
                     "Call get_grade_table() to see evidence certainty ratings. "
-                    "Use search_similar() per theme to find relevant papers via embeddings. "
-                    "For the 3-5 most important papers, call read_paper(paper_id=ID, include_fulltext=true). "
+                    "For the 3-5 most important papers from the evidence, call read_paper(paper_id=ID, include_fulltext=true) to verify key claims. "
                     "Generate hypotheses across these categories: "
                     "(a) 3+ causal mechanism hypotheses, (b) 3+ moderator/boundary condition hypotheses, "
                     "(c) 3+ novel synthesis hypotheses connecting disparate findings, "
@@ -245,7 +245,7 @@ class RLMEngine:
                     "Score each: novelty, feasibility, evidence_strength, methodology_fit, impact, reproducibility. "
                     "For the top 3 hypotheses, specify: methodology, analysis approach, quality assessment framework. "
                     "Use score_hypothesis to evaluate EVERY one. "
-                    "Ground every hypothesis in specific claims from the database — do NOT hypothesize beyond the evidence. "
+                    "Ground every hypothesis in specific claims from the pre-loaded evidence — do NOT hypothesize beyond it. "
                     "{special_instructions}"
                 ),
             },
@@ -253,15 +253,16 @@ class RLMEngine:
                 "name": "critic",
                 "prompt": "critic",
                 "objective": (
-                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "MMR-diversified evidence is pre-loaded below — this includes counter-arguments, "
+                    "contradictions, and alternative explanations from the full evidence base. "
                     "Call get_risk_of_bias_table() to assess evidence quality. "
                     "Call get_grade_table() to see evidence certainty ratings. "
-                    "Use search_similar() to find the most relevant papers for each hypothesis. "
                     "Read 5-8 key papers using read_paper(paper_id=ID, include_fulltext=true) to ground your evaluation. "
                     "THEN evaluate the top 3 hypotheses across 8 dimensions each. "
                     "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
                     "Apply the meta-test: would an expert believe something different? "
                     "Cross-reference claims against RoB ratings — discount claims from high-bias papers. "
+                    "Use the CONTRADICTIONS section to identify claims that need reconciliation. "
                     "Decide per hypothesis: APPROVE or REJECT with detailed feedback and specific revisions."
                 ),
             },
@@ -269,14 +270,12 @@ class RLMEngine:
                 "name": "synthesis",
                 "prompt": "synthesis",
                 "objective": (
-                    "Prepare structured data for the writer. You have {claim_count} claims from "
-                    "{papers_with_claims} deeply-read papers. "
-                    "FIRST: Call list_claims() to load all extracted evidence. "
+                    "Prepare structured data for the writer. "
+                    "MMR-diversified evidence is pre-loaded below — organized by theme with convergent evidence clusters. "
                     "Call list_papers(compact=true) to get exact author names. "
                     "Call get_risk_of_bias_table() to get RoB assessments for all papers. "
                     "Call get_grade_table() to get GRADE evidence certainty ratings. "
-                    "Use search_similar() per theme to find relevant papers via embeddings. "
-                    "For top 5-10 papers, call read_paper(paper_id=ID, include_fulltext=true). "
+                    "For top 5-10 papers from the evidence, call read_paper(paper_id=ID, include_fulltext=true). "
                     "Build these outputs: "
                     "(1) Study characteristics table with author names, (2) Evidence synthesis "
                     "table with GRADE ratings, (3) Risk of bias summary table, "
@@ -390,18 +389,18 @@ class RLMEngine:
                 "prompt": "hypothesis",
                 "objective": (
                     "Identify the core theoretical gap and propose 10-15 candidate frameworks for: {topic}. "
-                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "MMR-diversified evidence is pre-loaded below — this is your PRIMARY evidence source. "
+                    "It covers causal, moderator, contrarian, synthesis, and methodological themes from {papers_with_claims} papers. "
                     "Call get_risk_of_bias_table() to understand which evidence is strongest. "
                     "Call get_grade_table() to see evidence certainty ratings. "
-                    "Use search_similar() per theme to find relevant papers via embeddings. "
-                    "For the 3-5 most important papers, call read_paper(paper_id=ID, include_fulltext=true). "
+                    "For the 3-5 most important papers from the evidence, call read_paper(paper_id=ID, include_fulltext=true) to verify key claims. "
                     "Each framework should be a TYPOLOGY, PROCESS MODEL, or MULTI-LEVEL FRAMEWORK. "
                     "Generate across categories: (a) 3+ integration frameworks, (b) 3+ process models, "
                     "(c) 2+ multi-level frameworks, (d) 2+ contrarian frameworks, (e) 2+ boundary condition models. "
                     "Score each: novelty (2x weight), feasibility, evidence_strength, methodology_fit, "
                     "impact, reproducibility. Answer the Five Questions for the top 3 frameworks. "
                     "Use score_hypothesis to evaluate EVERY one. "
-                    "Ground every framework in specific claims from the database — do NOT theorize beyond the evidence. "
+                    "Ground every framework in specific claims from the pre-loaded evidence — do NOT theorize beyond it. "
                     "{special_instructions}"
                 ),
             },
@@ -409,15 +408,16 @@ class RLMEngine:
                 "name": "critic",
                 "prompt": "critic",
                 "objective": (
-                    "FIRST: Call list_claims() to load all extracted evidence ({claim_count} claims from {papers_with_claims} papers). "
+                    "MMR-diversified evidence is pre-loaded below — this includes counter-arguments, "
+                    "contradictions, and alternative explanations from the full evidence base. "
                     "Call get_risk_of_bias_table() to assess evidence quality. "
                     "Call get_grade_table() to see evidence certainty ratings. "
-                    "Use search_similar() to find the most relevant papers for each framework. "
                     "Read 5-8 key theoretical papers using read_paper(paper_id=ID, include_fulltext=true) to ground your evaluation. "
                     "THEN evaluate the top 3 frameworks across 8 dimensions each. "
                     "Verify the novelty framework label (INVERSION/MISSING LINK/MODERATOR/etc). "
                     "Apply the meta-test: would a management scholar believe something different? "
                     "Cross-reference claims against RoB ratings — discount claims from high-bias papers. "
+                    "Use the CONTRADICTIONS section to identify claims that need reconciliation. "
                     "Decide per framework: APPROVE or REJECT with detailed feedback."
                 ),
             },
@@ -426,13 +426,11 @@ class RLMEngine:
                 "prompt": "synthesis",
                 "objective": (
                     "Prepare structured theoretical data for the writer. "
-                    "You have {claim_count} claims from {papers_with_claims} deeply-read papers. "
-                    "FIRST: Call list_claims() to load all extracted evidence. "
+                    "MMR-diversified evidence is pre-loaded below — organized by theme with convergent evidence clusters. "
                     "Call list_papers(compact=true) to get exact author names. "
                     "Call get_risk_of_bias_table() to get RoB assessments for all papers. "
                     "Call get_grade_table() to get GRADE evidence certainty ratings. "
-                    "Use search_similar() per theme to find relevant papers via embeddings. "
-                    "For top 5-10 papers, call read_paper(paper_id=ID, include_fulltext=true). "
+                    "For top 5-10 papers from the evidence, call read_paper(paper_id=ID, include_fulltext=true). "
                     "Build these outputs: "
                     "(1) Theoretical streams table with author names and core arguments, "
                     "(2) Theoretical tension map showing conflicts/gaps between streams, "
@@ -808,8 +806,8 @@ class RLMEngine:
 
             # C. Critic rejection loop — if critic rejected, re-run hypothesis with feedback
             if name == "critic" and db and session_id:
-                sections_dir = self.config.workspace / self.config.session_root_dir / "output" / "sections"
-                critic_file = sections_dir / "critic.md"
+                pipeline_dir = self.config.workspace / self.config.session_root_dir / "output" / "pipeline"
+                critic_file = pipeline_dir / "critic.md"
                 hypothesis_def = next(
                     (p for p in self._get_pipeline_phases() if p["name"] == "hypothesis"), None
                 )
@@ -927,18 +925,45 @@ class RLMEngine:
             special_instructions=self.config.special_instructions,
         )
 
-        # B. Brancher → Hypothesis handover: inject brancher findings into hypothesis
-        if prompt_name == "hypothesis":
-            sections_dir = self.config.workspace / self.config.session_root_dir / "output" / "sections"
-            brancher_file = sections_dir / "brancher.md"
+        # B. Brancher → Hypothesis/Critic/Synthesis/Advisory handover
+        if prompt_name in ("hypothesis", "critic", "synthesis", "advisory_board"):
+            pipeline_dir = self.config.workspace / self.config.session_root_dir / "output" / "pipeline"
+            brancher_file = pipeline_dir / "brancher.md"
             if brancher_file.exists():
-                brancher_output = brancher_file.read_text(encoding="utf-8")[:4000]
+                brancher_output = brancher_file.read_text(encoding="utf-8")[:8000]
+                _phase_brancher_instructions = {
+                    "hypothesis": (
+                        "Use these SCAMPER cross-domain insights to generate novel hypotheses. "
+                        "At least 3 hypotheses MUST build on cross-domain analogies from the brancher. "
+                        "Map each analogy explicitly: source domain → mechanism → application to topic."
+                    ),
+                    "critic": (
+                        "Evaluate whether cross-domain hypotheses have valid analogical mappings. "
+                        "Check: is the source domain's mechanism actually transferable? "
+                        "Flag any false analogies where surface similarity masks structural differences."
+                    ),
+                    "synthesis": (
+                        "Include cross-domain evidence in your synthesis tables. "
+                        "Create a dedicated 'Cross-Domain Evidence Map' showing source fields and transferable insights."
+                    ),
+                    "advisory_board": (
+                        "Assess which SCAMPER insights are strongest for the paper's contribution. "
+                        "Recommend which cross-domain analogies the writer should emphasize."
+                    ),
+                }
+                instruction = _phase_brancher_instructions.get(prompt_name, "")
                 objective += (
-                    f"\n\nCROSS-DOMAIN FINDINGS FROM BRANCHER PHASE:\n{brancher_output}\n"
-                    f"Use these cross-domain connections to strengthen and diversify your hypotheses. "
-                    f"At least 2 hypotheses should build on brancher insights.\n"
+                    f"\n\nSCAMPER CROSS-DOMAIN INSIGHTS FROM BRANCHER PHASE:\n{brancher_output}\n"
+                    f"{instruction}\n"
                 )
-                _log.info("PIPELINE: Injected brancher output (%d chars) into hypothesis phase", len(brancher_output))
+                _log.info("PIPELINE: Injected brancher output (%d chars) into %s phase", len(brancher_output), prompt_name)
+
+        # MMR-diversified evidence injection for analytical phases
+        if prompt_name in ("hypothesis", "critic", "synthesis"):
+            mmr_context = self._build_mmr_context_for_phase(prompt_name, topic)
+            if mmr_context:
+                objective += mmr_context
+                _log.info("PIPELINE: Injected MMR evidence (%d chars) into %s phase", len(mmr_context), prompt_name)
 
         # Reset search state for search phases
         if prompt_name in ("scout", "brancher"):
@@ -1024,18 +1049,172 @@ class RLMEngine:
         )
         _log.info("PIPELINE: Phase %s completed — %d chars", phase_def["name"], len(result))
 
-        # Save phase output to sections folder for phases that produce analytical text
+        # Save phase output to pipeline folder for phases that produce analytical text
         if phase_def["name"] in ("hypothesis", "critic", "synthesis") and result and len(result) > 100:
             try:
-                sections_dir = self.config.workspace / self.config.session_root_dir / "output" / "sections"
-                sections_dir.mkdir(parents=True, exist_ok=True)
-                out_file = sections_dir / f"{phase_def['name']}.md"
+                pipeline_dir = self.config.workspace / self.config.session_root_dir / "output" / "pipeline"
+                pipeline_dir.mkdir(parents=True, exist_ok=True)
+                out_file = pipeline_dir / f"{phase_def['name']}.md"
                 out_file.write_text(result, encoding="utf-8")
                 _log.info("PIPELINE: Saved %s output to %s (%d chars)", phase_def["name"], out_file, len(result))
             except Exception as exc:
                 _log.warning("PIPELINE: Failed to save %s output: %s", phase_def["name"], exc)
 
         return result
+
+    def _build_mmr_context_for_phase(self, phase: str, topic: str) -> str:
+        """Build MMR-diversified evidence context for hypothesis/critic/synthesis phases."""
+        central_db = self.tools.central_db
+        if not central_db:
+            return ""
+
+        try:
+            from .tools.pipeline import _get_api_key
+            api_key = _get_api_key()
+            if not api_key:
+                return ""
+
+            from google import genai
+            client = genai.Client(api_key=api_key)
+
+            # Phase-specific queries for targeted MMR retrieval
+            _phase_queries = {
+                "hypothesis": [
+                    (f"{topic} causal mechanisms drivers", "causal"),
+                    (f"{topic} moderating conditions boundary", "moderator"),
+                    (f"{topic} contradictions conflicting evidence", "contrarian"),
+                    (f"{topic} novel connections cross-domain synthesis", "synthesis"),
+                    (f"{topic} methodology measurement design gaps", "method"),
+                ],
+                "critic": [
+                    (f"{topic} limitations weaknesses methodology", "weakness"),
+                    (f"{topic} contradicting evidence counter-arguments", "counter"),
+                    (f"{topic} alternative explanations rival hypotheses", "alternative"),
+                    (f"{topic} replication validity robustness", "validity"),
+                ],
+                "synthesis": [
+                    (f"{topic} key findings empirical evidence", "findings"),
+                    (f"{topic} theoretical framework conceptual model", "theory"),
+                    (f"{topic} research gaps future directions", "gaps"),
+                    (f"{topic} practical implications policy recommendations", "implications"),
+                ],
+            }
+
+            queries = _phase_queries.get(phase, [])
+            if not queries:
+                return ""
+
+            context_parts: list[str] = []
+            seen_claims: set[int] = set()  # Deduplicate across queries
+            total_claims = 0
+
+            for query_text, label in queries:
+                try:
+                    emb_result = client.models.embed_content(
+                        model="gemini-embedding-001", contents=query_text[:500],
+                    )
+                    if not emb_result.embeddings:
+                        continue
+                    query_emb = emb_result.embeddings[0].values
+
+                    # MMR claims — diverse, max 3 per paper
+                    claims = central_db.search_claims_mmr(
+                        query_emb, limit=15, min_cosine=0.40, lam=0.65, paper_cap=3,
+                    )
+                    # Deduplicate
+                    new_claims = [c for c in claims if c.get("claim_id") not in seen_claims]
+                    for c in new_claims:
+                        seen_claims.add(c.get("claim_id"))
+
+                    if new_claims:
+                        section = f"\n### {label.upper()} EVIDENCE ({len(new_claims)} claims, MMR-diversified):\n"
+                        for c in new_claims[:10]:
+                            meta = ""
+                            if c.get("effect_size"):
+                                meta += f" effect={c['effect_size']}"
+                            if c.get("p_value"):
+                                meta += f" p={c['p_value']}"
+                            if c.get("sample_size"):
+                                meta += f" N={c['sample_size']}"
+                            section += (
+                                f"- [{c.get('claim_type', 'finding')}] {c['claim_text'][:200]} "
+                                f"(paper: {c.get('paper_title', '')[:60]}, "
+                                f"sim={c.get('cosine_similarity', '?')}{meta})\n"
+                            )
+                        context_parts.append(section)
+                        total_claims += len(new_claims[:10])
+
+                    # MMR chunks for grounded evidence (hypothesis + synthesis only)
+                    if phase in ("hypothesis", "synthesis"):
+                        chunks = central_db.search_chunks_mmr(
+                            query_emb, limit=4, min_cosine=0.45, lam=0.6, paper_cap=1,
+                        )
+                        if chunks:
+                            chunk_section = f"  Full-text excerpts ({label}):\n"
+                            for ch in chunks[:3]:
+                                chunk_section += (
+                                    f"  --- [{ch.get('paper_title', '')[:50]}] ---\n"
+                                    f"  {ch['chunk_text'][:250]}...\n\n"
+                                )
+                            context_parts.append(chunk_section)
+
+                except Exception as exc:
+                    _log.debug("MMR query failed for %s/%s: %s", phase, label, exc)
+                    continue
+
+            if not context_parts:
+                return ""
+
+            # Add contradictions for critic phase
+            if phase == "critic":
+                try:
+                    contradictions = central_db.detect_contradictions(limit=8)
+                    if contradictions:
+                        contra = "\n### CONTRADICTIONS DETECTED:\n"
+                        for ct in contradictions[:5]:
+                            contra += (
+                                f"- CLAIM A ({ct['signal_a']}): {ct['claim_a']['claim_text'][:120]} "
+                                f"[{ct['claim_a'].get('paper_title', '')[:40]}]\n"
+                                f"  vs CLAIM B ({ct['signal_b']}): {ct['claim_b']['claim_text'][:120]} "
+                                f"[{ct['claim_b'].get('paper_title', '')[:40]}]\n"
+                                f"  Similarity: {ct['similarity']}\n\n"
+                            )
+                        context_parts.append(contra)
+                except Exception:
+                    pass
+
+            # Add evidence clusters for synthesis phase
+            if phase == "synthesis":
+                try:
+                    clusters = central_db.cluster_claims(similarity_threshold=0.85)
+                    if clusters:
+                        cluster_text = "\n### CONVERGENT EVIDENCE CLUSTERS:\n"
+                        for i, cl in enumerate(clusters[:10], 1):
+                            rep = cl["representative"]
+                            cluster_text += (
+                                f"Cluster {i}: {rep['claim_text'][:120]}\n"
+                                f"  {cl['n_studies']} studies, {cl['n_claims']} claims\n"
+                            )
+                            if cl["countries"]:
+                                cluster_text += f"  Countries: {', '.join(cl['countries'][:5])}\n"
+                            if cl["effect_sizes"]:
+                                cluster_text += f"  Effects: {', '.join(cl['effect_sizes'][:3])}\n"
+                        context_parts.append(cluster_text)
+                except Exception:
+                    pass
+
+            header = (
+                f"\n\n{'='*60}\n"
+                f"MMR-DIVERSIFIED EVIDENCE FROM CENTRAL DATABASE ({total_claims} claims across {len(seen_claims)} unique sources)\n"
+                f"This evidence is pre-retrieved using Maximal Marginal Relevance to maximize diversity.\n"
+                f"Use these claims as grounding — cite the paper titles and verify with read_paper() for key claims.\n"
+                f"{'='*60}\n"
+            )
+            return header + "".join(context_parts)
+
+        except Exception as exc:
+            _log.warning("_build_mmr_context_for_phase failed for %s: %s", phase, exc)
+            return ""
 
     def _deep_read_batched_continuation(
         self, deep_read_def: dict, topic: str, paper_type: str,
@@ -1299,9 +1478,9 @@ class RLMEngine:
 
         # Save protocol
         ws = c.workspace
-        sections_dir = ws / c.session_root_dir / "output" / "sections"
-        sections_dir.mkdir(parents=True, exist_ok=True)
-        protocol_file = sections_dir / "protocol.md"
+        pipeline_dir = ws / c.session_root_dir / "output" / "pipeline"
+        pipeline_dir.mkdir(parents=True, exist_ok=True)
+        protocol_file = pipeline_dir / "protocol.md"
         protocol_file.write_text(protocol, encoding="utf-8")
         _log.info("PIPELINE: Protocol saved (%d chars)", len(protocol))
         if on_event:
@@ -1325,7 +1504,7 @@ class RLMEngine:
 
         # Get papers that still need verification
         rows = db._conn.execute(
-            "SELECT paper_id, doi FROM papers "
+            "SELECT paper_id, doi, retraction_checked, citation_verified FROM papers "
             "WHERE session_id = ? AND doi IS NOT NULL "
             "AND (doi_valid = 0 OR retraction_checked = 0 OR citation_verified = 0)",
             (session_id,),
@@ -1445,96 +1624,197 @@ class RLMEngine:
     def _pipeline_brancher_programmatic(
         self, topic: str, on_event: StepCallback | None,
     ) -> None:
-        """Programmatic brancher: generate cross-domain queries from claim keywords."""
+        """Brancher v2: SCAMPER-driven cross-domain insight discovery using MMR + LLM analogical reasoning."""
         db = self.tools.db
         session_id = self.tools.session_id
         if not db or not session_id:
             return
 
-        _log.info("PIPELINE: Programmatic brancher — cross-domain search")
+        _log.info("PIPELINE: Brancher v2 — SCAMPER cross-domain insight discovery")
         if on_event:
-            on_event(StepEvent("subtask_start", data="Brancher: programmatic cross-domain search", depth=0))
+            on_event(StepEvent("subtask_start", data="Brancher: SCAMPER cross-domain insight discovery", depth=0))
 
-        # Extract top keywords from claims for cross-domain queries
+        central_db = self.tools.central_db
         claims = db.get_claims(session_id)
-        claim_keywords: dict[str, int] = {}
-        stop = {"the", "of", "in", "and", "a", "an", "for", "on", "to", "with", "from", "by",
-                "as", "is", "are", "at", "this", "that", "their", "these", "it", "was", "were",
-                "be", "been", "have", "has", "or", "not", "but", "can", "may", "which", "more",
-                "between", "also", "such", "than", "other", "our", "we", "they", "its", "who"}
-        for c in claims:
-            words = c.get("claim_text", "").lower().split()
-            for w in words:
-                w = w.strip(".,;:()[]\"'")
-                if len(w) > 3 and w not in stop and w.isalpha():
-                    claim_keywords[w] = claim_keywords.get(w, 0) + 1
+        claim_summary = "\n".join(
+            f"- [{c.get('claim_type', 'finding')}] {c['claim_text'][:150]}"
+            for c in claims[:30]
+        )
 
-        # Top 20 claim keywords by frequency
-        top_kw = sorted(claim_keywords.items(), key=lambda x: -x[1])[:20]
-        kw_list = [k for k, _ in top_kw]
-        _log.info("PIPELINE BRANCHER: Top keywords from %d claims: %s", len(claims), kw_list[:10])
+        # ── STEP 1: LLM generates SCAMPER analogies ──
+        scamper_prompt = (
+            f"You are a cross-domain research strategist. The topic is:\n{topic}\n\n"
+            f"Key findings so far:\n{claim_summary}\n\n"
+            f"Apply the SCAMPER framework to generate analogical search queries from OTHER industries/fields:\n\n"
+            f"S (Substitute): What concept from another field could replace a core assumption here?\n"
+            f"C (Combine): What two unrelated fields could merge to explain this phenomenon?\n"
+            f"A (Adapt): What framework from another domain (e.g., biology, physics, military) maps onto this?\n"
+            f"M (Modify): How would changing scale/context/geography transform the findings?\n"
+            f"P (Put to other use): What if these findings were applied in healthcare/education/agriculture?\n"
+            f"E (Eliminate): What would happen if a key assumption were removed entirely?\n"
+            f"R (Reverse): What if the causal direction were flipped?\n\n"
+            f"For EACH SCAMPER letter, generate exactly 2 academic search queries that target a DIFFERENT field "
+            f"but could yield transferable insights. The queries must NOT contain the topic's core keywords "
+            f"(e.g., don't use 'fintech' or 'financial crisis' — use the analogous domain's language).\n\n"
+            f"Format: One query per line, prefixed with the letter. Example:\n"
+            f"S: platform ecosystem resilience during regulatory disruption\n"
+            f"S: technology stack migration under external shock healthcare systems\n"
+            f"C: ...\n"
+        )
 
-        # Topic words for combining
-        topic_words = [w for w in topic.lower().split() if len(w) > 3 and w not in stop][:4]
+        scamper_queries: list[tuple[str, str]] = []  # (label, query)
+        try:
+            response = self.light_model.generate_content(scamper_prompt)
+            raw_text = response.text if hasattr(response, "text") else str(response)
+            _log.info("BRANCHER: LLM generated SCAMPER queries (%d chars)", len(raw_text))
 
-        # Generate cross-domain queries
-        domain_expansions = [
-            ("adjacent", ["management", "organizational behavior", "strategy", "innovation"]),
-            ("methodology", ["mixed methods", "longitudinal study", "case study", "experiment"]),
-            ("practitioner", ["industry report", "business practice", "implementation"]),
-            ("policy", ["regulation", "governance", "institutional"]),
-            ("contradictory", ["failure", "limitation", "contradiction", "challenge"]),
-        ]
+            for line in raw_text.strip().split("\n"):
+                line = line.strip()
+                if len(line) < 10:
+                    continue
+                # Parse "S: query text" or "S - query text"
+                for sep in [":", "-", "."]:
+                    if sep in line[:3]:
+                        letter = line[:line.index(sep)].strip().upper()
+                        query = line[line.index(sep) + 1:].strip()
+                        if letter in ("S", "C", "A", "M", "P", "E", "R") and len(query) > 15:
+                            scamper_queries.append((letter, query))
+                        break
+        except Exception as exc:
+            _log.warning("BRANCHER: SCAMPER LLM call failed: %s — falling back to templates", exc)
 
-        queries = []
-        # Keyword-based cross-domain
-        for kw in kw_list[:6]:
-            queries.append(f"{kw} {' '.join(topic_words[:2])} theoretical framework")
-        # Domain expansion
-        for domain_type, expansions in domain_expansions:
-            for expansion in expansions[:1]:  # 1 query per domain type
-                queries.append(f"{' '.join(topic_words[:3])} {expansion}")
+        # Fallback if LLM failed or returned too few
+        if len(scamper_queries) < 8:
+            _fallback = [
+                ("S", "platform ecosystem resilience during regulatory disruption"),
+                ("S", "technology stack migration under external shock in healthcare"),
+                ("C", "supply chain digital transformation during pandemic disruption"),
+                ("C", "organizational ambidexterity exploration exploitation crisis response"),
+                ("A", "biological immune system adaptive response environmental stress"),
+                ("A", "military strategic pivot resource reallocation under threat"),
+                ("M", "small island developing states digital infrastructure leapfrogging"),
+                ("M", "agricultural technology adoption developing economies subsistence crisis"),
+                ("P", "crisis-driven telemedicine adoption patterns rural communities"),
+                ("P", "education technology pivot during institutional disruption"),
+                ("E", "technology adoption without trust intermediary institutions"),
+                ("E", "market competition without intellectual property protection"),
+                ("R", "technology portfolio driving crisis resilience rather than crisis driving technology"),
+                ("R", "reverse innovation emerging market solutions adopted by developed economies"),
+            ]
+            # Add only those not already covered
+            existing = {q for _, q in scamper_queries}
+            for label, query in _fallback:
+                if query not in existing and len(scamper_queries) < 14:
+                    scamper_queries.append((label, query))
 
-        # Deduplicate
-        seen = set()
-        unique = []
-        for q in queries:
-            q_lower = q.lower().strip()
-            if q_lower not in seen:
-                seen.add(q_lower)
-                unique.append(q)
+        _log.info("BRANCHER: %d SCAMPER queries ready", len(scamper_queries))
 
-        _log.info("PIPELINE BRANCHER: %d cross-domain queries", len(unique))
+        # ── STEP 2: MMR search central DB for cross-domain evidence ──
+        cross_domain_claims: list[dict] = []
+        if central_db:
+            try:
+                from .tools.pipeline import _get_api_key
+                api_key = _get_api_key()
+                if api_key:
+                    from google import genai
+                    client = genai.Client(api_key=api_key)
 
+                    seen_ids: set[int] = set()
+                    for label, query in scamper_queries[:10]:
+                        try:
+                            emb_result = client.models.embed_content(
+                                model="gemini-embedding-001", contents=query[:500],
+                            )
+                            if not emb_result.embeddings:
+                                continue
+                            query_emb = emb_result.embeddings[0].values
+                            results = central_db.search_claims_mmr(
+                                query_emb, limit=8, min_cosine=0.30, lam=0.5, paper_cap=2,
+                            )
+                            for r in results:
+                                cid = r.get("claim_id")
+                                if cid and cid not in seen_ids:
+                                    seen_ids.add(cid)
+                                    r["scamper_label"] = label
+                                    r["scamper_query"] = query
+                                    cross_domain_claims.append(r)
+                        except Exception as exc:
+                            _log.debug("BRANCHER MMR query failed: %s", exc)
+                    _log.info("BRANCHER: Found %d cross-domain claims via MMR", len(cross_domain_claims))
+            except Exception as exc:
+                _log.warning("BRANCHER: MMR search failed: %s", exc)
+
+        # ── STEP 3: API search for novel cross-domain papers ──
         total_new = 0
-        for i, query in enumerate(unique[:12]):  # cap at 12 queries
+        from .tools.search import reset_search_all_state
+        reset_search_all_state()
+
+        for i, (label, query) in enumerate(scamper_queries[:12]):
             if self.cancel_flag.is_set():
                 break
-            _log.info("PIPELINE BRANCHER: Query %d/%d: %s", i + 1, min(len(unique), 12), query[:80])
-            result = self.tools.dispatch("search_all", {"query": query, "limit": 15})
+            _log.info("BRANCHER: [%s] Query %d/%d: %s", label, i + 1, min(len(scamper_queries), 12), query[:80])
+            result = self.tools.dispatch("search_all", {"query": query, "limit": 10})
             try:
                 data = json.loads(result)
                 total_new += data.get("total", 0)
             except Exception:
                 pass
 
-        # Save brancher summary
-        ws = self.config.workspace
-        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
-        sections_dir.mkdir(parents=True, exist_ok=True)
-        brancher_summary = (
-            f"# Brancher Phase — Cross-Domain Search Results\n\n"
-            f"## Queries Executed ({len(unique[:12])})\n"
-            + "\n".join(f"- {q}" for q in unique[:12]) + "\n\n"
-            f"## Results\n"
-            f"- {total_new} new papers found across cross-domain queries\n"
-            f"- Top claim keywords used: {', '.join(kw_list[:10])}\n"
-        )
-        (sections_dir / "brancher.md").write_text(brancher_summary, encoding="utf-8")
+        # ── STEP 4: LLM synthesizes cross-domain insights ──
+        insight_brief = ""
+        if cross_domain_claims:
+            claims_for_synthesis = "\n".join(
+                f"- [{c.get('scamper_label', '?')}] {c['claim_text'][:200]} "
+                f"(from: {c.get('paper_title', '')[:60]}, sim={c.get('cosine_similarity', '?')})"
+                for c in cross_domain_claims[:25]
+            )
+            synthesis_prompt = (
+                f"You are synthesizing cross-domain insights for a research paper on:\n{topic}\n\n"
+                f"The following claims were found by searching OUTSIDE the topic's core field using SCAMPER:\n"
+                f"{claims_for_synthesis}\n\n"
+                f"For each SCAMPER letter that has results, write a 2-3 sentence insight explaining:\n"
+                f"1. What the cross-domain finding is\n"
+                f"2. How it maps back to the topic as a transferable framework/mechanism/analogy\n"
+                f"3. What novel hypothesis this enables\n\n"
+                f"Be specific. Name the source papers. Focus on genuinely novel connections."
+            )
+            try:
+                response = self.light_model.generate_content(synthesis_prompt)
+                insight_brief = response.text if hasattr(response, "text") else str(response)
+                _log.info("BRANCHER: Synthesized %d chars of cross-domain insights", len(insight_brief))
+            except Exception as exc:
+                _log.warning("BRANCHER: Synthesis LLM call failed: %s", exc)
 
-        _log.info("PIPELINE BRANCHER: Complete — %d new papers", total_new)
+        # ── STEP 5: Save brancher output ──
+        ws = self.config.workspace
+        pipeline_dir = ws / self.config.session_root_dir / "output" / "pipeline"
+        pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+        brancher_summary = f"# Brancher Phase — SCAMPER Cross-Domain Insights\n\n"
+        brancher_summary += f"## SCAMPER Queries ({len(scamper_queries)})\n"
+        for label, query in scamper_queries:
+            brancher_summary += f"- **{label}**: {query}\n"
+
+        brancher_summary += f"\n## Cross-Domain Evidence from Central DB ({len(cross_domain_claims)} claims)\n"
+        for c in cross_domain_claims[:20]:
+            brancher_summary += (
+                f"- [{c.get('scamper_label', '?')}] {c['claim_text'][:200]} "
+                f"(paper: {c.get('paper_title', '')[:60]})\n"
+            )
+
+        brancher_summary += f"\n## New Papers from API Search\n- {total_new} papers found\n"
+
+        if insight_brief:
+            brancher_summary += f"\n## Synthesized Cross-Domain Insights\n{insight_brief}\n"
+
+        (pipeline_dir / "brancher.md").write_text(brancher_summary, encoding="utf-8")
+
+        _log.info("BRANCHER: Complete — %d SCAMPER queries, %d cross-domain claims, %d new papers",
+                   len(scamper_queries), len(cross_domain_claims), total_new)
         if on_event:
-            on_event(StepEvent("subtask_end", data=f"Brancher complete: {total_new} cross-domain papers", depth=0))
+            on_event(StepEvent("subtask_end",
+                     data=f"Brancher complete: {len(cross_domain_claims)} cross-domain insights, {total_new} new papers",
+                     depth=0))
 
     def _pipeline_synthesis_programmatic(
         self, topic: str, paper_type: str, context: ExternalContext,
@@ -1652,9 +1932,9 @@ class RLMEngine:
 
         # Save synthesis data
         ws = self.config.workspace
-        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
-        sections_dir.mkdir(parents=True, exist_ok=True)
-        (sections_dir / "synthesis_data.md").write_text(synthesis_output, encoding="utf-8")
+        pipeline_dir = ws / self.config.session_root_dir / "output" / "pipeline"
+        pipeline_dir.mkdir(parents=True, exist_ok=True)
+        (pipeline_dir / "synthesis_data.md").write_text(synthesis_output, encoding="utf-8")
         _log.info("PIPELINE SYNTHESIS: Saved programmatic synthesis_data.md (%d chars)", len(synthesis_output))
 
         # Short LLM call for narrative synthesis + proposition revision (10 steps)
@@ -1704,8 +1984,8 @@ class RLMEngine:
         try:
             import json as _json
             data = _json.loads(result)
-            fetched = data.get("fetched", 0)
-            total = data.get("total_needed", 0)
+            fetched = data.get("total_fetched", 0)
+            total = data.get("papers_without_fulltext", 0)
             coverage_pct = (fetched / total * 100) if total > 0 else 0
             if coverage_pct < 20:
                 _log.warning("PIPELINE: LOW FULLTEXT COVERAGE (%.1f%%) — %d/%d papers. "
@@ -1717,6 +1997,144 @@ class RLMEngine:
                                                      f"Deep read will rely on abstracts for remaining papers.", depth=0))
         except Exception:
             pass
+
+        # Spawn background thread to chunk+embed new fulltexts for future MMR
+        self._spawn_bg_chunk_embed()
+
+    def _spawn_bg_chunk_embed(self) -> None:
+        """Background thread: chunk newly fetched full texts and embed them into central DB."""
+        central_db = self.tools.central_db
+        if not central_db:
+            return
+
+        import threading
+
+        def _bg_chunk_embed():
+            try:
+                _log.info("BG_CHUNK_EMBED: Starting background chunk+embed for new fulltexts")
+
+                # Find papers with full text but no chunks
+                rows = central_db._conn.execute(
+                    "SELECT p.paper_id, p.title, p.full_text FROM papers p "
+                    "WHERE p.full_text IS NOT NULL AND p.full_text != '' "
+                    "AND p.paper_id NOT IN (SELECT DISTINCT paper_id FROM paper_chunks) "
+                    "ORDER BY p.paper_id"
+                ).fetchall()
+
+                if not rows:
+                    _log.info("BG_CHUNK_EMBED: No new papers to chunk")
+                    return
+
+                _log.info("BG_CHUNK_EMBED: %d papers need chunking", len(rows))
+
+                # Phase 1: Chunk
+                from ara.tools.fulltext import _chunk_text as chunk_text
+                total_chunks = 0
+                for row in rows:
+                    chunks = chunk_text(row["full_text"])
+                    if chunks:
+                        stored = central_db.store_chunks(row["paper_id"], chunks)
+                        total_chunks += stored
+
+                _log.info("BG_CHUNK_EMBED: Stored %d chunks from %d papers", total_chunks, len(rows))
+
+                if total_chunks == 0:
+                    return
+
+                # Phase 2: Embed unembedded chunks
+                unembedded = central_db._conn.execute(
+                    "SELECT chunk_id, chunk_text FROM paper_chunks WHERE embedding IS NULL ORDER BY chunk_id"
+                ).fetchall()
+
+                if not unembedded:
+                    _log.info("BG_CHUNK_EMBED: All chunks already embedded")
+                    return
+
+                _log.info("BG_CHUNK_EMBED: Embedding %d chunks", len(unembedded))
+
+                # Try Google direct first, fall back to OpenRouter
+                from .tools.pipeline import _get_api_key
+                api_key = _get_api_key()
+                embedded = 0
+                # Collect new items + embeddings for hot cache append
+                new_cache_items: list[dict] = []
+                new_cache_embeddings: list[list[float]] = []
+
+                # Build a lookup: chunk_id → paper metadata for cache items
+                chunk_paper_meta: dict[int, dict] = {}
+                paper_ids = set()
+                for row in unembedded:
+                    # Get paper_id from paper_chunks table
+                    meta_row = central_db._conn.execute(
+                        "SELECT c.chunk_id, c.paper_id, c.chunk_index, c.chunk_text, "
+                        "p.title AS paper_title, p.doi AS paper_doi, p.authors, p.year "
+                        "FROM paper_chunks c JOIN papers p ON c.paper_id = p.paper_id "
+                        "WHERE c.chunk_id = ?", (row["chunk_id"],)
+                    ).fetchone()
+                    if meta_row:
+                        chunk_paper_meta[row["chunk_id"]] = dict(meta_row)
+
+                def _store_and_collect(chunk_id: int, embedding: list[float]) -> None:
+                    nonlocal embedded
+                    central_db.store_chunk_embedding(chunk_id, embedding)
+                    embedded += 1
+                    # Collect for hot cache append
+                    meta = chunk_paper_meta.get(chunk_id)
+                    if meta:
+                        new_cache_items.append(meta)
+                        new_cache_embeddings.append(embedding)
+
+                if api_key:
+                    from google import genai
+                    client = genai.Client(api_key=api_key)
+                    for j in range(0, len(unembedded), 50):
+                        batch = unembedded[j:j + 50]
+                        texts = [r["chunk_text"][:500] for r in batch]
+                        try:
+                            result = client.models.embed_content(model="gemini-embedding-001", contents=texts)
+                            if result.embeddings:
+                                for row, emb_obj in zip(batch, result.embeddings):
+                                    _store_and_collect(row["chunk_id"], emb_obj.values)
+                        except Exception as exc:
+                            _log.warning("BG_CHUNK_EMBED: Embed error: %s", exc)
+                            if "429" in str(exc) or "rate" in str(exc).lower():
+                                import time; time.sleep(30)
+                            else:
+                                import time; time.sleep(2)
+                else:
+                    import os
+                    or_key = os.getenv("OPENROUTER_API_KEY", "")
+                    if not or_key:
+                        _log.warning("BG_CHUNK_EMBED: No API key for embeddings — skipping")
+                        return
+                    from openai import OpenAI
+                    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=or_key)
+                    for j in range(0, len(unembedded), 50):
+                        batch = unembedded[j:j + 50]
+                        texts = [r["chunk_text"][:500] for r in batch]
+                        try:
+                            result = client.embeddings.create(model="google/gemini-embedding-001", input=texts)
+                            for row, emb in zip(batch, result.data):
+                                _store_and_collect(row["chunk_id"], emb.embedding)
+                        except Exception as exc:
+                            _log.warning("BG_CHUNK_EMBED: Embed error: %s", exc)
+                            if "429" in str(exc) or "rate" in str(exc).lower():
+                                import time; time.sleep(10)
+                            else:
+                                import time; time.sleep(2)
+
+                # Hot-append into live cache (no cold reload needed)
+                if new_cache_items:
+                    central_db.extend_embedding_cache("chunks", new_cache_items, new_cache_embeddings)
+                _log.info("BG_CHUNK_EMBED: Complete — embedded %d/%d chunks, hot-appended to cache",
+                          embedded, len(unembedded))
+
+            except Exception as exc:
+                _log.error("BG_CHUNK_EMBED: Failed: %s", exc, exc_info=True)
+
+        t = threading.Thread(target=_bg_chunk_embed, daemon=True, name="bg-chunk-embed")
+        t.start()
+        _log.info("BG_CHUNK_EMBED: Background thread spawned")
 
     def _pipeline_embed(self, on_event: StepCallback | None) -> None:
         """Run embedding phase programmatically — no LLM needed."""
@@ -1978,6 +2396,11 @@ class RLMEngine:
         if central_db:
             self._preload_claims_from_central(central_db, db, session_id, topic=topic)
 
+        # ── Step 1b: Inject top-tier papers from central DB ──
+        # Ensures the session has AAA/AA papers for citation quality gates
+        if central_db:
+            self._inject_top_tier_papers(central_db, db, session_id, topic, on_event)
+
         # ── Step 2: Parallel — fetch/deep_read selected + generate remaining embeddings ──
         selected_count = db._conn.execute(
             "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
@@ -2213,15 +2636,16 @@ class RLMEngine:
         self, topic: str, paper_type: str,
         context: ExternalContext, on_event: StepCallback | None,
     ) -> None:
-        """Pre-writing advisory board: single unified advisor produces writing brief."""
+        """Advisory board: single source of truth. Produces JSON paper plan that writer executes."""
         _log.info("=" * 40)
-        _log.info("PIPELINE: Advisory Board — unified writing brief")
+        _log.info("PIPELINE: Advisory Board — producing JSON paper plan")
         _log.info("=" * 40)
         if on_event:
-            on_event(StepEvent("subtask_start", data="Advisory Board: producing writing brief", depth=0))
+            on_event(StepEvent("subtask_start", data="Advisory Board: producing paper plan", depth=0))
 
         ws = self.config.workspace
-        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        pipeline_dir = ws / self.config.session_root_dir / "output" / "pipeline"
+        pipeline_dir.mkdir(parents=True, exist_ok=True)
 
         # Detect target journal
         from .peer_review import _detect_journal
@@ -2230,85 +2654,246 @@ class RLMEngine:
             journal = _detect_journal(topic)
         _log.info("ADVISORY BOARD: Target journal: %s", journal)
 
-        # Load synthesis data for context
-        synthesis_file = sections_dir / "synthesis_data.md"
-        synthesis_data = ""
-        if synthesis_file.exists():
-            synthesis_data = synthesis_file.read_text(encoding="utf-8")[:8000]
+        # ── PRE-GATHER ALL UPSTREAM DATA (no truncation) ──
 
-        # Load hypothesis and critic outputs for context
-        extra_context = ""
-        for ctx_file in ("hypothesis.md", "critic.md", "brancher.md"):
-            cf = sections_dir / ctx_file
-            if cf.exists():
-                extra_context += f"\n## {ctx_file.replace('.md', '').title()} Phase Output\n"
-                extra_context += cf.read_text(encoding="utf-8")[:3000] + "\n"
+        # 1. Papers with tiers (citation menu)
+        db = self.tools.db
+        session_id = self.tools.session_id
+        papers_data = ""
+        if db and session_id:
+            try:
+                rows = db._conn.execute(
+                    "SELECT paper_id, title, authors, year, journal_name, journal_tier, citation_count "
+                    "FROM papers WHERE session_id = ? AND selected_for_deep_read = 1 "
+                    "ORDER BY CASE WHEN journal_tier = 'AAA' THEN 0 "
+                    "WHEN journal_tier = 'AA' THEN 1 ELSE 2 END, citation_count DESC",
+                    (session_id,),
+                ).fetchall()
+                if rows:
+                    paper_lines = []
+                    aaa_count = aa_count = 0
+                    for r in rows:
+                        authors_raw = r["authors"] or "[]"
+                        try:
+                            al = json.loads(authors_raw)
+                            fa = al[0] if al else "Unknown"
+                            if isinstance(fa, dict):
+                                fa = fa.get("name", fa.get("family", "Unknown"))
+                        except Exception:
+                            fa = "Unknown"
+                        tier = r["journal_tier"] or ""
+                        if tier == "AAA":
+                            aaa_count += 1
+                        elif tier == "AA":
+                            aa_count += 1
+                        tier_tag = f" [{tier}]" if tier in ("AAA", "AA") else ""
+                        j_name = r["journal_name"] or ""
+                        paper_lines.append(
+                            f"  paper_id={r['paper_id']}{tier_tag} | {fa} ({r['year']}) | "
+                            f"{r['title'][:90]} | {j_name} | cites={r['citation_count'] or 0}"
+                        )
+                    papers_data = (
+                        f"PAPERS ({len(rows)} deeply-read, {aaa_count} AAA + {aa_count} AA):\n"
+                        + "\n".join(paper_lines)
+                    )
+                    _log.info("ADVISORY BOARD: Pre-gathered %d papers (%d AAA, %d AA)", len(rows), aaa_count, aa_count)
+            except Exception as exc:
+                _log.warning("ADVISORY BOARD: Failed to pre-gather papers: %s", exc)
 
-        # Build section rules summary so advisory board knows writer constraints
-        _section_rules = (
-            "SECTION RULES (the writer MUST follow these — your brief must be consistent):\n"
-            "- abstract: Structured (Purpose/Design/Findings/Originality). State gap ONCE in Purpose only.\n"
-            "- introduction: The ONE place to fully state gap + contribution. All other sections reference it.\n"
-            "- methodology: 400-500 words. Literature selection approach, databases, search terms, screening.\n"
-            "- theoretical_background: ONLY section allowed definition tables, comparison tables, boundary conditions. "
-            "Define ALL constructs HERE with precise names — later sections use EXACT same names.\n"
-            "- framework: NO tables, NO boundary conditions, NO propositions, NO new construct names. "
-            "Max 2-3 constructs. Describe model in prose only. NO ASCII diagrams.\n"
-            "- propositions: 3-4 MAX. ONE summary table only. No construct redefinition. "
-            "Drop any proposition restating well-established findings.\n"
-            "- discussion: NO tables at all, NO boundary conditions, NO construct definitions, "
-            "NO framework re-description, NO gap restatement. Prose only.\n"
-            "- conclusion: NO summary/restatement. Single insight + one implication + forward-looking close. "
-            "Include positionality/conflict of interest if applicable.\n\n"
-            "WRITING CONSTRAINTS:\n"
-            "- Average sentence length MUST be under 30 words.\n"
-            "- NO hedging phrases ('it is imperative', 'plays a crucial role', 'it should be noted').\n"
-            "- Section-to-section cosine overlap must stay below 0.30 — each section makes NEW points only.\n"
-            "- Every section must use IDENTICAL construct names (no renaming across sections).\n"
+        # 2. Claims (all, not truncated)
+        claims_data = ""
+        if db and session_id:
+            try:
+                claims = db.get_claims(session_id)
+                if claims:
+                    claim_lines = []
+                    for c in claims:
+                        meta = ""
+                        if c.get("effect_size"):
+                            meta += f" effect={c['effect_size']}"
+                        if c.get("p_value"):
+                            meta += f" p={c['p_value']}"
+                        if c.get("sample_size"):
+                            meta += f" N={c['sample_size']}"
+                        if c.get("study_design"):
+                            meta += f" design={c['study_design'][:20]}"
+                        claim_lines.append(
+                            f"  claim_id={c.get('claim_id')} paper_id={c.get('paper_id')} "
+                            f"[{c.get('claim_type', 'finding')}] {c.get('claim_text', '')[:200]} "
+                            f"(conf={c.get('confidence', '')}{meta})"
+                        )
+                    claims_data = f"CLAIMS ({len(claims)} total):\n" + "\n".join(claim_lines)
+                    _log.info("ADVISORY BOARD: Pre-gathered %d claims", len(claims))
+            except Exception as exc:
+                _log.warning("ADVISORY BOARD: Failed to pre-gather claims: %s", exc)
+
+        # 3. RoB and GRADE tables
+        rob_data = ""
+        grade_data = ""
+        if db and session_id:
+            try:
+                rob_rows = db.get_risk_of_bias(session_id)
+                if rob_rows:
+                    rob_data = f"RISK OF BIAS ({len(rob_rows)} assessments):\n"
+                    for r in rob_rows:
+                        rob_data += (
+                            f"  paper_id={r.get('paper_id')} overall={r.get('overall_risk')} "
+                            f"selection={r.get('selection_bias')} performance={r.get('performance_bias')} "
+                            f"detection={r.get('detection_bias')} attrition={r.get('attrition_bias')} "
+                            f"reporting={r.get('reporting_bias')}\n"
+                        )
+            except Exception:
+                pass
+            try:
+                grade_rows = db.get_grade_evidence(session_id)
+                if grade_rows:
+                    grade_data = f"GRADE EVIDENCE ({len(grade_rows)} outcomes):\n"
+                    for g in grade_rows:
+                        grade_data += (
+                            f"  outcome={g.get('outcome')} certainty={g.get('certainty')} "
+                            f"n_studies={g.get('n_studies')} direction={g.get('direction')} "
+                            f"rob={g.get('risk_of_bias_rating')} inconsistency={g.get('inconsistency')}\n"
+                        )
+            except Exception:
+                pass
+
+        # 4. Upstream phase outputs (FULL, not truncated)
+        upstream_outputs = ""
+        for phase_file in ("synthesis_data.md", "synthesis.md", "hypothesis.md", "critic.md", "brancher.md"):
+            pf = pipeline_dir / phase_file
+            if pf.exists():
+                content = pf.read_text(encoding="utf-8")
+                upstream_outputs += f"\n{'='*40}\n## {phase_file.replace('.md', '').replace('_', ' ').title()}\n{'='*40}\n"
+                upstream_outputs += content + "\n"
+
+        # ── BUILD QUALITY GATE RULES (everything the writer will be checked against) ──
+        cfg = self.config
+        _is_conceptual = paper_type == "conceptual"
+
+        if _is_conceptual:
+            _section_specs = {
+                "abstract": {"words_min": cfg.words_abstract, "words_max": 280, "cites_min": 0, "tables": "NONE", "notes": "Structured: Purpose/Design/Findings/Originality. NO citations. State gap ONCE in Purpose."},
+                "introduction": {"words_min": cfg.words_introduction, "words_max": 960, "cites_min": cfg.cites_introduction, "tables": "NONE", "notes": "ONLY place to fully state gap + contribution. Opening hook, theoretical puzzle, gap, framework preview, contribution."},
+                "methodology": {"words_min": 400, "words_max": 560, "cites_min": 0, "tables": "NONE", "notes": "Literature selection approach: databases, search terms, date range, screening, analytical approach. Concise."},
+                "theoretical_background": {"words_min": cfg.words_theoretical_background, "words_max": 2000, "cites_min": cfg.cites_literature_review, "tables": "ALLOWED (definition tables, comparison tables, boundary conditions)", "notes": "2-3 theoretical streams. Define ALL constructs HERE with precise names. End with Theoretical Gap subsection."},
+                "framework": {"words_min": cfg.words_framework, "words_max": 1600, "cites_min": 15, "tables": "NONE", "notes": "Conceptual model in PROSE only. Max 2-3 constructs. Use EXACT names from theoretical_background. NO definition tables, NO comparison tables, NO boundary conditions, NO propositions, NO ASCII diagrams."},
+                "propositions": {"words_min": cfg.words_propositions, "words_max": 1440, "cites_min": 9, "tables": "ONE summary table only", "notes": f"3-{cfg.max_propositions} MAX. Formal testable propositions. No construct redefinition. Drop any restating established findings. Summary table must match text exactly."},
+                "discussion": {"words_min": cfg.words_discussion, "words_max": 1200, "cites_min": cfg.cites_discussion, "tables": "NONE", "notes": "NO tables, NO boundary conditions, NO construct definitions, NO framework re-description, NO gap restatement, NO new propositions. Prose only: how framework resolves tensions, managerial implications, limitations (2-3 sentences), future research (3-5 empirical studies)."},
+                "conclusion": {"words_min": cfg.words_conclusion, "words_max": 400, "cites_min": 0, "tables": "NONE", "notes": "NO summary/restatement. Single insight + one implication + forward-looking close."},
+            }
+        else:
+            _section_specs = {
+                "abstract": {"words_min": cfg.words_abstract, "words_max": 280, "cites_min": 0, "tables": "NONE", "notes": "Structured: Background/Objective/Methods/Results/Conclusion. NO citations."},
+                "introduction": {"words_min": cfg.words_introduction, "words_max": 960, "cites_min": cfg.cites_introduction, "tables": "NONE", "notes": "Background, gap, research questions."},
+                "literature_review": {"words_min": cfg.words_literature_review, "words_max": 2000, "cites_min": cfg.cites_literature_review, "tables": "ALLOWED", "notes": "Thematic organization, cross-reference findings."},
+                "methods": {"words_min": cfg.words_methods, "words_max": 1200, "cites_min": cfg.cites_methods, "tables": "NONE", "notes": "Search strategy, inclusion/exclusion, quality assessment."},
+                "results": {"words_min": cfg.words_results, "words_max": 1600, "cites_min": cfg.cites_results, "tables": "ALLOWED", "notes": "Study characteristics, thematic results."},
+                "discussion": {"words_min": cfg.words_discussion, "words_max": 1200, "cites_min": cfg.cites_discussion, "tables": "NONE", "notes": "Key findings, comparison, limitations, future directions."},
+                "conclusion": {"words_min": cfg.words_conclusion, "words_max": 400, "cites_min": cfg.cites_conclusion, "tables": "NONE", "notes": "Main contributions, takeaways."},
+            }
+
+        quality_gates = (
+            "QUALITY GATES — the writer output will be checked against ALL of these. "
+            "Your plan MUST ensure every section passes on first try:\n\n"
+            "WORD COUNTS per section:\n"
+            + "\n".join(f"  {s}: {spec['words_min']}-{spec['words_max']} words, "
+                        f"min {spec['cites_min']} citations, tables={spec['tables']}"
+                        for s, spec in _section_specs.items())
+            + f"\n\nCITATION QUALITY:\n"
+            f"  - At least {cfg.journal_tier_min_pct:.0%} of citations MUST be from AAA/AA journals\n"
+            f"  - Ratio: {cfg.journal_tier_ratio:.0f}:1 top-tier per unranked citation\n"
+            f"  - Every (Author, Year) must match a real paper in the database\n"
+            f"  - No paragraph >300 words without a citation\n"
+            f"  - No paper cited 4+ times in one section\n"
+            f"\nSTRUCTURAL RULES:\n"
+            f"  - Gap statement: ONLY in introduction (all other sections reference it, never restate)\n"
+            f"  - Construct names: defined ONCE in theoretical_background, used identically everywhere\n"
+            f"  - Section overlap: unique-word overlap must stay below {cfg.max_section_overlap:.0%} between any two sections\n"
+            f"  - Propositions: max {cfg.max_propositions}, ONLY in propositions section\n"
+            f"  - Tables: only in theoretical_background + propositions (ONE summary table)\n"
+            f"  - No orphaned Table/Figure references (don't reference Table N unless it exists)\n"
+            f"\nWRITING STYLE:\n"
+            f"  - Average sentence length: max {cfg.max_avg_sentence_length} words\n"
+            f"  - NO hedging: 'it is imperative', 'plays a crucial role', 'it should be noted'\n"
+            f"  - NO hollow openers: 'This section aims to discuss...'\n"
+            f"  - NO shopping-list: 'Author (Year) found... Author (Year) showed...' — synthesize thematically\n"
+            f"  - NO bullet lists — continuous prose only\n"
+            f"  - NO em-dashes or en-dashes — use commas, semicolons, colons, parentheses\n"
+            f"  - NO banned paragraph openers: 'Furthermore,', 'Additionally,', 'Moreover,'\n"
+            f"  - NO single-sentence paragraphs — minimum 4 sentences per paragraph\n"
+            f"  - Methodology: do NOT claim human dual-reviewer screening (this is AI-assisted)\n"
+            f"  - NO self-referential excess: 'this paper/study' max 5 times per section\n"
+            f"  - Abstract must NOT contain citations\n"
         )
 
-        # Single unified advisory call (replaces 2 advisors + 1 consensus = 3 calls)
+        # ── JSON SCHEMA the advisory board must produce ──
+        section_names = list(_section_specs.keys())
+        json_schema = (
+            "OUTPUT FORMAT — you MUST produce a valid JSON object. No markdown, no explanation, ONLY JSON.\n"
+            "Save it using: write_section(section='paper_plan', content=YOUR_JSON_STRING)\n\n"
+            "JSON SCHEMA:\n"
+            "{\n"
+            '  "target_journal": "string — journal name",\n'
+            '  "narrative_arc": "string — the overarching story in 3-4 sentences: problem → gap → contribution → implications",\n'
+            '  "constructs": [\n'
+            '    {"name": "ExactConstructName", "definition": "1 sentence definition", "defined_in": "theoretical_background"}\n'
+            '  ],\n'
+            '  "propositions": [\n'
+            '    {\n'
+            '      "id": "P1",\n'
+            '      "statement": "exact formal proposition statement",\n'
+            '      "constructs_used": ["construct name 1"],\n'
+            '      "key_citations": [{"paper_id": 123, "author_year": "Author (Year)"}]\n'
+            '    }\n'
+            '  ],\n'
+            '  "sections": {\n'
+        )
+        for sname, spec in _section_specs.items():
+            json_schema += (
+                f'    "{sname}": {{\n'
+                f'      "thesis": "string — the ONE central argument of this section (unique, no overlap with other sections)",\n'
+                f'      "key_points": ["point 1 — specific argument", "point 2"],\n'
+                f'      "subsections": ["subsection title 1", "subsection title 2"],\n'
+                f'      "citations": [{{"paper_id": 123, "author_year": "Author (Year)", "use_for": "what this citation supports"}}],\n'
+                f'      "tables": ["Table N: title" or empty list if tables={spec["tables"]}],\n'
+                f'      "must_not": ["what this section must NOT contain"],\n'
+                f'      "transition_to_next": "how to connect to next section"\n'
+                f'    }},\n'
+            )
+        json_schema += (
+            '  },\n'
+            '  "proactive_defense": ["anticipated reviewer objection 1 and how to address it"],\n'
+            '  "evidence_hierarchy": "string — strongest to weakest evidence, how to handle conflicts"\n'
+            '}\n\n'
+            f"HARD REQUIREMENTS FOR THE PLAN:\n"
+            f"- Every section's citations list must use ONLY paper_ids from the PAPERS list above\n"
+            f"- Total unique papers cited across all sections must be >= {min(context.papers_with_claims, 30)}\n"
+            f"- Every deeply-read paper with claims should appear in at least one section\n"
+            f"- Propositions: {cfg.max_propositions} maximum, use EXACT construct names\n"
+            f"- Each section's thesis must be UNIQUE — zero content overlap between sections\n"
+            f"- Citations per section must meet minimums AND {cfg.journal_tier_min_pct:.0%} must be [AAA]/[AA]\n"
+        )
+
+        # ── COMPOSE THE ADVISORY BOARD OBJECTIVE ──
         advisory_objective = (
-            f"You are the Senior Advisory Board for a research paper on: {topic}.\n"
+            f"You are the Senior Advisory Board for a research paper on:\n{topic}\n"
+            f"Paper type: {paper_type}\n"
             f"TARGET JOURNAL: {journal}\n\n"
             f"You combine TWO roles:\n"
-            f"(A) DOMAIN EXPERT: theoretical framing, contribution positioning, narrative arc, "
-            f"which debates to engage, how to handle conflicting evidence.\n"
-            f"(B) JOURNAL REVIEWER for {journal}: scope fit, what gets published vs rejected, "
-            f"methodology rigor expectations, framing for maximum acceptance probability, "
-            f"common rejection reasons and how to preempt them.\n\n"
-            f"You have {context.claim_count} claims from {context.papers_with_claims} deeply-read papers.\n"
-            f"SYNTHESIS DATA:\n{synthesis_data[:4000]}\n\n"
-            f"{extra_context[:3000]}\n\n"
-            f"{_section_rules}\n"
-            f"INSTRUCTIONS:\n"
-            f"1. Call list_claims() to review all extracted evidence.\n"
-            f"2. Call get_risk_of_bias_table() and get_grade_table() to assess evidence quality.\n"
-            f"3. Call list_papers(compact=true) to get exact author names.\n"
-            f"4. Use search_similar() to find relevant papers for key themes.\n"
-            f"5. Produce the DEFINITIVE WRITING BRIEF with:\n\n"
-            f"   ## Target Journal: {journal}\n"
-            f"   (Key requirements, style expectations, what gets published vs rejected)\n\n"
-            f"   ## Paper Narrative Arc\n"
-            f"   (The overarching story: problem → gap → contribution → implications)\n\n"
-            f"   ## Section-by-Section Blueprint\n"
-            f"   For EACH section, follow the SECTION RULES above. Specifically:\n"
-            f"   - Key argument/purpose (unique to this section — no overlap with others)\n"
-            f"   - Specific subsections and their content\n"
-            f"   - MUST-CITE papers with (Author, Year) — at least 5 per body section\n"
-            f"   - Key claims to reference (by claim_id)\n"
-            f"   - Transitions to next section\n"
-            f"   - Tables ONLY in theoretical_background and propositions (summary table)\n\n"
-            f"   HARD REQUIREMENT: The writing brief MUST distribute ALL {context.papers_with_claims} papers "
-            f"with claims across sections. Every paper that was deeply read must appear in at least one section. "
-            f"Minimum 30 unique papers cited across the full paper. Do NOT leave any deeply-read paper uncited.\n\n"
-            f"   ## Theoretical Framework\n"
-            f"   (Which theories to use, how they connect, what the original contribution is)\n\n"
-            f"   ## Evidence Hierarchy\n"
-            f"   (Strongest evidence first, how to handle weak/conflicting evidence)\n\n"
-            f"   ## Proactive Defense\n"
-            f"   (Anticipated reviewer objections at {journal} and how to address them)\n\n"
-            f"6. Save using write_section(section='writing_brief', content=YOUR_BRIEF)"
+            f"(A) DOMAIN EXPERT — theoretical framing, contribution positioning, narrative arc\n"
+            f"(B) JOURNAL REVIEWER for {journal} — scope fit, what gets published vs rejected\n\n"
+            f"ALL DATA HAS BEEN PRE-GATHERED FOR YOU. Do NOT call list_papers, list_claims, "
+            f"or any search tools. All evidence is below. Your ONLY job is to analyze this data "
+            f"and produce the JSON paper plan.\n\n"
+            f"{'='*40}\n{papers_data}\n\n"
+            f"{'='*40}\n{claims_data}\n\n"
+            f"{'='*40}\n{rob_data}\n\n"
+            f"{'='*40}\n{grade_data}\n\n"
+            f"{'='*40}\nUPSTREAM PHASE OUTPUTS:\n{upstream_outputs}\n\n"
+            f"{'='*40}\n{quality_gates}\n\n"
+            f"{'='*40}\n{json_schema}\n\n"
+            f"PRODUCE THE JSON PAPER PLAN NOW. Save it using write_section(section='paper_plan', content=YOUR_JSON).\n"
+            f"The JSON must be valid and parseable. No markdown wrapping, no code fences in the content string."
         )
 
         system_prompt = build_phase_system_prompt(
@@ -2316,6 +2901,7 @@ class RLMEngine:
             paper_type=paper_type,
         )
 
+        # Advisory board gets minimal tools — just write_section to save the plan
         self._solve_recursive(
             objective=advisory_objective,
             context=context,
@@ -2323,114 +2909,120 @@ class RLMEngine:
             on_event=on_event,
             system_prompt_override=system_prompt,
             phase="advisory_board",
-            max_steps=50,
+            max_steps=30,
         )
 
-        # Verify brief was saved and validate against section rules
-        brief_file = sections_dir / "writing_brief.md"
-        if brief_file.exists():
-            brief_text = brief_file.read_text(encoding="utf-8")
-            brief_size = len(brief_text)
-            _log.info("ADVISORY BOARD: Writing brief saved — %d chars", brief_size)
+        # ── VALIDATE AND PARSE THE JSON PLAN ──
+        plan_file = pipeline_dir / "paper_plan.md"
+        plan_valid = False
+        if plan_file.exists():
+            raw_plan = plan_file.read_text(encoding="utf-8")
+            _log.info("ADVISORY BOARD: Paper plan saved — %d chars", len(raw_plan))
 
-            # Programmatic gate: validate brief against section rules
-            brief_violations = self._validate_writing_brief(brief_text)
-            if brief_violations:
-                _log.warning("ADVISORY BOARD GATE: %d violations found — patching brief", len(brief_violations))
-                for v in brief_violations:
-                    _log.warning("  VIOLATION: %s", v)
-                # Append violation warnings to the brief so writer sees them
-                patch = "\n\n---\n## QUALITY GATE OVERRIDES (auto-generated)\n"
-                patch += "The advisory board brief above contains errors. The writer MUST follow these corrections:\n"
-                for v in brief_violations:
-                    patch += f"- {v}\n"
-                brief_file.write_text(brief_text + patch, encoding="utf-8")
-                _log.info("ADVISORY BOARD GATE: Patched brief with %d override warnings", len(brief_violations))
-        else:
-            _log.warning("ADVISORY BOARD: Writing brief not saved — writer will proceed without it")
+            # Try to parse JSON (strip markdown code fences if present)
+            import re as _plan_re
+            json_text = raw_plan.strip()
+            # Remove ```json ... ``` wrapping if present
+            fence_match = _plan_re.search(r'```(?:json)?\s*\n?(.*?)\n?```', json_text, _plan_re.DOTALL)
+            if fence_match:
+                json_text = fence_match.group(1).strip()
+
+            try:
+                plan = json.loads(json_text)
+                plan_valid = True
+                _log.info("ADVISORY BOARD: JSON plan parsed successfully")
+
+                # Validate required fields
+                missing = []
+                if "sections" not in plan:
+                    missing.append("sections")
+                if "constructs" not in plan:
+                    missing.append("constructs")
+                if "propositions" not in plan:
+                    missing.append("propositions")
+                if missing:
+                    _log.warning("ADVISORY BOARD: Plan missing fields: %s", missing)
+
+                # Validate section coverage
+                plan_sections = set(plan.get("sections", {}).keys())
+                expected_sections = set(_section_specs.keys())
+                missing_sections = expected_sections - plan_sections
+                if missing_sections:
+                    _log.warning("ADVISORY BOARD: Plan missing sections: %s", missing_sections)
+
+                # Validate citation distribution
+                total_cited = set()
+                for sec_plan in plan.get("sections", {}).values():
+                    for cite in sec_plan.get("citations", []):
+                        pid = cite.get("paper_id")
+                        if pid:
+                            total_cited.add(pid)
+                _log.info("ADVISORY BOARD: Plan distributes %d unique papers across sections", len(total_cited))
+
+                # Save clean JSON (for writer consumption)
+                plan_json_file = pipeline_dir / "paper_plan.json"
+                plan_json_file.write_text(json.dumps(plan, indent=2, default=str), encoding="utf-8")
+                _log.info("ADVISORY BOARD: Clean JSON plan saved to paper_plan.json")
+
+            except json.JSONDecodeError as exc:
+                _log.warning("ADVISORY BOARD: Failed to parse JSON plan: %s", exc)
+                _log.warning("ADVISORY BOARD: Raw plan preview: %s", json_text[:500])
+
+        if not plan_valid:
+            _log.warning("ADVISORY BOARD: No valid JSON plan — falling back to legacy writing brief mode")
+            # Fall back: save upstream context as a basic brief so writer has something
+            fallback_brief = (
+                f"# Fallback Writing Brief (advisory board JSON plan failed)\n\n"
+                f"Target journal: {journal}\n\n"
+                f"## Upstream Context\n{upstream_outputs[:8000]}\n"
+            )
+            (pipeline_dir / "writing_brief.md").write_text(fallback_brief, encoding="utf-8")
 
         if on_event:
-            on_event(StepEvent("subtask_end", data="Advisory Board complete", depth=0))
+            on_event(StepEvent("subtask_end", data="Advisory Board complete — paper plan produced", depth=0))
 
     def _pipeline_writer(
         self, topic: str, paper_type: str,
         context: ExternalContext, on_event: StepCallback | None,
     ) -> None:
-        """Run writer phase — one subtask per section for reliability."""
-        writer_sections = self._writer_sections()
-        _log.info("PIPELINE: Starting writer phase — %d sections", len(writer_sections))
+        """Writer phase — executes the advisory board's paper plan. No thinking, just writing."""
+        _log.info("PIPELINE: Starting writer phase")
 
-        # Check which sections already exist
         ws = self.config.workspace
         sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+
+        # Check which sections already exist
         existing_sections = set()
         if sections_dir.exists():
             for f in sections_dir.iterdir():
                 if f.suffix == ".md" and f.stat().st_size > 100:
                     existing_sections.add(f.stem)
 
-        # Load writing brief from advisory board (if available)
-        writing_brief = ""
-        brief_file = sections_dir / "writing_brief.md"
-        if brief_file.exists():
-            writing_brief = brief_file.read_text(encoding="utf-8")
-            _log.info("PIPELINE WRITER: Loaded writing brief from advisory board (%d chars)", len(writing_brief))
+        # ── LOAD THE PAPER PLAN (single source of truth from advisory board) ──
+        plan: dict = {}
+        pipeline_dir = ws / self.config.session_root_dir / "output" / "pipeline"
+        plan_file = pipeline_dir / "paper_plan.json"
+        if plan_file.exists():
+            try:
+                plan = json.loads(plan_file.read_text(encoding="utf-8"))
+                _log.info("PIPELINE WRITER: Loaded paper plan from advisory board (%d sections)",
+                          len(plan.get("sections", {})))
+            except json.JSONDecodeError as exc:
+                _log.warning("PIPELINE WRITER: Failed to parse paper_plan.json: %s", exc)
 
-        # Load synthesis output — contains revised propositions and critic feedback
-        synthesis_guidance = ""
-        for syn_file in ("synthesis.md", "synthesis_data.md"):
-            sf = sections_dir / syn_file
-            if sf.exists():
-                synthesis_guidance += sf.read_text(encoding="utf-8")[:4000] + "\n\n"
-        if synthesis_guidance:
-            _log.info("PIPELINE WRITER: Loaded synthesis guidance (%d chars)", len(synthesis_guidance))
+        # Fallback: if no JSON plan, try legacy writing brief
+        legacy_brief = ""
+        if not plan:
+            brief_file = pipeline_dir / "writing_brief.md"
+            if brief_file.exists():
+                legacy_brief = brief_file.read_text(encoding="utf-8")
+                _log.warning("PIPELINE WRITER: No JSON plan — falling back to legacy brief (%d chars)", len(legacy_brief))
 
-        # F. Pre-load claims + papers data once — avoids repeated tool calls per section
-        cached_claims_summary = ""
+        # ── BUILD CITATION MENU (writer needs exact author names for formatting) ──
         cached_papers_summary = ""
-        # MMR-powered evidence retrieval from central DB
-        central_db = self.tools.central_db
-        _topic_emb = getattr(self, "_topic_emb", None)
-        # Pre-warm embedding caches in background (loads ~2.5 GB into RAM, saves ~60s per section)
-        if central_db and _topic_emb:
-            import threading as _thr
-            def _prewarm():
-                try:
-                    central_db._load_embeddings_cached("claims")
-                    central_db._load_embeddings_cached("chunks")
-                    central_db._load_embeddings_cached("papers")
-                except Exception:
-                    pass
-            _thr.Thread(target=_prewarm, daemon=True).start()
-            _log.info("PIPELINE WRITER: Pre-warming embedding caches in background")
-        _evidence_clusters = []
-        _contradictions = []
         db = self.tools.db
         session_id = self.tools.session_id
         if db and session_id:
-            try:
-                claims = db.get_claims(session_id)
-                if claims:
-                    # Build compact claims summary for injection
-                    claim_lines = []
-                    for c in claims[:80]:  # top 80 claims
-                        claim_lines.append(
-                            f"- [{c.get('claim_type', 'finding')}] {c.get('claim_text', '')[:120]} "
-                            f"(paper_id={c.get('paper_id')}, confidence={c.get('confidence', '')})"
-                        )
-                    cached_claims_summary = f"EVIDENCE ({len(claims)} claims, showing top {min(len(claims), 80)}):\n" + "\n".join(claim_lines)
-                    _log.info("PIPELINE WRITER: Pre-loaded %d claims for writer injection", len(claims))
-            except Exception as exc:
-                _log.warning("PIPELINE WRITER: Failed to pre-load claims: %s", exc)
-            # Pre-compute evidence clusters and contradictions from central DB
-            if central_db and _topic_emb:
-                try:
-                    _evidence_clusters = central_db.cluster_claims(similarity_threshold=0.85)
-                    _contradictions = central_db.detect_contradictions(similarity_threshold=0.80)
-                    _log.info("PIPELINE WRITER: %d evidence clusters, %d contradictions detected",
-                              len(_evidence_clusters), len(_contradictions))
-                except Exception as exc:
-                    _log.warning("PIPELINE WRITER: Cluster/contradiction analysis failed: %s", exc)
             try:
                 rows = db._conn.execute(
                     "SELECT paper_id, title, authors, year, journal_name, journal_tier FROM papers "
@@ -2442,17 +3034,16 @@ class RLMEngine:
                 ).fetchall()
                 if rows:
                     paper_lines = []
-                    aaa_count = 0
-                    aa_count = 0
+                    aaa_count = aa_count = 0
                     for idx, r in enumerate(rows, 1):
                         authors_raw = r["authors"] or "[]"
                         try:
-                            authors_list = json.loads(authors_raw)
-                            first_author = authors_list[0] if authors_list else "Unknown"
-                            if isinstance(first_author, dict):
-                                first_author = first_author.get("name", first_author.get("family", "Unknown"))
+                            al = json.loads(authors_raw)
+                            fa = al[0] if al else "Unknown"
+                            if isinstance(fa, dict):
+                                fa = fa.get("name", fa.get("family", "Unknown"))
                         except Exception:
-                            first_author = "Unknown"
+                            fa = "Unknown"
                         tier_tag = ""
                         j_tier = r["journal_tier"]
                         if j_tier == "AAA":
@@ -2464,35 +3055,75 @@ class RLMEngine:
                         j_name = r["journal_name"] or ""
                         journal_info = f" ({j_name})" if j_name else ""
                         paper_lines.append(
-                            f"[{idx}]{tier_tag} ({first_author}, {r['year']}) — "
+                            f"[{idx}]{tier_tag} ({fa}, {r['year']}) — "
                             f"{r['title'][:90]}{journal_info} [paper_id={r['paper_id']}]"
                         )
-                    tier_ratio = self.config.journal_tier_ratio
-                    tier_min_pct = self.config.journal_tier_min_pct
                     cached_papers_summary = (
-                        f"CITATION MENU ({len(rows)} verified papers — ONLY cite from this list):\n"
+                        f"CITATION MENU ({len(rows)} verified papers):\n"
                         f"  TOP-TIER: {aaa_count} AAA + {aa_count} AA journals\n\n"
                         + "\n".join(paper_lines)
-                        + "\n\nHARD RULE: Every (Author, Year) you write MUST match an entry above. "
-                        "If an author/year combo is not on this list, DO NOT cite it. "
-                        "Omit the claim rather than invent a citation.\n\n"
-                        f"PRIORITY RULE: Papers marked [AAA] and [AA] are from top-tier journals "
-                        f"(FT50, UTD24, ABS 4*/4). PREFER citing these over unranked papers. "
-                        f"For every 1 unranked citation, include {tier_ratio:.0f} from [AAA]/[AA] sources. "
-                        f"At least {tier_min_pct:.0%} of your citations MUST come from [AAA] or [AA] sources. "
-                        f"Top-tier citations strengthen credibility and signal "
-                        f"engagement with the best scholarship in the field."
+                        + "\n\nHARD RULE: Every (Author, Year) you write MUST match an entry above."
                     )
-                    _log.info("PIPELINE WRITER: Pre-loaded %d papers for writer injection", len(rows))
+                    _log.info("PIPELINE WRITER: Built citation menu with %d papers", len(rows))
             except Exception as exc:
-                _log.warning("PIPELINE WRITER: Failed to pre-load papers: %s", exc)
+                _log.warning("PIPELINE WRITER: Failed to build citation menu: %s", exc)
+
+        # ── PRE-WARM MMR CACHES ──
+        central_db = self.tools.central_db
+        _topic_emb = getattr(self, "_topic_emb", None)
+        if central_db and _topic_emb:
+            import threading as _thr
+            def _prewarm():
+                try:
+                    central_db._load_embeddings_cached("claims")
+                    central_db._load_embeddings_cached("chunks")
+                except Exception:
+                    pass
+            _thr.Thread(target=_prewarm, daemon=True).start()
+            _log.info("PIPELINE WRITER: Pre-warming embedding caches")
+
+        # Pre-compute contradictions for discussion section
+        _contradictions = []
+        if central_db and _topic_emb:
+            try:
+                _contradictions = central_db.detect_contradictions(similarity_threshold=0.80)
+            except Exception:
+                pass
+
+        # ── STATIC STYLE GUIDE (applies to ALL sections) ──
+        cfg = self.config
+        style_guide = (
+            "\nWRITING STYLE RULES (apply to ALL sections):\n"
+            f"- Average sentence length: max {cfg.max_avg_sentence_length} words. Break long sentences.\n"
+            "- NO hedging: remove 'it is imperative', 'plays a crucial role', 'it should be noted'\n"
+            "- NO hollow openers: never write 'This section aims to discuss...'\n"
+            "- NO shopping-list: never write 'Author (Year) found... Author (Year) showed...'. Synthesize thematically.\n"
+            "- NO bullet lists. Use continuous prose paragraphs.\n"
+            "- NO em-dashes or en-dashes. Use commas, semicolons, colons, parentheses.\n"
+            "- NO 'Furthermore,', 'Additionally,', 'Moreover,' as paragraph openers.\n"
+            "- Paragraphs must have 4+ sentences. No single-sentence paragraphs.\n"
+            "- Max 5 uses of 'this paper/study/review' per section.\n"
+            "- Do NOT cite the same paper 4+ times in one section.\n"
+            "- No paragraph >300 words without a citation.\n"
+            "- AI-assisted review: do NOT claim human dual-reviewer screening.\n"
+        )
 
         system_prompt = build_phase_system_prompt(
             phase="writer", topic=topic, rules=context.rules,
             paper_type=paper_type,
         )
 
-        for section_name, instruction in writer_sections:
+        # ── DETERMINE SECTION ORDER ──
+        if plan and "sections" in plan:
+            # Use the plan's section order
+            section_names = list(plan["sections"].keys())
+        else:
+            # Fallback to default section order
+            section_names = [name for name, _ in self._writer_sections()]
+
+        _log.info("PIPELINE WRITER: Writing %d sections", len(section_names))
+
+        for section_name in section_names:
             if self.cancel_flag.is_set():
                 break
 
@@ -2506,83 +3137,137 @@ class RLMEngine:
             if on_event:
                 on_event(StepEvent("subtask_start", data=f"Writing: {section_name}", depth=0))
 
-            # Extract section-specific guidance from writing brief
-            brief_guidance = ""
-            if writing_brief:
-                # Try to extract the section's specific guidance from the brief
-                import re as _re
-                # Look for section header in brief (case-insensitive)
-                section_patterns = [
-                    section_name.replace("_", " "),
-                    section_name.replace("_", " ").title(),
-                    section_name,
-                ]
-                for pat in section_patterns:
-                    match = _re.search(
-                        rf"(?:^|\n)#+\s*.*{_re.escape(pat)}.*?\n(.*?)(?=\n#+\s|\Z)",
-                        writing_brief, _re.IGNORECASE | _re.DOTALL,
-                    )
-                    if match:
-                        brief_guidance = match.group(1).strip()[:2000]
-                        break
-                if not brief_guidance and len(writing_brief) < 6000:
-                    # Brief is short enough to include entirely
-                    brief_guidance = writing_brief[:3000]
+            # ── BUILD SECTION INSTRUCTION FROM PLAN ──
+            section_instruction = ""
+            sec_plan = plan.get("sections", {}).get(section_name, {}) if plan else {}
 
-            brief_instruction = ""
-            if brief_guidance:
-                brief_instruction = (
-                    f"\n\nADVISORY BOARD GUIDANCE for this section:\n{brief_guidance}\n"
-                    f"Follow this guidance closely — it was produced by expert advisors who analyzed all evidence.\n"
+            if sec_plan:
+                # Plan-driven instruction — the advisory board's exact blueprint
+                thesis = sec_plan.get("thesis", "")
+                key_points = sec_plan.get("key_points", [])
+                subsections = sec_plan.get("subsections", [])
+                citations = sec_plan.get("citations", [])
+                tables = sec_plan.get("tables", [])
+                must_not = sec_plan.get("must_not", [])
+                transition = sec_plan.get("transition_to_next", "")
+
+                # Get word targets from config
+                _word_targets = {
+                    "abstract": (cfg.words_abstract, 280),
+                    "introduction": (cfg.words_introduction, 960),
+                    "methodology": (400, 560),
+                    "theoretical_background": (cfg.words_theoretical_background, 2000),
+                    "framework": (cfg.words_framework, 1600),
+                    "propositions": (cfg.words_propositions, 1440),
+                    "discussion": (cfg.words_discussion, 1200),
+                    "conclusion": (cfg.words_conclusion, 400),
+                    "literature_review": (cfg.words_literature_review, 2000),
+                    "methods": (cfg.words_methods, 1200),
+                    "results": (cfg.words_results, 1600),
+                }
+                word_min, word_max = _word_targets.get(section_name, (500, 1500))
+
+                section_instruction = (
+                    f"WRITE THE '{section_name}' SECTION. Execute EXACTLY as specified below.\n\n"
+                    f"THESIS: {thesis}\n\n"
                 )
+                if key_points:
+                    section_instruction += "KEY POINTS (cover ALL of these):\n"
+                    for i, p in enumerate(key_points, 1):
+                        section_instruction += f"  {i}. {p}\n"
+                    section_instruction += "\n"
 
-            # Inject synthesis guidance into ALL writer sections (not just proposition-dependent ones)
-            synthesis_instruction = ""
-            if synthesis_guidance:
-                synthesis_instruction = (
-                    f"\n\nSYNTHESIS PHASE OUTPUT (AUTHORITATIVE):\n{synthesis_guidance[:3000]}\n"
-                    f"The synthesis phase reviewed all evidence and may have REVISED propositions "
-                    f"(dropping established-knowledge items, merging redundant ones). "
-                    f"Use the REVISED proposition set if one exists. Do NOT re-introduce "
-                    f"propositions that were dropped by the synthesis/critic phases.\n"
-                )
+                if subsections:
+                    section_instruction += f"SUBSECTIONS: {', '.join(subsections)}\n\n"
 
-            # F+8.5 Inject summary of already-written sections to prevent repetition
-            # The LLM must know what tables, constructs, and arguments already exist
+                if citations:
+                    section_instruction += "CITATIONS TO USE (from advisory board plan):\n"
+                    for c in citations:
+                        use_for = c.get("use_for", "")
+                        section_instruction += f"  - {c.get('author_year', '?')} [paper_id={c.get('paper_id')}] — {use_for}\n"
+                    section_instruction += "\n"
+
+                if tables:
+                    section_instruction += f"TABLES: {', '.join(tables)}\n\n"
+                else:
+                    section_instruction += "TABLES: NONE — do not create any tables in this section.\n\n"
+
+                if must_not:
+                    section_instruction += "MUST NOT:\n"
+                    for mn in must_not:
+                        section_instruction += f"  - {mn}\n"
+                    section_instruction += "\n"
+
+                if transition:
+                    section_instruction += f"TRANSITION: End by connecting to the next section — {transition}\n\n"
+
+                section_instruction += f"WORD COUNT: {word_min}-{word_max} words.\n"
+
+                # Add global plan context (constructs, propositions)
+                constructs = plan.get("constructs", [])
+                if constructs:
+                    section_instruction += "\nCONSTRUCT NAMES (use these EXACT names, never rename):\n"
+                    for ct in constructs:
+                        section_instruction += f"  - *{ct.get('name', '')}*: {ct.get('definition', '')}\n"
+
+                propositions = plan.get("propositions", [])
+                if propositions and section_name not in ("abstract", "methodology"):
+                    section_instruction += f"\nPROPOSITIONS (locked by advisory board, do not modify):\n"
+                    for p in propositions:
+                        section_instruction += f"  - {p.get('id', '?')}: {p.get('statement', '')[:150]}\n"
+
+            elif legacy_brief:
+                # Fallback: use legacy brief + default section instruction
+                fallback_sections = dict(self._writer_sections())
+                section_instruction = fallback_sections.get(section_name, f"Write the {section_name} section.")
+                section_instruction += f"\n\nWRITING BRIEF:\n{legacy_brief[:3000]}\n"
+            else:
+                # No plan, no brief — use default section instructions
+                fallback_sections = dict(self._writer_sections())
+                section_instruction = fallback_sections.get(section_name, f"Write the {section_name} section.")
+
+            # ── INJECT ALREADY-WRITTEN SECTION SUMMARIES (anti-overlap) ──
             already_written_summary = ""
-            for prev_name, _ in writer_sections:
+            for prev_name in section_names:
                 if prev_name == section_name:
-                    break  # Only include sections written BEFORE this one
+                    break
                 prev_file = sections_dir / f"{prev_name}.md"
                 if prev_file.exists() and prev_file.stat().st_size > 100:
                     prev_content = prev_file.read_text(encoding="utf-8")
-                    # Extract table names and construct definitions from prior sections
                     import re as _aw_re
                     tables = _aw_re.findall(r'\*\*(?:Table \d+[a-z]?:?\s*[^\*]+)\*\*', prev_content)
                     constructs = _aw_re.findall(r'\*([A-Z][^*]{3,50})\*', prev_content)
                     headers = _aw_re.findall(r'^#{2,4}\s+(.+)$', prev_content, _aw_re.MULTILINE)
+                    # Also extract first sentence of each paragraph for argument tracking
+                    paras = [p.strip() for p in prev_content.split("\n\n") if len(p.strip()) > 50 and not p.strip().startswith("|") and not p.strip().startswith("#")]
+                    first_sentences = []
+                    for para in paras[:5]:
+                        sent_end = min(
+                            (para.find(". ") if para.find(". ") > 0 else 9999),
+                            (para.find("? ") if para.find("? ") > 0 else 9999),
+                        )
+                        if sent_end < 9999:
+                            first_sentences.append(para[:sent_end + 1].strip()[:100])
                     summary_parts = []
                     if tables:
-                        summary_parts.append(f"  Tables: {', '.join(t[:60] for t in tables[:5])}")
+                        summary_parts.append(f"Tables: {', '.join(t[:60] for t in tables[:5])}")
                     if constructs:
-                        summary_parts.append(f"  Constructs defined: {', '.join(set(c[:40] for c in constructs[:8]))}")
+                        summary_parts.append(f"Constructs: {', '.join(set(c[:40] for c in constructs[:6]))}")
                     if headers:
-                        summary_parts.append(f"  Subsections: {', '.join(h[:40] for h in headers[:6])}")
+                        summary_parts.append(f"Subsections: {', '.join(h[:40] for h in headers[:6])}")
+                    if first_sentences:
+                        summary_parts.append(f"Arguments: {'; '.join(first_sentences[:3])}")
                     if summary_parts:
-                        already_written_summary += f"\n- {prev_name}: " + "; ".join(summary_parts)
+                        already_written_summary += f"\n- {prev_name}: " + " | ".join(summary_parts)
 
             if already_written_summary:
                 already_written_summary = (
-                    f"\n\nALREADY WRITTEN (DO NOT REPEAT):{already_written_summary}\n"
-                    f"DO NOT re-create any tables, construct definitions, boundary conditions, "
-                    f"or comparison frameworks that already exist above. "
-                    f"If you need to reference a construct, use the EXACT SAME NAME as in prior sections. "
-                    f"Do NOT introduce new names for the same concept.\n"
+                    f"\n\nALREADY WRITTEN (DO NOT REPEAT any of these arguments, tables, or constructs):"
+                    f"{already_written_summary}\n"
                 )
 
-            # F+9. MMR-diversified evidence injection — section-aware
-            data_injection = ""
-
+            # ── MMR EVIDENCE INJECTION (grounding data for the writer) ──
+            mmr_injection = ""
             _section_claim_types = {
                 "introduction": {"gap", "finding", "theory"},
                 "theoretical_background": {"theory", "finding", "method"},
@@ -2597,29 +3282,24 @@ class RLMEngine:
             }
             relevant_types = _section_claim_types.get(section_name, set())
 
-            # Strategy: Use MMR from central DB (115K vectors) when available,
-            # fall back to session DB type-filtering
-            mmr_injected = False
             if central_db and _topic_emb and section_name not in ("abstract",):
                 try:
-                    # Embed the section theme for targeted retrieval
-                    section_query = f"{topic} {section_name} {instruction[:200]}"
+                    section_query = f"{topic} {section_name} {sec_plan.get('thesis', '')[:200]}" if sec_plan else f"{topic} {section_name}"
                     sec_emb_result = self._embed_client.models.embed_content(
                         model="gemini-embedding-001", contents=section_query[:500],
                     )
                     if sec_emb_result.embeddings:
                         sec_emb = sec_emb_result.embeddings[0].values
 
-                        # 1. MMR claims — diverse, relevant, max 3 per paper
+                        # MMR claims — diverse, relevant
                         mmr_claims = central_db.search_claims_mmr(
                             sec_emb, limit=25, min_cosine=0.45, lam=0.7, paper_cap=3,
                         )
                         if relevant_types:
                             mmr_claims = [c for c in mmr_claims
                                           if c.get("claim_type", "finding") in relevant_types][:20]
-
                         if mmr_claims:
-                            section_evidence = f"EVIDENCE for {section_name} ({len(mmr_claims)} claims, MMR-diversified across papers):\n"
+                            mmr_injection += f"\nEVIDENCE for {section_name} ({len(mmr_claims)} claims, MMR-diversified):\n"
                             for c in mmr_claims:
                                 meta = ""
                                 if c.get("effect_size"):
@@ -2628,109 +3308,49 @@ class RLMEngine:
                                     meta += f" p={c['p_value']}"
                                 if c.get("sample_size"):
                                     meta += f" N={c['sample_size']}"
-                                if c.get("study_design"):
-                                    meta += f" design={c['study_design']}"
-                                section_evidence += (
+                                mmr_injection += (
                                     f"- [{c.get('claim_type', 'finding')}] {c['claim_text'][:200]} "
-                                    f"(paper: {c.get('paper_title', '')[:60]}, "
-                                    f"sim={c.get('cosine_similarity', '')}{meta})\n"
+                                    f"(paper: {c.get('paper_title', '')[:60]}{meta})\n"
                                 )
-                            data_injection += f"\n\n{section_evidence}\n"
-                            mmr_injected = True
 
-                        # 2. MMR chunks — grounded paragraphs from full text
+                        # MMR chunks — grounded full-text passages
                         mmr_chunks = central_db.search_chunks_mmr(
-                            sec_emb, limit=8, min_cosine=0.50, lam=0.6, paper_cap=1,
+                            sec_emb, limit=6, min_cosine=0.50, lam=0.6, paper_cap=1,
                         )
                         if mmr_chunks:
-                            chunk_evidence = f"GROUNDED EXCERPTS ({len(mmr_chunks)} full-text passages, 1 per paper):\n"
+                            mmr_injection += f"\nGROUNDED EXCERPTS ({len(mmr_chunks)} passages):\n"
                             for ch in mmr_chunks:
-                                chunk_evidence += (
+                                mmr_injection += (
                                     f"--- [{ch.get('paper_title', '')[:50]}] ---\n"
                                     f"{ch['chunk_text'][:300]}...\n\n"
                                 )
-                            data_injection += f"\n{chunk_evidence}\n"
-                            mmr_injected = True
 
-                        # 3. Contradictions for Discussion section
+                        # Contradictions for discussion
                         if section_name == "discussion" and _contradictions:
-                            contra_text = f"CONTRADICTIONS TO ADDRESS ({len(_contradictions[:5])} found):\n"
+                            mmr_injection += f"\nCONTRADICTIONS TO ADDRESS:\n"
                             for ct in _contradictions[:5]:
-                                contra_text += (
-                                    f"- CLAIM A ({ct['signal_a']}): {ct['claim_a']['claim_text'][:100]} "
-                                    f"[{ct['claim_a'].get('paper_title', '')[:40]}]\n"
-                                    f"  CLAIM B ({ct['signal_b']}): {ct['claim_b']['claim_text'][:100]} "
-                                    f"[{ct['claim_b'].get('paper_title', '')[:40]}]\n"
-                                    f"  Similarity: {ct['similarity']} — MUST acknowledge and analyze this disagreement.\n\n"
+                                mmr_injection += (
+                                    f"- {ct['claim_a']['claim_text'][:100]} vs "
+                                    f"{ct['claim_b']['claim_text'][:100]}\n"
                                 )
-                            data_injection += f"\n{contra_text}\n"
-
-                        # 4. Evidence clusters for Literature Review
-                        if section_name in ("literature_review", "theoretical_background") and _evidence_clusters:
-                            cluster_text = f"CONVERGENT EVIDENCE ({len(_evidence_clusters[:8])} clusters found):\n"
-                            for i, cl in enumerate(_evidence_clusters[:8], 1):
-                                rep = cl["representative"]
-                                cluster_text += (
-                                    f"Cluster {i}: {rep['claim_text'][:120]}\n"
-                                    f"  {cl['n_studies']} independent studies, {cl['n_claims']} claims\n"
-                                )
-                                if cl["countries"]:
-                                    cluster_text += f"  Countries: {', '.join(cl['countries'][:5])}\n"
-                                if cl["study_designs"]:
-                                    cluster_text += f"  Designs: {', '.join(cl['study_designs'][:4])}\n"
-                                if cl["effect_sizes"]:
-                                    cluster_text += f"  Effect sizes: {', '.join(cl['effect_sizes'][:3])}\n"
-                                cluster_text += "\n"
-                            data_injection += f"\n{cluster_text}\n"
-
                 except Exception as exc:
-                    _log.warning("PIPELINE WRITER: MMR evidence retrieval failed: %s", exc)
+                    _log.warning("PIPELINE WRITER: MMR retrieval failed for %s: %s", section_name, exc)
 
-            # Fallback: session DB type-filtered claims
-            if not mmr_injected:
-                if cached_claims_summary:
-                    if relevant_types and db and session_id:
-                        try:
-                            relevant_claims = [
-                                c for c in db.get_claims(session_id)
-                                if c.get("claim_type", "finding") in relevant_types
-                            ][:40]
-                            if relevant_claims:
-                                section_claims = f"RELEVANT EVIDENCE for {section_name} ({len(relevant_claims)} claims):\n"
-                                for c in relevant_claims:
-                                    section_claims += (
-                                        f"- [{c.get('claim_type', 'finding')}] {c.get('claim_text', '')[:120]} "
-                                        f"(paper_id={c.get('paper_id')}, conf={c.get('confidence', '')})\n"
-                                    )
-                                data_injection += f"\n\n{section_claims}\n"
-                            else:
-                                data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
-                        except Exception:
-                            data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
-                    else:
-                        data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
-            if cached_papers_summary:
-                data_injection += f"\n{cached_papers_summary[:4000]}\n"
-
+            # ── COMPOSE THE OBJECTIVE ──
             objective = (
-                f"Write the '{section_name}' section for the research paper on: {topic}. "
-                f"{instruction} "
-                f"{brief_instruction}"
-                f"{synthesis_instruction}"
-                f"{data_injection}"
-                f"{already_written_summary}"
-                f"Use write_section(section='{section_name}', content=YOUR_TEXT) to save. "
-                f"Do NOT use markdown headers at the start — the system adds them. "
-                f"Every factual statement must cite a paper from the data above using (Author, Year) format. "
-                f"ONLY cite papers with cosine similarity ≥ 0.6 to the section theme — do NOT pad with irrelevant citations. "
-                f"The paper MUST cite at least 30 unique papers total across all sections. "
-                f"WRITING STYLE: Average sentence length MUST be under 30 words. "
-                f"NO hedging phrases ('it is imperative to', 'it should be noted that', "
-                f"'plays a crucial role in'). Be direct: 'X drives Y', not 'X plays a crucial role in driving Y'. "
-                f"NO repeating arguments from other sections — each section makes NEW points only."
+                f"{section_instruction}\n\n"
+                f"{style_guide}\n"
+                f"{already_written_summary}\n"
             )
-
-            # Inject special instructions (domain expertise, empirical context)
+            if mmr_injection:
+                objective += f"\n{mmr_injection}\n"
+            if cached_papers_summary:
+                objective += f"\n{cached_papers_summary}\n"
+            objective += (
+                f"\nSave using write_section(section='{section_name}', content=YOUR_TEXT). "
+                f"Do NOT use markdown headers at the start. "
+                f"Every factual statement must cite using (Author, Year) format from the citation menu."
+            )
             if self.config.special_instructions:
                 objective += f"\n\nAUTHOR DOMAIN EXPERTISE:\n{self.config.special_instructions}\n"
 
@@ -2744,8 +3364,7 @@ class RLMEngine:
             )
             _log.info("PIPELINE WRITER: Section %s done — %d chars", section_name, len(result))
 
-            # Auto-save: if the writer produced substantial text but didn't call write_section,
-            # save it automatically. This prevents losing 10K+ chars of output.
+            # Auto-save if writer didn't call write_section
             section_file = sections_dir / f"{section_name}.md"
             should_auto_save = False
             if len(result) > 500:
@@ -2754,33 +3373,31 @@ class RLMEngine:
                 elif section_file.stat().st_size < 100:
                     should_auto_save = True
                 elif section_file.stat().st_size < len(result) * 0.5:
-                    # Existing file is less than half the new content — writer probably
-                    # produced a better version as text instead of calling write_section
                     should_auto_save = True
             if should_auto_save:
-                # Scrub LLM meta-text before auto-saving (same scrubber as write_section)
                 from .tools.writing import _strip_llm_meta_text
                 result = _strip_llm_meta_text(result)
-                _log.info("PIPELINE WRITER: Auto-saving %s (%d chars — writer didn't call write_section)",
-                          section_name, len(result))
+                _log.info("PIPELINE WRITER: Auto-saving %s (%d chars)", section_name, len(result))
                 section_file.write_text(result, encoding="utf-8")
 
-            # Inline section critic — programmatic check, rewrite if failed
+            # Inline quality check — safety net (plan should prevent most issues)
             section_issues = self._check_section_quality(section_name, sections_dir, context)
             if section_issues and not self.cancel_flag.is_set():
                 _log.warning("PIPELINE WRITER: Section %s failed inline checks: %s", section_name, section_issues)
                 if on_event:
                     on_event(StepEvent("text", data=f"Section {section_name} needs rewrite: {section_issues[0]}", depth=0))
 
+                # Rewrite with the plan context + issue fixes
                 rewrite_objective = (
-                    f"REWRITE the '{section_name}' section. The following issues were found:\n"
+                    f"REWRITE the '{section_name}' section. The following quality issues were found:\n"
                     + "\n".join(f"- {issue}" for issue in section_issues) + "\n\n"
-                    f"FIRST: Call list_claims() to load extracted evidence, then list_papers(compact=true) for citation formatting. "
-                    f"Use search_similar(text='<section theme>') to find relevant papers. "
+                    f"The original plan for this section:\n{section_instruction[:2000]}\n\n"
                     f"Read the current version, fix ALL issues, and save using "
-                    f"write_section(section='{section_name}', content=YOUR_TEXT). "
-                    f"Do NOT shorten the section — only expand and fix."
+                    f"write_section(section='{section_name}', content=YOUR_TEXT).\n"
                 )
+                if cached_papers_summary:
+                    rewrite_objective += f"\n{cached_papers_summary}\n"
+
                 self._solve_recursive(
                     objective=rewrite_objective,
                     context=context,
@@ -2791,7 +3408,7 @@ class RLMEngine:
                 )
                 _log.info("PIPELINE WRITER: Section %s rewrite complete", section_name)
 
-            # Append per-section reference footer (programmatic — not LLM)
+            # Append per-section reference footer
             self._append_section_references(section_name, sections_dir)
 
             if on_event:
@@ -3554,7 +4171,7 @@ class RLMEngine:
         total_words = 0
         total_citations: set[tuple[str, str]] = set()
 
-        from .tools.writing import _extract_citations_from_text
+        from .tools.writing import _extract_citations_from_text, _verify_citation_against_db
 
         for section_name in expected:
             if section_name not in section_files:
@@ -3710,8 +4327,11 @@ class RLMEngine:
         # Global coherence passes (programmatic, no LLM cost)
         prop_fixes = self._global_proposition_coherence(on_event)
         table_fixes = self._global_table_dedup(on_event)
-        if prop_fixes or table_fixes:
-            _log.info("PRE-CRITIC: Global coherence fixes — %d proposition, %d table", prop_fixes, table_fixes)
+        table_renum = self._global_table_renumber(on_event)
+        temporal_fixes = self._global_temporal_consistency(topic, on_event)
+        if prop_fixes or table_fixes or table_renum or temporal_fixes:
+            _log.info("PRE-CRITIC: Global coherence fixes — %d proposition, %d table dedup, %d table renum, %d temporal",
+                      prop_fixes, table_fixes, table_renum, temporal_fixes)
             # Re-scan word counts after table removal
             total_words = 0
             for section_name_iter in expected:
@@ -4051,6 +4671,225 @@ class RLMEngine:
                     fixes += len(tables) - 1
                     _log.info("TABLE_DEDUP: Stripped %d extra tables from propositions (kept summary)", len(tables) - 1)
 
+        return fixes
+
+    def _global_table_renumber(self, on_event: StepCallback | None) -> int:
+        """Programmatic: assign sequential Table/Figure numbers across the entire paper.
+
+        Scans sections in paper order, finds all table/figure definitions,
+        and renumbers them sequentially (Table 1, Table 2, ...). Updates all
+        references across all sections to match.
+        Returns number of renumbering fixes applied.
+        """
+        import re as _rn_re
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        if not sections_dir.exists():
+            return 0
+
+        # Paper section order (tables/figures should be numbered in this order)
+        _ORDER = [
+            "introduction", "theoretical_background", "methodology", "framework",
+            "propositions", "discussion", "conclusion",
+        ]
+
+        # Load all section contents in order
+        section_contents: dict[str, str] = {}
+        for sec in _ORDER:
+            f = sections_dir / f"{sec}.md"
+            if f.exists():
+                section_contents[sec] = f.read_text(encoding="utf-8")
+
+        if not section_contents:
+            return 0
+
+        # Phase 1: Discover all table/figure definitions and their current numbers
+        # Patterns: **Table N**, **Table N:**, **Table N.**, | Table N |
+        table_def_pattern = _rn_re.compile(r'\*\*Table\s+(\d+)[.:*]')
+        figure_def_pattern = _rn_re.compile(r'\*\*Figure\s+(\d+)[.:*]')
+
+        # Build mapping: old_number -> new_number (in paper order)
+        table_old_to_new: dict[str, str] = {}
+        figure_old_to_new: dict[str, str] = {}
+        table_counter = 1
+        figure_counter = 1
+
+        for sec in _ORDER:
+            content = section_contents.get(sec, "")
+            # Find table definitions in order of appearance
+            for m in table_def_pattern.finditer(content):
+                old_num = m.group(1)
+                if old_num not in table_old_to_new:
+                    table_old_to_new[old_num] = str(table_counter)
+                    table_counter += 1
+            for m in figure_def_pattern.finditer(content):
+                old_num = m.group(1)
+                if old_num not in figure_old_to_new:
+                    figure_old_to_new[old_num] = str(figure_counter)
+                    figure_counter += 1
+
+        # Check if any renumbering is needed
+        tables_need_fix = any(k != v for k, v in table_old_to_new.items())
+        figures_need_fix = any(k != v for k, v in figure_old_to_new.items())
+        # Also check for duplicate numbers (two tables with same number)
+        all_table_nums = []
+        for sec in _ORDER:
+            content = section_contents.get(sec, "")
+            all_table_nums.extend(table_def_pattern.findall(content))
+        has_duplicates = len(all_table_nums) != len(set(all_table_nums))
+
+        if not tables_need_fix and not figures_need_fix and not has_duplicates:
+            return 0
+
+        # If duplicates exist, rebuild mapping scanning all definitions in order
+        if has_duplicates:
+            table_old_to_new.clear()
+            table_counter = 1
+            for sec in _ORDER:
+                content = section_contents.get(sec, "")
+                for m in table_def_pattern.finditer(content):
+                    # Use position-based key to handle duplicates
+                    table_old_to_new[f"{sec}:{m.start()}:{m.group(1)}"] = str(table_counter)
+                    table_counter += 1
+
+            # For duplicates, do positional replacement per section
+            fixes = 0
+            for sec in _ORDER:
+                content = section_contents.get(sec, "")
+                new_content = content
+                # Replace definitions in reverse order to preserve positions
+                defs = list(table_def_pattern.finditer(content))
+                offset = 0
+                sec_table_counter = 0
+                for m in defs:
+                    key = f"{sec}:{m.start()}:{m.group(1)}"
+                    new_num = table_old_to_new.get(key)
+                    if new_num and m.group(1) != new_num:
+                        # Replace this specific definition
+                        old_text = m.group(0)
+                        new_text = old_text.replace(f"Table {m.group(1)}", f"Table {new_num}")
+                        start = m.start() + offset
+                        end = m.end() + offset
+                        new_content = new_content[:start] + new_text + new_content[end:]
+                        offset += len(new_text) - len(old_text)
+                        fixes += 1
+                if new_content != content:
+                    (sections_dir / f"{sec}.md").write_text(new_content, encoding="utf-8")
+            _log.info("TABLE_RENUM: Fixed %d duplicate table numbers across sections", fixes)
+            return fixes
+
+        # Phase 2: Apply renumbering across ALL sections (including abstract for references)
+        fixes = 0
+        for sec in list(section_contents.keys()) + ["abstract"]:
+            f = sections_dir / f"{sec}.md"
+            if not f.exists():
+                continue
+            content = f.read_text(encoding="utf-8")
+            new_content = content
+
+            # Replace table numbers (definitions and references)
+            # Sort by old number descending to avoid Table 1 → Table 2, then Table 12 → Table 22
+            for old_num in sorted(table_old_to_new.keys(), key=int, reverse=True):
+                new_num = table_old_to_new[old_num]
+                if old_num != new_num:
+                    # Use word boundary to avoid partial matches
+                    new_content = _rn_re.sub(
+                        rf'(Table\s+){old_num}\b',
+                        rf'\g<1>{new_num}',
+                        new_content,
+                    )
+
+            for old_num in sorted(figure_old_to_new.keys(), key=int, reverse=True):
+                new_num = figure_old_to_new[old_num]
+                if old_num != new_num:
+                    new_content = _rn_re.sub(
+                        rf'(Figure\s+){old_num}\b',
+                        rf'\g<1>{new_num}',
+                        new_content,
+                    )
+
+            if new_content != content:
+                f.write_text(new_content, encoding="utf-8")
+                fixes += 1
+
+        if fixes:
+            _log.info("TABLE_RENUM: Renumbered tables/figures across %d sections "
+                      "(tables: %s, figures: %s)",
+                      fixes,
+                      {k: v for k, v in table_old_to_new.items() if k != v},
+                      {k: v for k, v in figure_old_to_new.items() if k != v})
+            if on_event:
+                on_event(StepEvent("text", data=f"Renumbered tables/figures across {fixes} sections", depth=0))
+        return fixes
+
+    def _global_temporal_consistency(self, topic: str, on_event: StepCallback | None) -> int:
+        """Programmatic: ensure temporal scope is consistent across all sections.
+
+        Extracts date ranges from title/abstract/boundary conditions and flags
+        contradictions. Auto-fixes where possible.
+        Returns number of fixes applied.
+        """
+        import re as _tc_re
+        ws = self.config.workspace
+        sections_dir = ws / self.config.session_root_dir / "output" / "sections"
+        if not sections_dir.exists():
+            return 0
+
+        # Extract canonical date range from topic (title)
+        date_range_match = _tc_re.search(r'\((\d{4})[–\-](\d{4})\)', topic)
+        if not date_range_match:
+            # Try looser pattern
+            date_range_match = _tc_re.search(r'(\d{4})[–\-](\d{4})', topic)
+        if not date_range_match:
+            return 0  # No date range in title — nothing to enforce
+
+        canonical_start = date_range_match.group(1)
+        canonical_end = date_range_match.group(2)
+        canonical_range = f"{canonical_start}–{canonical_end}"
+        _log.info("TEMPORAL: Canonical date range from title: %s", canonical_range)
+
+        fixes = 0
+        _ALL_SECTIONS = [
+            "abstract", "introduction", "methodology", "theoretical_background",
+            "framework", "propositions", "discussion", "conclusion",
+        ]
+
+        for sec in _ALL_SECTIONS:
+            f = sections_dir / f"{sec}.md"
+            if not f.exists():
+                continue
+            content = f.read_text(encoding="utf-8")
+
+            # Find all date ranges in this section (YYYY–YYYY or YYYY-YYYY)
+            ranges_found = _tc_re.findall(r'(\d{4})[–\-](\d{4})', content)
+            new_content = content
+            for start, end in ranges_found:
+                # Check if this looks like it's trying to be the study's temporal scope
+                # (not a citation date range like "2010-2015 data")
+                # Heuristic: if start matches canonical start but end differs, it's a contradiction
+                if start == canonical_start and end != canonical_end:
+                    old_range = f"{start}–{end}"
+                    old_range_dash = f"{start}-{end}"
+                    new_content = new_content.replace(old_range, canonical_range)
+                    new_content = new_content.replace(old_range_dash, canonical_range)
+                    fixes += 1
+                    _log.info("TEMPORAL: Fixed %s→%s in %s", f"{start}–{end}", canonical_range, sec)
+                # Also check reversed case: end matches but start differs
+                elif end == canonical_end and start != canonical_start:
+                    old_range = f"{start}–{end}"
+                    old_range_dash = f"{start}-{end}"
+                    new_content = new_content.replace(old_range, canonical_range)
+                    new_content = new_content.replace(old_range_dash, canonical_range)
+                    fixes += 1
+                    _log.info("TEMPORAL: Fixed %s→%s in %s", f"{start}–{end}", canonical_range, sec)
+
+            if new_content != content:
+                f.write_text(new_content, encoding="utf-8")
+
+        if fixes:
+            _log.info("TEMPORAL: Fixed %d date range inconsistencies (canonical: %s)", fixes, canonical_range)
+            if on_event:
+                on_event(StepEvent("text", data=f"Fixed {fixes} temporal scope inconsistencies → {canonical_range}", depth=0))
         return fixes
 
     def post_peer_review_gate(self, on_event: StepCallback | None = None) -> dict[str, Any]:
@@ -4619,6 +5458,145 @@ class RLMEngine:
 
         if synced:
             _log.info("PIPELINE VERIFY: Synced %d new doi_validations to central DB", synced)
+
+    def _inject_top_tier_papers(
+        self, central_db: Any, db: Any, session_id: int, topic: str,
+        on_event: StepCallback | None,
+    ) -> None:
+        """Inject relevant AAA/AA papers from central DB into session for citation quality."""
+        try:
+            # Count current top-tier papers in session
+            current_aaa = db._conn.execute(
+                "SELECT COUNT(*) FROM papers WHERE session_id = ? AND journal_tier = 'AAA'",
+                (session_id,),
+            ).fetchone()[0]
+            current_aa = db._conn.execute(
+                "SELECT COUNT(*) FROM papers WHERE session_id = ? AND journal_tier = 'AA'",
+                (session_id,),
+            ).fetchone()[0]
+            total_selected = db._conn.execute(
+                "SELECT COUNT(*) FROM papers WHERE session_id = ? AND selected_for_deep_read = 1",
+                (session_id,),
+            ).fetchone()[0]
+
+            _log.info("TOP-TIER INJECT: Current session has %d AAA + %d AA papers (%d selected)",
+                      current_aaa, current_aa, total_selected)
+
+            # Target: enough top-tier to reach 50% of citations
+            # If we have 30 selected papers and need 50% AAA/AA, we need ~15 top-tier
+            target_top_tier = max(10, int(total_selected * 0.5)) if total_selected > 0 else 15
+            needed = target_top_tier - (current_aaa + current_aa)
+            if needed <= 0:
+                _log.info("TOP-TIER INJECT: Already have enough top-tier papers (%d/%d)",
+                          current_aaa + current_aa, target_top_tier)
+                return
+
+            # Get topic embedding for relevance search
+            _topic_emb = getattr(self, "_topic_emb", None)
+            if not _topic_emb:
+                # Generate topic embedding
+                import os
+                api_key = os.getenv("ARA_GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                if not api_key:
+                    return
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                emb_result = client.models.embed_content(
+                    model="gemini-embedding-001", contents=topic[:500],
+                )
+                if not emb_result.embeddings:
+                    return
+                _topic_emb = emb_result.embeddings[0].values
+
+            # Search central DB for relevant top-tier papers
+            top_tier_rows = central_db._conn.execute(
+                "SELECT paper_id, title, abstract, authors, year, doi, journal_name, journal_tier, "
+                "citation_count, embedding FROM papers "
+                "WHERE journal_tier IN ('AAA', 'AA') AND embedding IS NOT NULL "
+                "ORDER BY citation_count DESC"
+            ).fetchall()
+
+            if not top_tier_rows:
+                _log.info("TOP-TIER INJECT: No top-tier papers with embeddings in central DB")
+                return
+
+            # Score by cosine similarity to topic
+            import numpy as np
+            query_vec = np.array(_topic_emb, dtype=np.float32)
+            query_norm = np.linalg.norm(query_vec)
+            if query_norm == 0:
+                return
+            query_vec = query_vec / query_norm
+
+            scored = []
+            for r in top_tier_rows:
+                try:
+                    emb = json.loads(r["embedding"])
+                    emb_vec = np.array(emb, dtype=np.float32)
+                    emb_norm = np.linalg.norm(emb_vec)
+                    if emb_norm == 0:
+                        continue
+                    cos_sim = float(np.dot(query_vec, emb_vec / emb_norm))
+                    if cos_sim >= 0.35:  # Relevance threshold
+                        scored.append((cos_sim, dict(r)))
+                except Exception:
+                    continue
+
+            scored.sort(key=lambda x: -x[0])
+            _log.info("TOP-TIER INJECT: %d relevant top-tier papers found (threshold 0.35)",
+                      len(scored))
+
+            # Get existing titles to avoid duplicates
+            existing_titles = {r[0].lower() for r in db._conn.execute(
+                "SELECT title FROM papers WHERE session_id = ?", (session_id,),
+            ).fetchall()}
+
+            # Inject top papers into session
+            injected = 0
+            for cos_sim, paper in scored[:needed * 2]:  # Fetch extra to account for dupes
+                if injected >= needed:
+                    break
+                title = paper.get("title", "")
+                if title.lower() in existing_titles:
+                    continue
+
+                from .db import classify_journal
+                j_name, j_tier = classify_journal(paper.get("doi"))
+                if not j_tier:
+                    j_tier = paper.get("journal_tier")
+                    j_name = paper.get("journal_name")
+
+                db.store_papers(session_id, [{
+                    "title": title,
+                    "abstract": paper.get("abstract", ""),
+                    "authors": paper.get("authors", "[]"),
+                    "year": paper.get("year"),
+                    "doi": paper.get("doi", ""),
+                    "source": f"central_db_{j_tier}",
+                    "url": "",
+                    "citation_count": paper.get("citation_count", 0),
+                }])
+                # Auto-select for deep read (these are high-quality papers)
+                db._conn.execute(
+                    "UPDATE papers SET selected_for_deep_read = 1, journal_tier = ?, journal_name = ? "
+                    "WHERE session_id = ? AND title = ?",
+                    (j_tier, j_name, session_id, title),
+                )
+                existing_titles.add(title.lower())
+                injected += 1
+
+            if injected > 0:
+                db._conn.commit()
+                _log.info("TOP-TIER INJECT: Injected %d top-tier papers into session "
+                          "(now %d AAA + %d AA + %d injected)",
+                          injected, current_aaa, current_aa, injected)
+                if on_event:
+                    on_event(StepEvent("text",
+                             data=f"Injected {injected} top-tier (AAA/AA) papers from central DB",
+                             depth=0))
+
+        except Exception as exc:
+            _log.warning("TOP-TIER INJECT: Failed: %s", exc)
 
     def _preload_claims_from_central(self, central_db: Any, db: Any, session_id: int, topic: str = "") -> None:
         """Pre-load claims from central DB into session DB.

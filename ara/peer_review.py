@@ -738,10 +738,12 @@ class PeerReviewPipeline:
             self._emit("  No sections directory found — cannot apply revisions")
             return
 
-        # Load section files
+        # Load section files (skip internal pipeline artifacts)
+        from .output import _PIPELINE_ARTIFACTS
         section_files: dict[str, str] = {}
+        _SKIP = _PIPELINE_ARTIFACTS | {"brancher", "paper_plan", "methodology"}
         for f in sections_dir.iterdir():
-            if f.suffix == ".md" and f.is_file():
+            if f.suffix == ".md" and f.is_file() and f.stem not in _SKIP:
                 section_files[f.stem] = f.read_text(encoding="utf-8")
 
         if not section_files:
