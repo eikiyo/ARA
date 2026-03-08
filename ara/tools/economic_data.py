@@ -1,6 +1,6 @@
 # Location: ara/tools/economic_data.py
-# Purpose: 17 data source tools (World Bank, FRED, IMF, OECD, Comtrade, Eurostat, REST Countries, Exchange Rates, Patents, WTO, CPI, SEC, OpenCorporates, UN SDG, WHO, ILO, Air Quality)
-# Functions: search_world_bank, search_fred, search_imf, search_oecd, search_comtrade, search_eurostat, search_countries, search_exchange_rates, search_patents, search_wto, search_transparency, search_sec_edgar, search_open_corporates, search_un_sdg, search_who, search_ilo, search_air_quality
+# Purpose: 16 data source tools (World Bank, FRED, IMF, OECD, Comtrade, Eurostat, REST Countries, Exchange Rates, Patents, WTO, CPI, SEC, UN SDG, WHO, ILO, Air Quality)
+# Functions: search_world_bank, search_fred, search_imf, search_oecd, search_comtrade, search_eurostat, search_countries, search_exchange_rates, search_patents, search_wto, search_transparency, search_sec_edgar, search_un_sdg, search_who, search_ilo, search_air_quality
 # Calls: httpx for HTTP, json for serialization
 # Imports: httpx, json, os, logging
 
@@ -1453,73 +1453,7 @@ def _edgar_company_search(query: str, headers: dict[str, str]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 13. OPENCORPORATES (Company data — free tier, no auth)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def search_open_corporates(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
-    """OpenCorporates API — company registry data from 140+ jurisdictions.
-    Optionally uses OPENCORPORATES_API_KEY env var for higher rate limits."""
-    query = arguments.get("query", "")
-    jurisdiction = arguments.get("jurisdiction", "")
-    limit = min(arguments.get("limit", 10), 30)
-    api_key = os.getenv("OPENCORPORATES_API_KEY", "")
-
-    if not query:
-        return json.dumps({"error": "query required"})
-
-    try:
-        url = "https://api.opencorporates.com/v0.4/companies/search"
-        params: dict[str, Any] = {
-            "q": query,
-            "per_page": limit,
-            "order": "score",
-        }
-        if jurisdiction:
-            params["jurisdiction_code"] = jurisdiction.lower()
-        if api_key:
-            params["api_token"] = api_key
-
-        with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
-            resp = client.get(url, params=params, headers={"User-Agent": _USER_AGENT})
-
-            if resp.status_code == 401:
-                # Free tier may be restricted — return helpful message
-                return json.dumps({
-                    "companies": [],
-                    "error": "OpenCorporates API requires api_token. Set OPENCORPORATES_API_KEY env var.",
-                    "url": f"https://opencorporates.com/companies?q={quote(query)}",
-                    "note": "Use the web URL above for manual lookup.",
-                })
-
-            resp.raise_for_status()
-            data = resp.json()
-
-        companies = []
-        for item in data.get("results", {}).get("companies", []):
-            c = item.get("company", {})
-            companies.append({
-                "name": c.get("name", ""),
-                "jurisdiction": c.get("jurisdiction_code", ""),
-                "company_number": c.get("company_number", ""),
-                "status": c.get("current_status", ""),
-                "incorporation_date": c.get("incorporation_date", ""),
-                "company_type": c.get("company_type", ""),
-                "registered_address": c.get("registered_address_in_full", ""),
-                "url": c.get("opencorporates_url", ""),
-            })
-
-        return json.dumps({
-            "companies": companies,
-            "total": data.get("results", {}).get("total_count", len(companies)),
-            "query": query,
-        })
-    except Exception as e:
-        _log.warning(f"OpenCorporates search failed: {e}")
-        return json.dumps({"companies": [], "error": str(e)})
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 14. UN SDG (Sustainable Development Goals — free, no auth)
+# 13. UN SDG (Sustainable Development Goals — free, no auth)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def search_un_sdg(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
@@ -1863,26 +1797,37 @@ def search_air_quality(arguments: dict[str, Any], ctx: dict[str, Any]) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _openaq_resolve_country(code: str, api_key: str) -> int | None:
+    """Resolve ISO-2 country code to OpenAQ country ID."""
+    try:
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            resp = client.get("https://api.openaq.org/v3/countries", params={"limit": 200},
+                              headers={"X-API-Key": api_key})
+            resp.raise_for_status()
+            for c in resp.json().get("results", []):
+                if c.get("code", "").upper() == code.upper():
+                    return c["id"]
+    except Exception:
+        pass
+    return None
+
+
 def _openaq_latest(args: dict[str, Any], api_key: str) -> str:
     """Get latest air quality measurements via OpenAQ v3 API."""
     country = args.get("country", "")
-    city = args.get("city", "")
     parameter = args.get("parameter", "pm25")
     limit = min(args.get("limit", 20), 100)
 
-    # OpenAQ v3 API
     # Map common parameter names to v3 parameter IDs
     _PARAM_MAP = {"pm25": 2, "pm10": 1, "o3": 3, "no2": 5, "so2": 8, "co": 7}
     param_id = _PARAM_MAP.get(parameter)
 
     url = "https://api.openaq.org/v3/locations"
-    params: dict[str, Any] = {
-        "limit": limit,
-        "order_by": "lastUpdated",
-        "sort_order": "desc",
-    }
+    params: dict[str, Any] = {"limit": limit}
     if country:
-        params["countries_id"] = country
+        cid = _openaq_resolve_country(country, api_key)
+        if cid:
+            params["countries_id"] = cid
     if param_id:
         params["parameters_id"] = param_id
 
@@ -1909,7 +1854,7 @@ def _openaq_latest(args: dict[str, Any], api_key: str) -> str:
                     "min": summary.get("min"),
                     "max": summary.get("max"),
                     "unit": param_info.get("units", ""),
-                    "lastUpdated": loc.get("datetimeLast", {}).get("utc", ""),
+                    "lastUpdated": (loc.get("datetimeLast") or {}).get("utc", ""),
                 })
 
         return json.dumps({"measurements": results, "parameter": parameter})
@@ -1921,7 +1866,7 @@ def _openaq_latest(args: dict[str, Any], api_key: str) -> str:
 def _openaq_countries(api_key: str) -> str:
     """List countries with air quality data via OpenAQ v3."""
     url = "https://api.openaq.org/v3/countries"
-    params: dict[str, Any] = {"limit": 200, "order_by": "locationsCount", "sort_order": "desc"}
+    params: dict[str, Any] = {"limit": 200}
 
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:

@@ -70,7 +70,6 @@ TOOL_DISPATCH: dict[str, Any] = {
     "search_transparency": economic_data.search_transparency,
     # Tier 2 data tools
     "search_sec_edgar": economic_data.search_sec_edgar,
-    "search_open_corporates": economic_data.search_open_corporates,
     "search_un_sdg": economic_data.search_un_sdg,
     "search_who": economic_data.search_who,
     "search_ilo": economic_data.search_ilo,

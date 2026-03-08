@@ -542,7 +542,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
-    # ── Tier 2 data tools (SEC, OpenCorporates, UN SDG, WHO, ILO, Air Quality) ──
+    # ── Tier 2 data tools (SEC, UN SDG, WHO, ILO, Air Quality) ──
     {
         "name": "search_sec_edgar",
         "description": "SEC EDGAR — search US company filings (10-K, 10-Q, 8-K). Returns filing metadata and links. Free, no auth.",
@@ -556,19 +556,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "limit": {"type": "integer", "description": "Max results (default 10)"},
             },
             "required": [],
-        },
-    },
-    {
-        "name": "search_open_corporates",
-        "description": "OpenCorporates API — company registry data from 140+ jurisdictions. Returns company name, status, type, incorporation date. Free tier.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Company name search query"},
-                "jurisdiction": {"type": "string", "description": "Jurisdiction code, e.g. 'us_de' (Delaware), 'gb' (UK)"},
-                "limit": {"type": "integer", "description": "Max results (default 10)"},
-            },
-            "required": ["query"],
         },
     },
     {

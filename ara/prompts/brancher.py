@@ -87,7 +87,7 @@ You have access to 17 economic/institutional data APIs — use them to ground cr
 insights in REAL DATA, not just literature:
 - **Macroeconomic**: `search_world_bank`, `search_fred`, `search_imf`, `search_oecd`
 - **Trade**: `search_comtrade`, `search_wto`, `search_eurostat`
-- **Institutional**: `search_transparency` (corruption CPI), `search_open_corporates`
+- **Institutional**: `search_transparency` (corruption CPI)
 - **Innovation**: `search_patents` (US patent data)
 - **Development**: `search_un_sdg`, `search_who`, `search_ilo`
 - **Currency**: `search_exchange_rates` (ECB rates, 30+ currencies)
