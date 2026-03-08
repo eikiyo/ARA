@@ -16,6 +16,242 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
+# ── Journal Tier Rankings ────────────────────────────────────────────────
+# AAA = FT50 / UTD24 / ABS 4* (absolute top-tier, highest priority)
+# AA  = ABS 4 / ABDC A* / well-known Q1 (strong priority)
+# Papers from these journals get 50% more citation weight in all gates.
+#
+# Format: DOI prefix pattern → (journal_name, tier)
+# DOI prefixes: 10.XXXX/ identifies the registrant (publisher),
+# and the suffix path often identifies the specific journal.
+
+JOURNAL_TIERS: dict[str, tuple[str, str]] = {}
+
+# We build the lookup from a flat list for readability
+_TIER_DATA: list[tuple[str, str, list[str]]] = [
+    # ── AAA: FT50 / UTD24 / ABS 4* ──────────────────────────────────
+    # Management
+    ("Academy of Management Journal", "AAA", ["10.5465/amj"]),
+    ("Academy of Management Review", "AAA", ["10.5465/amr"]),
+    ("Administrative Science Quarterly", "AAA", ["10.1177/0001839"]),
+    ("Strategic Management Journal", "AAA", ["10.1002/smj"]),
+    ("Organization Science", "AAA", ["10.1287/orsc"]),
+    ("Management Science", "AAA", ["10.1287/mnsc"]),
+    ("Journal of Management", "AAA", ["10.1177/0149206"]),
+    ("Journal of Management Studies", "AAA", ["10.1111/joms"]),
+    # IB / Innovation
+    ("Journal of International Business Studies", "AAA", ["10.1057/jibs", "10.1057/s41267"]),
+    ("Research Policy", "AAA", ["10.1016/j.respol"]),
+    ("Journal of World Business", "AAA", ["10.1016/j.jwb"]),
+    ("Global Strategy Journal", "AAA", ["10.1002/gsj"]),
+    # Finance
+    ("Journal of Finance", "AAA", ["10.1111/jofi"]),
+    ("Journal of Financial Economics", "AAA", ["10.1016/j.jfineco"]),
+    ("Review of Financial Studies", "AAA", ["10.1093/rfs"]),
+    # Accounting
+    ("The Accounting Review", "AAA", ["10.2308/accr"]),
+    ("Journal of Accounting Research", "AAA", ["10.1111/1475-679x", "10.1111/joar"]),
+    ("Journal of Accounting and Economics", "AAA", ["10.1016/j.jacceco"]),
+    # Economics
+    ("American Economic Review", "AAA", ["10.1257/aer"]),
+    ("Quarterly Journal of Economics", "AAA", ["10.1093/qje"]),
+    ("Econometrica", "AAA", ["10.3982/ecta", "10.2307/1913"]),
+    ("Journal of Political Economy", "AAA", ["10.1086/jpe", "10.1086/26"]),
+    ("Review of Economic Studies", "AAA", ["10.1093/restud"]),
+    # Marketing
+    ("Journal of Marketing", "AAA", ["10.1177/0022242", "10.1509/jm"]),
+    ("Journal of Marketing Research", "AAA", ["10.1177/0022243", "10.1509/jmr"]),
+    ("Marketing Science", "AAA", ["10.1287/mksc"]),
+    ("Journal of Consumer Research", "AAA", ["10.1093/jcr"]),
+    # Operations
+    ("Journal of Operations Management", "AAA", ["10.1016/j.jom", "10.1002/joom"]),
+    ("Production and Operations Management", "AAA", ["10.1111/poms"]),
+    ("Manufacturing & Service Operations Management", "AAA", ["10.1287/msom"]),
+    # IS / Technology
+    ("MIS Quarterly", "AAA", ["10.2307/25148"]),
+    ("Information Systems Research", "AAA", ["10.1287/isre"]),
+    # General Science
+    ("Nature", "AAA", ["10.1038/nature", "10.1038/s41586"]),
+    ("Science", "AAA", ["10.1126/science"]),
+    ("Proceedings of the National Academy of Sciences", "AAA", ["10.1073/pnas"]),
+    # Medical
+    ("The Lancet", "AAA", ["10.1016/s0140-6736", "10.1016/j.lancet"]),
+    ("New England Journal of Medicine", "AAA", ["10.1056/nejm"]),
+    ("BMJ", "AAA", ["10.1136/bmj"]),
+    ("JAMA", "AAA", ["10.1001/jama"]),
+    # Entrepreneurship
+    ("Journal of Business Venturing", "AAA", ["10.1016/j.jbusvent"]),
+    ("Entrepreneurship Theory and Practice", "AAA", ["10.1111/etap", "10.1177/1042258"]),
+
+    # ── AA: ABS 4 / ABDC A* / Strong Q1 ─────────────────────────────
+    # Management
+    ("Journal of Organizational Behavior", "AA", ["10.1002/job"]),
+    ("Organization Studies", "AA", ["10.1177/0170840"]),
+    ("Human Resource Management", "AA", ["10.1002/hrm"]),
+    ("Leadership Quarterly", "AA", ["10.1016/j.leaqua"]),
+    ("British Journal of Management", "AA", ["10.1111/1467-8551"]),
+    ("Long Range Planning", "AA", ["10.1016/j.lrp"]),
+    # IB / Innovation
+    ("International Business Review", "AA", ["10.1016/j.ibusrev"]),
+    ("Journal of International Management", "AA", ["10.1016/j.intman"]),
+    ("Technovation", "AA", ["10.1016/j.technovation"]),
+    ("R&D Management", "AA", ["10.1111/radm"]),
+    ("Technological Forecasting and Social Change", "AA", ["10.1016/j.techfore"]),
+    # Finance
+    ("Journal of Corporate Finance", "AA", ["10.1016/j.jcorpfin"]),
+    ("Journal of Banking & Finance", "AA", ["10.1016/j.jbankfin"]),
+    ("Journal of Monetary Economics", "AA", ["10.1016/j.jmoneco"]),
+    ("Journal of Financial Intermediation", "AA", ["10.1016/j.jfi"]),
+    ("Review of Finance", "AA", ["10.1093/rof"]),
+    # IS / Technology
+    ("Journal of the Association for Information Systems", "AA", ["10.17705/1jais"]),
+    ("Journal of Strategic Information Systems", "AA", ["10.1016/j.jsis"]),
+    ("Information & Management", "AA", ["10.1016/j.im."]),
+    ("International Journal of Information Management", "AA", ["10.1016/j.ijinfomgt"]),
+    ("European Journal of Information Systems", "AA", ["10.1057/ejis", "10.1080/0960085x"]),
+    ("Journal of Information Technology", "AA", ["10.1057/jit", "10.1177/0268396"]),
+    # Marketing
+    ("Journal of the Academy of Marketing Science", "AA", ["10.1007/s11747"]),
+    ("Journal of Retailing", "AA", ["10.1016/j.jretai"]),
+    ("International Journal of Research in Marketing", "AA", ["10.1016/j.ijresmar"]),
+    # Operations / SCM
+    ("Journal of Supply Chain Management", "AA", ["10.1111/jscm"]),
+    ("International Journal of Operations & Production Management", "AA", ["10.1108/ijopm"]),
+    # Economics
+    ("Journal of Economic Perspectives", "AA", ["10.1257/jep"]),
+    ("Journal of Economic Literature", "AA", ["10.1257/jel"]),
+    ("Review of Economics and Statistics", "AA", ["10.1162/rest"]),
+    ("Journal of International Economics", "AA", ["10.1016/j.jinteco"]),
+    ("Journal of Development Economics", "AA", ["10.1016/j.jdeveco"]),
+    # Health / Medical
+    ("The Lancet Digital Health", "AA", ["10.1016/s2589-7500"]),
+    ("Nature Medicine", "AA", ["10.1038/nm", "10.1038/s41591"]),
+    ("Nature Reviews", "AA", ["10.1038/nrd", "10.1038/nrg", "10.1038/s41573", "10.1038/s41576"]),
+    ("PLOS Medicine", "AA", ["10.1371/journal.pmed"]),
+    ("Annals of Internal Medicine", "AA", ["10.7326/m"]),
+    # Cochrane / Systematic Reviews
+    ("Cochrane Database of Systematic Reviews", "AA", ["10.1002/14651858"]),
+    # Psychology / Behavioral
+    ("Journal of Applied Psychology", "AA", ["10.1037/apl"]),
+    ("Organizational Behavior and Human Decision Processes", "AA", ["10.1016/j.obhdp"]),
+    ("Psychological Bulletin", "AA", ["10.1037/bul"]),
+    # Sustainability / Ethics
+    ("Journal of Business Ethics", "AA", ["10.1007/s10551"]),
+    ("Business Strategy and the Environment", "AA", ["10.1002/bse"]),
+    ("Journal of Cleaner Production", "AA", ["10.1016/j.jclepro"]),
+    # Public Policy / Development
+    ("World Development", "AA", ["10.1016/j.worlddev"]),
+    ("Journal of Development Studies", "AA", ["10.1080/00220388"]),
+    # AI / CS
+    ("Artificial Intelligence", "AA", ["10.1016/j.artint"]),
+    ("IEEE Transactions on Pattern Analysis", "AA", ["10.1109/tpami"]),
+    ("Journal of Machine Learning Research", "AA", ["10.5555/154959"]),
+    ("ACM Computing Surveys", "AA", ["10.1145/3"]),
+]
+
+for _name, _tier, _prefixes in _TIER_DATA:
+    for _pfx in _prefixes:
+        JOURNAL_TIERS[_pfx.lower()] = (_name, _tier)
+
+
+def classify_journal(doi: str | None) -> tuple[str | None, str | None]:
+    """Classify a paper's journal tier from its DOI.
+
+    Returns (journal_name, tier) where tier is 'AAA', 'AA', or None.
+    Uses longest-prefix matching against the JOURNAL_TIERS lookup.
+    """
+    if not doi:
+        return None, None
+    doi_lower = doi.lower().strip()
+    # Remove URL prefix if present
+    if doi_lower.startswith("http"):
+        doi_lower = doi_lower.split("doi.org/")[-1]
+    # Try longest prefix match first (more specific = better match)
+    best_match: tuple[str | None, str | None] = (None, None)
+    best_len = 0
+    for prefix, (name, tier) in JOURNAL_TIERS.items():
+        if doi_lower.startswith(prefix) and len(prefix) > best_len:
+            best_match = (name, tier)
+            best_len = len(prefix)
+    return best_match
+
+
+# ── Blacklisted Publishers ───────────────────────────────────────────────
+# Papers from these DOI prefixes are excluded from:
+# - Citation menu (writer never sees them)
+# - Deep read selection (triage auto-rejects)
+# - Reference generation (never appear in final paper)
+#
+# Categories:
+# - predatory: Beall's list publishers, no real peer review
+# - preprint: Not peer reviewed (SSRN, Research Square)
+# - vanity: Zero-citation unknown micro-publishers
+# - borderline: Low-impact publishers with minimal editorial standards
+
+BLACKLISTED_DOI_PREFIXES: dict[str, str] = {}
+
+_BLACKLIST_DATA: list[tuple[str, str, list[str]]] = [
+    # ── Predatory Publishers (Beall's List) ──────────────────────────
+    ("SciencePG", "predatory", ["10.11648"]),
+    ("CCSE (Canadian Center of Science and Education)", "predatory", ["10.5539"]),
+    ("SCIRP", "predatory", ["10.4236"]),
+    ("Science and Academic Publishing", "predatory", ["10.12691"]),
+    ("IJSR (International Journal of Science and Research)", "predatory", ["10.21275"]),
+    ("IJAEMS", "predatory", ["10.22161"]),
+    ("Academic Journals (AJOL predatory imprints)", "predatory", ["10.13084"]),
+    ("SciDoc Publishers", "predatory", ["10.19070"]),
+    ("OMICS International", "predatory", ["10.4172"]),
+    ("Medwin Publishers", "predatory", ["10.23880"]),
+    ("Academic Star Publishing", "predatory", ["10.26689"]),
+    ("AIJR Publisher", "predatory", ["10.21467"]),
+    ("Herald Scholarly Open Access", "predatory", ["10.22259"]),
+
+    # ── Preprint Servers (not peer reviewed) ─────────────────────────
+    ("SSRN", "preprint", ["10.2139"]),
+    ("Research Square", "preprint", ["10.21203"]),
+    ("Preprints.org", "preprint", ["10.20944"]),
+    ("OSF Preprints", "preprint", ["10.31219"]),
+    ("NBER Working Papers", "preprint", ["10.3386"]),  # Working papers, not final
+    ("Fake/Test DOIs", "preprint", ["10.1234"]),
+
+    # ── Zero-citation Unknown Micro-publishers ───────────────────────
+    ("Unknown (zero-cite)", "vanity", [
+        "10.21739", "10.26634", "10.35678", "10.54097", "10.55041",
+        "10.59670", "10.63075", "10.63385", "10.70301", "10.22515",
+        "10.37366", "10.47857", "10.55248", "10.62019", "10.63544",
+        "10.69569", "10.25560", "10.9790",
+    ]),
+
+    # ── Borderline Low-quality ───────────────────────────────────────
+    ("IGI Global", "borderline", ["10.4018"]),
+    ("Inderscience", "borderline", ["10.1504"]),
+    ("EDP Sciences", "borderline", ["10.1051"]),
+    ("Walailak Journal", "borderline", ["10.46697"]),
+    ("Virtus Interpress", "borderline", ["10.22495"]),
+]
+
+for _name, _reason, _prefixes in _BLACKLIST_DATA:
+    for _pfx in _prefixes:
+        BLACKLISTED_DOI_PREFIXES[_pfx.lower()] = _reason
+
+
+def is_blacklisted(doi: str | None) -> str | None:
+    """Check if a DOI belongs to a blacklisted publisher.
+
+    Returns the blacklist reason ('predatory', 'preprint', 'vanity', 'borderline')
+    or None if the paper is not blacklisted.
+    """
+    if not doi:
+        return None
+    doi_lower = doi.lower().strip()
+    if doi_lower.startswith("http"):
+        doi_lower = doi_lower.split("doi.org/")[-1]
+    for prefix, reason in BLACKLISTED_DOI_PREFIXES.items():
+        if doi_lower.startswith(prefix):
+            return reason
+    return None
+
+
 # Column whitelists per table — prevents SQL injection via kwargs
 _ALLOWED_COLUMNS: dict[str, set[str]] = {
     "sessions": {
@@ -69,6 +305,8 @@ CREATE TABLE IF NOT EXISTS papers (
     full_text TEXT,
     full_text_path TEXT,
     embedding TEXT,
+    journal_name TEXT,
+    journal_tier TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -305,6 +543,55 @@ class ARADB:
             if col not in existing:
                 self._conn.execute(f"ALTER TABLE papers ADD COLUMN {col} INTEGER DEFAULT 0")
                 self._conn.commit()
+        for col in ("journal_name", "journal_tier"):
+            if col not in existing:
+                self._conn.execute(f"ALTER TABLE papers ADD COLUMN {col} TEXT")
+                self._conn.commit()
+        # Backfill journal_tier for papers that already have DOIs but no tier
+        unclassified = self._conn.execute(
+            "SELECT paper_id, doi FROM papers WHERE doi IS NOT NULL AND journal_tier IS NULL"
+        ).fetchall()
+        if unclassified:
+            updated = 0
+            for row in unclassified:
+                j_name, j_tier = classify_journal(row[1])
+                if j_tier:
+                    self._conn.execute(
+                        "UPDATE papers SET journal_name = ?, journal_tier = ? WHERE paper_id = ?",
+                        (j_name, j_tier, row[0]),
+                    )
+                    updated += 1
+            if updated:
+                self._conn.commit()
+                _log.info("Migration: classified %d/%d papers into journal tiers", updated, len(unclassified))
+        # Purge blacklisted papers — delete from ALL tables (papers, claims, embeddings, etc.)
+        blacklisted_rows = self._conn.execute(
+            "SELECT paper_id, doi FROM papers WHERE doi IS NOT NULL"
+        ).fetchall()
+        bl_paper_ids = []
+        for row in blacklisted_rows:
+            reason = is_blacklisted(row[1])
+            if reason:
+                bl_paper_ids.append(row[0])
+        if bl_paper_ids:
+            placeholders = ",".join("?" for _ in bl_paper_ids)
+            # Delete claims first (FK constraint)
+            self._conn.execute(
+                f"DELETE FROM claims WHERE paper_id IN ({placeholders})", bl_paper_ids,
+            )
+            # Delete risk_of_bias assessments
+            try:
+                self._conn.execute(
+                    f"DELETE FROM risk_of_bias WHERE paper_id IN ({placeholders})", bl_paper_ids,
+                )
+            except Exception:
+                pass  # Table may not exist in older DBs
+            # Delete the papers themselves (includes embeddings in the embedding column)
+            self._conn.execute(
+                f"DELETE FROM papers WHERE paper_id IN ({placeholders})", bl_paper_ids,
+            )
+            self._conn.commit()
+            _log.info("Migration: purged %d blacklisted papers (+ their claims, RoB, embeddings)", len(bl_paper_ids))
         # Ensure phase_checkpoints table exists (for older DBs)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS phase_checkpoints ("
@@ -443,14 +730,23 @@ class ARADB:
                     skipped += 1
                     continue
 
+                # Skip blacklisted publishers entirely
+                bl_reason = is_blacklisted(doi)
+                if bl_reason:
+                    skipped += 1
+                    _log.debug("store_papers: skipped blacklisted paper (%s): %s", bl_reason, title[:60])
+                    continue
+
                 authors_json = json.dumps(p.get("authors", []))
+                j_name, j_tier = classify_journal(doi)
                 try:
                     self._conn.execute(
-                        "INSERT INTO papers (session_id, title, abstract, authors, year, doi, source, url, citation_count, created_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO papers (session_id, title, abstract, authors, year, doi, source, url, citation_count, journal_name, journal_tier, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (session_id, title, p.get("abstract"), authors_json,
                          p.get("year"), doi, p.get("source", "unknown"),
-                         p.get("url"), p.get("citation_count", 0), now),
+                         p.get("url"), p.get("citation_count", 0),
+                         j_name, j_tier, now),
                     )
                     stored += 1
                 except sqlite3.IntegrityError:

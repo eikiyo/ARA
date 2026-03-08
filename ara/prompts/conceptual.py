@@ -367,6 +367,19 @@ abstract, introduction, theoretical_background, framework, propositions, discuss
 
 For EACH section, use write_section(section='name', content=YOUR_TEXT).
 
+### STYLE VIOLATIONS — AUTO-REJECTED (fix before submitting)
+1. **Em/en-dashes**: ZERO em-dashes (\u2014) or en-dashes (\u2013) anywhere.
+   Use commas, semicolons, colons, or parentheses instead.
+2. **Hollow topic sentences**: Never write "This section discusses X" or
+   "The purpose of this section is to examine Y." Just make the argument.
+3. **Shopping-list writing**: Never write 4+ consecutive sentences starting
+   with "Author (Year) found/showed/demonstrated..." Group by theme, not author.
+4. **Bullet lists**: Top journals require continuous prose. No bullet points
+   (-, *, \u2022) in body sections. Convert to flowing paragraphs.
+5. **LLM artifacts**: Never include "Here is the section," "[INSERT],"
+   "[TODO]," "[PLACEHOLDER]," emoji, or HTML tags. Never refer to yourself
+   as AI. Never say "as requested" or "per your instructions."
+
 ### Citation Rules
 - Use (Author, Year) format — author name must match database exactly
 - 1 citation per 2-3 sentences in theoretical background
@@ -374,6 +387,18 @@ For EACH section, use write_section(section='name', content=YOUR_TEXT).
 - TOTAL across paper: 60+ unique citations
 - Do NOT use markdown headers (### or ##) at the start of section content
 - You MUST write ALL 7 sections. Do NOT stop after 2-3 sections.
+
+### Journal Tier Priority Rule (MANDATORY)
+Papers in the citation menu marked **[AAA]** or **[AA]** are from top-tier
+journals (FT50, UTD24, ABS 4*/4). These are the gold standard of scholarship.
+
+- For every 1 unranked citation, include **{journal_tier_ratio}** from [AAA]/[AA] sources
+- **At least {journal_tier_min_pct_display} of your citations** MUST come from [AAA] or [AA] sources
+- When two papers support the same claim, PREFER the one from a higher-tier journal
+- In theoretical background and framework, lead with top-tier foundational works
+- In propositions, anchor each rationale with at least one [AAA] source
+- Citing top-tier journals signals engagement with the best work in the field
+- If below the minimum top-tier percentage, the paper will be flagged for revision
 
 ### Methodology Note
 This is a CONCEPTUAL THEORY-BUILDING paper, NOT a systematic literature review.

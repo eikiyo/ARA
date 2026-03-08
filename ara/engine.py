@@ -835,7 +835,12 @@ class RLMEngine:
                             if critic_def:
                                 enforced_def = dict(critic_def)
                                 enforced_def["objective"] = (
-                                    "YOU MUST USE TOOLS. Do NOT generate a response without calling tools first. "
+                                    "YOU MUST USE TOOLS BEFORE RESPONDING. This is mandatory.\n"
+                                    "Step 1: Call search_similar(text='<hypothesis core claim>') to find supporting/contradicting evidence.\n"
+                                    "Step 2: Call list_claims() to review extracted claims.\n"
+                                    "Step 3: Call list_papers(compact=true) to check citation coverage.\n"
+                                    "Step 4: ONLY THEN evaluate the hypothesis against the evidence.\n"
+                                    "If your response is under 500 characters, it will be REJECTED.\n\n"
                                     + enforced_def["objective"]
                                 )
                                 self._pipeline_run_phase(enforced_def, topic, paper_type, context, on_event)
@@ -962,6 +967,8 @@ class RLMEngine:
             "{min_cites_results}": str(self.config.cites_results),
             "{min_cites_discussion}": str(self.config.cites_discussion),
             "{min_quality_citations}": str(self.config.min_quality_citations),
+            "{journal_tier_ratio}": f"{self.config.journal_tier_ratio:.0f}",
+            "{journal_tier_min_pct_display}": f"{self.config.journal_tier_min_pct:.0%}",
         }
         for placeholder, value in _prompt_subs.items():
             system_prompt = system_prompt.replace(placeholder, value)
@@ -2381,6 +2388,23 @@ class RLMEngine:
         # F. Pre-load claims + papers data once — avoids repeated tool calls per section
         cached_claims_summary = ""
         cached_papers_summary = ""
+        # MMR-powered evidence retrieval from central DB
+        central_db = self.tools.central_db
+        _topic_emb = getattr(self, "_topic_emb", None)
+        # Pre-warm embedding caches in background (loads ~2.5 GB into RAM, saves ~60s per section)
+        if central_db and _topic_emb:
+            import threading as _thr
+            def _prewarm():
+                try:
+                    central_db._load_embeddings_cached("claims")
+                    central_db._load_embeddings_cached("chunks")
+                    central_db._load_embeddings_cached("papers")
+                except Exception:
+                    pass
+            _thr.Thread(target=_prewarm, daemon=True).start()
+            _log.info("PIPELINE WRITER: Pre-warming embedding caches in background")
+        _evidence_clusters = []
+        _contradictions = []
         db = self.tools.db
         session_id = self.tools.session_id
         if db and session_id:
@@ -2398,16 +2422,29 @@ class RLMEngine:
                     _log.info("PIPELINE WRITER: Pre-loaded %d claims for writer injection", len(claims))
             except Exception as exc:
                 _log.warning("PIPELINE WRITER: Failed to pre-load claims: %s", exc)
+            # Pre-compute evidence clusters and contradictions from central DB
+            if central_db and _topic_emb:
+                try:
+                    _evidence_clusters = central_db.cluster_claims(similarity_threshold=0.85)
+                    _contradictions = central_db.detect_contradictions(similarity_threshold=0.80)
+                    _log.info("PIPELINE WRITER: %d evidence clusters, %d contradictions detected",
+                              len(_evidence_clusters), len(_contradictions))
+                except Exception as exc:
+                    _log.warning("PIPELINE WRITER: Cluster/contradiction analysis failed: %s", exc)
             try:
                 rows = db._conn.execute(
-                    "SELECT paper_id, title, authors, year FROM papers "
+                    "SELECT paper_id, title, authors, year, journal_name, journal_tier FROM papers "
                     "WHERE session_id = ? AND selected_for_deep_read = 1 "
-                    "ORDER BY citation_count DESC LIMIT 60",
+                    "ORDER BY CASE WHEN journal_tier = 'AAA' THEN 0 "
+                    "WHEN journal_tier = 'AA' THEN 1 ELSE 2 END, "
+                    "citation_count DESC LIMIT 60",
                     (session_id,),
                 ).fetchall()
                 if rows:
                     paper_lines = []
-                    for r in rows:
+                    aaa_count = 0
+                    aa_count = 0
+                    for idx, r in enumerate(rows, 1):
                         authors_raw = r["authors"] or "[]"
                         try:
                             authors_list = json.loads(authors_raw)
@@ -2416,8 +2453,36 @@ class RLMEngine:
                                 first_author = first_author.get("name", first_author.get("family", "Unknown"))
                         except Exception:
                             first_author = "Unknown"
-                        paper_lines.append(f"- ({first_author}, {r['year']}) — {r['title'][:100]} [paper_id={r['paper_id']}]")
-                    cached_papers_summary = f"PAPERS ({len(rows)} selected, cite as (Author, Year)):\n" + "\n".join(paper_lines)
+                        tier_tag = ""
+                        j_tier = r["journal_tier"]
+                        if j_tier == "AAA":
+                            tier_tag = " [AAA]"
+                            aaa_count += 1
+                        elif j_tier == "AA":
+                            tier_tag = " [AA]"
+                            aa_count += 1
+                        j_name = r["journal_name"] or ""
+                        journal_info = f" ({j_name})" if j_name else ""
+                        paper_lines.append(
+                            f"[{idx}]{tier_tag} ({first_author}, {r['year']}) — "
+                            f"{r['title'][:90]}{journal_info} [paper_id={r['paper_id']}]"
+                        )
+                    tier_ratio = self.config.journal_tier_ratio
+                    tier_min_pct = self.config.journal_tier_min_pct
+                    cached_papers_summary = (
+                        f"CITATION MENU ({len(rows)} verified papers — ONLY cite from this list):\n"
+                        f"  TOP-TIER: {aaa_count} AAA + {aa_count} AA journals\n\n"
+                        + "\n".join(paper_lines)
+                        + "\n\nHARD RULE: Every (Author, Year) you write MUST match an entry above. "
+                        "If an author/year combo is not on this list, DO NOT cite it. "
+                        "Omit the claim rather than invent a citation.\n\n"
+                        f"PRIORITY RULE: Papers marked [AAA] and [AA] are from top-tier journals "
+                        f"(FT50, UTD24, ABS 4*/4). PREFER citing these over unranked papers. "
+                        f"For every 1 unranked citation, include {tier_ratio:.0f} from [AAA]/[AA] sources. "
+                        f"At least {tier_min_pct:.0%} of your citations MUST come from [AAA] or [AA] sources. "
+                        f"Top-tier citations strengthen credibility and signal "
+                        f"engagement with the best scholarship in the field."
+                    )
                     _log.info("PIPELINE WRITER: Pre-loaded %d papers for writer injection", len(rows))
             except Exception as exc:
                 _log.warning("PIPELINE WRITER: Failed to pre-load papers: %s", exc)
@@ -2515,10 +2580,9 @@ class RLMEngine:
                     f"Do NOT introduce new names for the same concept.\n"
                 )
 
-            # F+9. Inject pre-loaded claims/papers + section-specific relevance filtering
+            # F+9. MMR-diversified evidence injection — section-aware
             data_injection = ""
 
-            # Section-specific claim type filtering
             _section_claim_types = {
                 "introduction": {"gap", "finding", "theory"},
                 "theoretical_background": {"theory", "finding", "method"},
@@ -2529,32 +2593,122 @@ class RLMEngine:
                 "results": {"finding", "method"},
                 "discussion": {"finding", "gap", "limitation", "theory"},
                 "conclusion": {"gap", "finding"},
-                "abstract": set(),  # All types for abstract
+                "abstract": set(),
             }
             relevant_types = _section_claim_types.get(section_name, set())
 
-            if cached_claims_summary:
-                if relevant_types and db and session_id:
-                    # Filter claims to section-relevant types
-                    try:
-                        relevant_claims = [
-                            c for c in db.get_claims(session_id)
-                            if c.get("claim_type", "finding") in relevant_types
-                        ][:40]
-                        if relevant_claims:
-                            section_claims = f"RELEVANT EVIDENCE for {section_name} ({len(relevant_claims)} claims):\n"
-                            for c in relevant_claims:
-                                section_claims += (
-                                    f"- [{c.get('claim_type', 'finding')}] {c.get('claim_text', '')[:120]} "
-                                    f"(paper_id={c.get('paper_id')}, conf={c.get('confidence', '')})\n"
+            # Strategy: Use MMR from central DB (115K vectors) when available,
+            # fall back to session DB type-filtering
+            mmr_injected = False
+            if central_db and _topic_emb and section_name not in ("abstract",):
+                try:
+                    # Embed the section theme for targeted retrieval
+                    section_query = f"{topic} {section_name} {instruction[:200]}"
+                    sec_emb_result = self._embed_client.models.embed_content(
+                        model="gemini-embedding-001", contents=section_query[:500],
+                    )
+                    if sec_emb_result.embeddings:
+                        sec_emb = sec_emb_result.embeddings[0].values
+
+                        # 1. MMR claims — diverse, relevant, max 3 per paper
+                        mmr_claims = central_db.search_claims_mmr(
+                            sec_emb, limit=25, min_cosine=0.45, lam=0.7, paper_cap=3,
+                        )
+                        if relevant_types:
+                            mmr_claims = [c for c in mmr_claims
+                                          if c.get("claim_type", "finding") in relevant_types][:20]
+
+                        if mmr_claims:
+                            section_evidence = f"EVIDENCE for {section_name} ({len(mmr_claims)} claims, MMR-diversified across papers):\n"
+                            for c in mmr_claims:
+                                meta = ""
+                                if c.get("effect_size"):
+                                    meta += f" effect={c['effect_size']}"
+                                if c.get("p_value"):
+                                    meta += f" p={c['p_value']}"
+                                if c.get("sample_size"):
+                                    meta += f" N={c['sample_size']}"
+                                if c.get("study_design"):
+                                    meta += f" design={c['study_design']}"
+                                section_evidence += (
+                                    f"- [{c.get('claim_type', 'finding')}] {c['claim_text'][:200]} "
+                                    f"(paper: {c.get('paper_title', '')[:60]}, "
+                                    f"sim={c.get('cosine_similarity', '')}{meta})\n"
                                 )
-                            data_injection += f"\n\n{section_claims}\n"
-                        else:
+                            data_injection += f"\n\n{section_evidence}\n"
+                            mmr_injected = True
+
+                        # 2. MMR chunks — grounded paragraphs from full text
+                        mmr_chunks = central_db.search_chunks_mmr(
+                            sec_emb, limit=8, min_cosine=0.50, lam=0.6, paper_cap=1,
+                        )
+                        if mmr_chunks:
+                            chunk_evidence = f"GROUNDED EXCERPTS ({len(mmr_chunks)} full-text passages, 1 per paper):\n"
+                            for ch in mmr_chunks:
+                                chunk_evidence += (
+                                    f"--- [{ch.get('paper_title', '')[:50]}] ---\n"
+                                    f"{ch['chunk_text'][:300]}...\n\n"
+                                )
+                            data_injection += f"\n{chunk_evidence}\n"
+                            mmr_injected = True
+
+                        # 3. Contradictions for Discussion section
+                        if section_name == "discussion" and _contradictions:
+                            contra_text = f"CONTRADICTIONS TO ADDRESS ({len(_contradictions[:5])} found):\n"
+                            for ct in _contradictions[:5]:
+                                contra_text += (
+                                    f"- CLAIM A ({ct['signal_a']}): {ct['claim_a']['claim_text'][:100]} "
+                                    f"[{ct['claim_a'].get('paper_title', '')[:40]}]\n"
+                                    f"  CLAIM B ({ct['signal_b']}): {ct['claim_b']['claim_text'][:100]} "
+                                    f"[{ct['claim_b'].get('paper_title', '')[:40]}]\n"
+                                    f"  Similarity: {ct['similarity']} — MUST acknowledge and analyze this disagreement.\n\n"
+                                )
+                            data_injection += f"\n{contra_text}\n"
+
+                        # 4. Evidence clusters for Literature Review
+                        if section_name in ("literature_review", "theoretical_background") and _evidence_clusters:
+                            cluster_text = f"CONVERGENT EVIDENCE ({len(_evidence_clusters[:8])} clusters found):\n"
+                            for i, cl in enumerate(_evidence_clusters[:8], 1):
+                                rep = cl["representative"]
+                                cluster_text += (
+                                    f"Cluster {i}: {rep['claim_text'][:120]}\n"
+                                    f"  {cl['n_studies']} independent studies, {cl['n_claims']} claims\n"
+                                )
+                                if cl["countries"]:
+                                    cluster_text += f"  Countries: {', '.join(cl['countries'][:5])}\n"
+                                if cl["study_designs"]:
+                                    cluster_text += f"  Designs: {', '.join(cl['study_designs'][:4])}\n"
+                                if cl["effect_sizes"]:
+                                    cluster_text += f"  Effect sizes: {', '.join(cl['effect_sizes'][:3])}\n"
+                                cluster_text += "\n"
+                            data_injection += f"\n{cluster_text}\n"
+
+                except Exception as exc:
+                    _log.warning("PIPELINE WRITER: MMR evidence retrieval failed: %s", exc)
+
+            # Fallback: session DB type-filtered claims
+            if not mmr_injected:
+                if cached_claims_summary:
+                    if relevant_types and db and session_id:
+                        try:
+                            relevant_claims = [
+                                c for c in db.get_claims(session_id)
+                                if c.get("claim_type", "finding") in relevant_types
+                            ][:40]
+                            if relevant_claims:
+                                section_claims = f"RELEVANT EVIDENCE for {section_name} ({len(relevant_claims)} claims):\n"
+                                for c in relevant_claims:
+                                    section_claims += (
+                                        f"- [{c.get('claim_type', 'finding')}] {c.get('claim_text', '')[:120]} "
+                                        f"(paper_id={c.get('paper_id')}, conf={c.get('confidence', '')})\n"
+                                    )
+                                data_injection += f"\n\n{section_claims}\n"
+                            else:
+                                data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
+                        except Exception:
                             data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
-                    except Exception:
+                    else:
                         data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
-                else:
-                    data_injection += f"\n\n{cached_claims_summary[:4000]}\n"
             if cached_papers_summary:
                 data_injection += f"\n{cached_papers_summary[:4000]}\n"
 
@@ -3167,6 +3321,207 @@ class RLMEngine:
                 f"No em-dashes (\u2014) or en-dashes (\u2013) anywhere in the paper."
             )
 
+        # 20. Banned paragraph openers — filler transitions
+        if section_name not in ("abstract",):
+            banned_openers = _re.findall(
+                r'(?:^|\n)\s*(?:Furthermore|Additionally|Moreover)\s*[,;]',
+                content,
+            )
+            if banned_openers:
+                issues.append(
+                    f"Banned paragraph opener(s): {len(banned_openers)} found "
+                    f"('Furthermore,', 'Additionally,', 'Moreover,'). "
+                    f"These are filler transitions that signal no new argument. "
+                    f"Replace with the actual argument point as topic sentence."
+                )
+
+        # 21. Unresolved (Author, Year) placeholders — template text never filled in
+        placeholders = _re.findall(r'\(Author,?\s*Year\)', content, _re.IGNORECASE)
+        if placeholders:
+            issues.append(
+                f"Unresolved citation placeholder(s): {len(placeholders)} instances of '(Author, Year)'. "
+                f"Replace each with a real (Author, Year) citation from the database, "
+                f"or remove the claim if no supporting citation exists."
+            )
+
+        # 22. Abstract must NOT contain citations
+        if section_name == "abstract":
+            abstract_cites = _re.findall(r'\([A-Z][a-z]+(?:\s+et\s+al\.?)?,\s*\d{4}\)', content)
+            if abstract_cites:
+                issues.append(
+                    f"Abstract contains {len(abstract_cites)} citation(s). "
+                    f"Abstracts must not cite specific papers. Remove all (Author, Year) "
+                    f"references and restate findings in your own words."
+                )
+
+        # 23. Single-sentence paragraphs — weak academic writing
+        if section_name not in ("abstract", "protocol", "methodology"):
+            paragraphs = [p.strip() for p in content.split("\n\n") if len(p.strip()) > 20]
+            single_sent = 0
+            for para in paragraphs:
+                # Skip tables and headings
+                if para.startswith("|") or para.startswith("#"):
+                    continue
+                sentences = _re.split(r'(?<=[.!?])\s+', para)
+                if len(sentences) == 1 and len(para.split()) > 5:
+                    single_sent += 1
+            if single_sent >= 2:
+                issues.append(
+                    f"{single_sent} single-sentence paragraph(s). Academic writing requires "
+                    f"paragraphs of 4-8 sentences. Merge orphan sentences into adjacent "
+                    f"paragraphs or expand them with supporting evidence."
+                )
+
+        # 24. Orphaned table/figure references — mentions Table/Figure N but it doesn't exist
+        if section_name not in ("abstract", "protocol"):
+            table_refs = set(_re.findall(r'Table\s+(\d+)', content))
+            table_defs = set(_re.findall(r'\*\*Table\s+(\d+)', content))
+            # Also check if table definitions exist in other sections
+            for sf in sections_dir.iterdir():
+                if sf.suffix == ".md" and sf.stem != section_name:
+                    other = sf.read_text(encoding="utf-8")
+                    table_defs.update(_re.findall(r'\*\*Table\s+(\d+)', other))
+            orphan_tables = table_refs - table_defs
+            if orphan_tables:
+                issues.append(
+                    f"Orphaned table reference(s): Table {', '.join(sorted(orphan_tables))} "
+                    f"mentioned but never defined. Either create the table or remove the reference."
+                )
+
+            figure_refs = set(_re.findall(r'Figure\s+(\d+)', content))
+            figure_defs = set(_re.findall(r'\*\*Figure\s+(\d+)', content))
+            for sf in sections_dir.iterdir():
+                if sf.suffix == ".md" and sf.stem != section_name:
+                    other = sf.read_text(encoding="utf-8")
+                    figure_defs.update(_re.findall(r'\*\*Figure\s+(\d+)', other))
+            orphan_figures = figure_refs - figure_defs
+            if orphan_figures:
+                issues.append(
+                    f"Orphaned figure reference(s): Figure {', '.join(sorted(orphan_figures))} "
+                    f"mentioned but never defined. Either create the figure or remove the reference."
+                )
+
+        # 25. "et al." misuse — APA requires 3+ authors for et al.
+        if section_name not in ("abstract",):
+            # Find "Author & Other et al." patterns — et al. with only 2 visible authors
+            bad_etal = _re.findall(
+                r'([A-Z][a-z]+)\s+(?:and|&)\s+([A-Z][a-z]+)\s+et\s+al\.',
+                content,
+            )
+            if bad_etal:
+                issues.append(
+                    f"'et al.' misuse: {len(bad_etal)} instance(s) with 2 named authors. "
+                    f"APA 7th edition: use 'et al.' only when 3+ authors exist. "
+                    f"For 2 authors, always name both: '(Author & Author, Year)'."
+                )
+
+        # 26. Future year citations — data integrity check
+        import datetime as _dt
+        current_year = _dt.datetime.now().year
+        future_cites = _re.findall(rf'\([A-Z][a-z]+.*?,\s*({current_year + 2}\d*)\)', content)
+        if future_cites:
+            issues.append(
+                f"Future year citation(s): year {', '.join(set(future_cites))} is implausible. "
+                f"Check for typos in citation years."
+            )
+
+        # 27. Excessive self-referential language — "this paper" > 5 times
+        if section_name not in ("abstract", "methodology", "protocol"):
+            self_refs = len(_re.findall(r'\b(?:this paper|this study|this review|our (?:paper|study|review|framework|analysis))\b', content, _re.IGNORECASE))
+            if self_refs > 5:
+                issues.append(
+                    f"Excessive self-reference: 'this paper/study/review' used {self_refs} times. "
+                    f"Reduce to 2-3 per section. Let the argument speak for itself."
+                )
+
+        # 28. Repeated citation clusters — same (Author, Year) cited 4+ times in one section
+        if section_name not in ("abstract", "protocol"):
+            cite_counts: dict[str, int] = {}
+            for m in _re.finditer(r'\(([A-Z][a-z]+(?:\s+et\s+al\.?)?),?\s*(\d{4})\)', content):
+                key = f"{m.group(1)}, {m.group(2)}"
+                cite_counts[key] = cite_counts.get(key, 0) + 1
+            over_cited = [(k, v) for k, v in cite_counts.items() if v >= 4]
+            if over_cited:
+                issues.append(
+                    f"Over-citation: {', '.join(f'{k} ({v}x)' for k, v in over_cited)}. "
+                    f"Citing the same paper 4+ times in one section suggests over-reliance. "
+                    f"Diversify evidence sources or consolidate mentions."
+                )
+
+        # 29. Methodology claiming human dual-reviewer screening (must use AI-automated language)
+        if section_name in ("methods", "methodology"):
+            human_review_claims = _re.findall(
+                r'(?:dual[\s-]?reviewer|two\s+(?:independent\s+)?reviewers?\s+(?:screened|assessed|evaluated|independently)|'
+                r'inter[\s-]?rater\s+(?:reliability|agreement)|consensus\s+(?:meeting|was\s+reached\s+between\s+reviewers)|'
+                r'cohen[\'\u2019]?s?\s+kappa|percent\s+agreement\s+between\s+(?:raters|reviewers)|'
+                r'disagreements?\s+(?:were|was)\s+resolved\s+(?:through|by|via)\s+discussion)',
+                content, _re.IGNORECASE,
+            )
+            if human_review_claims:
+                issues.append(
+                    f"Methodology claims human dual-reviewer screening ({len(human_review_claims)} instance(s)). "
+                    f"This is an AI-generated review. Replace with: 'Title and abstract screening was "
+                    f"conducted using automated relevance scoring.' Acknowledge AI-assisted screening "
+                    f"as a limitation."
+                )
+
+        # 30. Unicode/non-ASCII in author names within citations
+        if section_name not in ("abstract",):
+            unicode_cites = _re.findall(r'\(([^\x00-\x7F][^)]+),\s*\d{4}\)', content)
+            if unicode_cites:
+                issues.append(
+                    f"Non-ASCII characters in {len(unicode_cites)} citation(s). "
+                    f"Transliterate author names to ASCII for consistency: "
+                    f"{', '.join(unicode_cites[:3])}"
+                )
+
+        # 31. Content that is 100% table with no prose
+        if section_name not in ("abstract", "protocol"):
+            non_table_lines = [l for l in content.split('\n')
+                               if l.strip() and not l.strip().startswith('|') and not l.strip().startswith('#')]
+            table_lines = [l for l in content.split('\n')
+                          if l.strip() and l.strip().startswith('|')]
+            if table_lines and len(non_table_lines) < 3:
+                issues.append(
+                    f"Section is almost entirely table ({len(table_lines)} table lines, "
+                    f"{len(non_table_lines)} prose lines). Sections must contain substantive "
+                    f"prose analysis. Tables supplement the argument, they don't replace it."
+                )
+
+        # 32. Journal tier citation quality — at least 30% citations should be AAA/AA
+        if section_name not in ("abstract", "protocol", "methodology"):
+            from .db import classify_journal
+            citations = _extract_citations_from_text(content)
+            if len(citations) >= 5:
+                db = self.tools.db
+                session_id = self.tools.session_id
+                if db and session_id:
+                    tier_hits = 0
+                    for author, year in citations:
+                        check = _verify_citation_against_db(author, year, db, session_id)
+                        if check.get("verified") and check.get("paper_id"):
+                            try:
+                                row = db._conn.execute(
+                                    "SELECT journal_tier FROM papers WHERE paper_id = ?",
+                                    (check["paper_id"],),
+                                ).fetchone()
+                                if row and row[0] in ("AAA", "AA"):
+                                    tier_hits += 1
+                            except Exception:
+                                pass
+                    tier_ratio = tier_hits / len(citations)
+                    min_pct = self.config.journal_tier_min_pct
+                    target_ratio = self.config.journal_tier_ratio
+                    if tier_ratio < min_pct:
+                        issues.append(
+                            f"Low journal quality: only {tier_hits}/{len(citations)} ({tier_ratio:.0%}) "
+                            f"citations are from AAA/AA journals (target: {min_pct:.0%}+, "
+                            f"ratio: {target_ratio:.0f}:1 top-tier per unranked). "
+                            f"Replace weaker citations with top-tier sources marked [AAA] or [AA] "
+                            f"in the citation menu. Top-tier journals include: AMJ, SMJ, JIBS, "
+                            f"Research Policy, Nature, Science, Lancet, JF, AER."
+                        )
+
         return issues
 
     def _pre_critic_validation(
@@ -3279,6 +3634,79 @@ class RLMEngine:
             ))
             _log.warning("PRE-CRITIC: Only %d unique citations — need %d+", len(total_citations), _MIN_UNIQUE_CITATIONS)
 
+        # Hard gate: strip phantom citations — (Author, Year) not in DB
+        import re as _cite_re
+        db = self.tools.db
+        session_id = self.tools.session_id
+        if db and session_id:
+            phantom_stripped = 0
+            for section_name_s in expected:
+                sf = section_files.get(section_name_s)
+                if not sf:
+                    continue
+                content = sf.read_text(encoding="utf-8")
+                cited = _extract_citations_from_text(content)
+                if not cited:
+                    continue
+                unverified = []
+                for author, year in cited:
+                    if not _verify_citation_against_db(author, year, db, session_id):
+                        unverified.append((author, year))
+                if unverified:
+                    new_content = content
+                    for author, year in unverified:
+                        # Strip parenthetical citations: (Author, Year)
+                        new_content = _cite_re.sub(
+                            rf'\(\s*{_cite_re.escape(author)}(?:\s+et\s+al\.?)?\s*,\s*{year}\s*\)',
+                            '', new_content,
+                        )
+                        # Strip narrative citations: Author (Year)
+                        new_content = _cite_re.sub(
+                            rf'{_cite_re.escape(author)}(?:\s+et\s+al\.?)?\s*\(\s*{year}\s*\)',
+                            '', new_content,
+                        )
+                    # Clean orphaned punctuation
+                    new_content = _cite_re.sub(r'\(\s*;\s*', '(', new_content)
+                    new_content = _cite_re.sub(r';\s*\)', ')', new_content)
+                    new_content = _cite_re.sub(r'\(\s*\)', '', new_content)
+                    new_content = _cite_re.sub(r'(?:[Aa]ccording)\s+to\s*,\s*', '', new_content)
+                    new_content = _cite_re.sub(
+                        r'(?:[Aa]s\s+)?(?:noted|identified|suggested|argued|proposed|demonstrated)\s+by\s*,\s*',
+                        '', new_content,
+                    )
+                    new_content = _cite_re.sub(r'\s{2,}', ' ', new_content)
+                    if new_content != content:
+                        sf.write_text(new_content, encoding="utf-8")
+                        phantom_stripped += len(unverified)
+                        _log.info("PRE-CRITIC: Stripped %d phantom citations from %s: %s",
+                                  len(unverified), section_name_s,
+                                  [(a, y) for a, y in unverified[:5]])
+            if phantom_stripped:
+                _log.warning("PRE-CRITIC: Total phantom citations stripped: %d", phantom_stripped)
+                if on_event:
+                    on_event(StepEvent("text", data=f"Stripped {phantom_stripped} phantom citations not in DB", depth=0))
+                # Re-count citations after stripping
+                total_citations = set()
+                for section_name_s2 in expected:
+                    sf2 = section_files.get(section_name_s2)
+                    if sf2:
+                        total_citations.update(_extract_citations_from_text(sf2.read_text(encoding="utf-8")))
+
+        # Strip (Author, Year) placeholders — template text never filled in
+        placeholder_stripped = 0
+        for section_name_p in expected:
+            sf = section_files.get(section_name_p)
+            if not sf:
+                continue
+            content = sf.read_text(encoding="utf-8")
+            import re as _ph_re
+            new_content = _ph_re.sub(r'\(Author,?\s*Year\)', '', content, flags=_ph_re.IGNORECASE)
+            if new_content != content:
+                sf.write_text(new_content, encoding="utf-8")
+                count = len(_ph_re.findall(r'\(Author,?\s*Year\)', content, _ph_re.IGNORECASE))
+                placeholder_stripped += count
+                _log.info("PRE-CRITIC: Stripped %d (Author, Year) placeholders from %s", count, section_name_p)
+
         # Global coherence passes (programmatic, no LLM cost)
         prop_fixes = self._global_proposition_coherence(on_event)
         table_fixes = self._global_table_dedup(on_event)
@@ -3291,8 +3719,28 @@ class RLMEngine:
                 if sf:
                     total_words += len(sf.read_text(encoding="utf-8").split())
 
-        _log.info("PRE-CRITIC: total_words=%d, unique_citations=%d, failing_sections=%d/%d",
-                   total_words, len(total_citations), len(failing_sections), len(expected))
+        # Verify references file exists — if not, generate from DB metadata
+        apa_file = ws / self.config.session_root_dir / "output" / "references_apa.txt"
+        bib_file = ws / self.config.session_root_dir / "output" / "references.bib"
+        if not apa_file.exists() or apa_file.stat().st_size < 50:
+            _log.warning("PRE-CRITIC: References file missing or empty — generating from DB")
+            if on_event:
+                on_event(StepEvent("text", data="References missing — building from database", depth=0))
+            # First try the full get_citations pipeline (matches in-text to DB + OpenAlex)
+            try:
+                self.tools.dispatch("get_citations", {})
+            except Exception as exc:
+                _log.error("PRE-CRITIC: get_citations failed: %s — falling back to DB-direct", exc)
+            # If get_citations still didn't produce a file, build directly from DB
+            if not apa_file.exists() or apa_file.stat().st_size < 50:
+                _log.warning("PRE-CRITIC: get_citations produced no output — building APA from DB metadata")
+                self._generate_references_from_db(
+                    total_citations, sections_dir, apa_file, bib_file, db, session_id,
+                )
+
+        _log.info("PRE-CRITIC: total_words=%d, unique_citations=%d, failing_sections=%d/%d, phantoms_stripped=%d, placeholders_stripped=%d",
+                   total_words, len(total_citations), len(failing_sections), len(expected),
+                   phantom_stripped if db and session_id else 0, placeholder_stripped)
 
         if not failing_sections:
             _log.info("PRE-CRITIC: All sections pass programmatic checks — proceeding to output assembly")
@@ -3316,10 +3764,81 @@ class RLMEngine:
                               r'[Ll]ittle is known|[Rr]emains (?:unclear|understudied|under-explored))[^.]*\.'
                 matches = list(_pre_re.finditer(gap_pattern, content))
                 if len(matches) > 1:
-                    # Keep only the first gap statement, remove the rest
                     for m in reversed(matches[1:]):
                         content = content[:m.start()] + content[m.end():]
                     _log.info("PRE-CRITIC: Auto-stripped %d duplicate gap statements from %s", len(matches) - 1, section_name)
+
+            # Auto-fix: strip citations from abstract
+            if section_name == "abstract" and any("Abstract contains" in i for i in issues):
+                content = _pre_re.sub(r'\s*\([A-Z][a-z]+(?:\s+et\s+al\.?)?,\s*\d{4}(?:\s*;\s*[A-Z][a-z]+(?:\s+et\s+al\.?)?,\s*\d{4})*\)', '', content)
+                content = _pre_re.sub(r'[A-Z][a-z]+(?:\s+et\s+al\.?)?\s*\(\d{4}\)', '', content)
+                content = _pre_re.sub(r'\s{2,}', ' ', content)
+                _log.info("PRE-CRITIC: Auto-stripped citations from abstract")
+
+            # Auto-fix: replace em-dashes and en-dashes with commas
+            if any("Em/en-dash" in i for i in issues):
+                content = _pre_re.sub(r'\s*[\u2014\u2013]\s*', ', ', content)
+                content = _pre_re.sub(r',\s*,', ',', content)
+                content = _pre_re.sub(r',\s*\.', '.', content)
+                _log.info("PRE-CRITIC: Auto-replaced em/en-dashes in %s", section_name)
+
+            # Auto-fix: strip future year citations
+            if any("Future year citation" in i for i in issues):
+                import datetime as _dt_fix
+                future_year = _dt_fix.datetime.now().year + 2
+                content = _pre_re.sub(
+                    rf'\([A-Z][a-z]+(?:\s+et\s+al\.?)?,\s*(?:{future_year}\d*)\)', '', content,
+                )
+                content = _pre_re.sub(r'\s{2,}', ' ', content)
+                _log.info("PRE-CRITIC: Auto-stripped future year citations from %s", section_name)
+
+            # Auto-fix: replace banned paragraph openers with empty string
+            if any("Banned paragraph opener" in i for i in issues):
+                content = _pre_re.sub(
+                    r'(?:^|\n)(\s*)(?:Furthermore|Additionally|Moreover)\s*[,;]\s*',
+                    r'\n\1', content,
+                )
+                _log.info("PRE-CRITIC: Auto-stripped banned openers from %s", section_name)
+
+            # Auto-fix: replace dual-reviewer claims with AI-automated language
+            if any("Methodology claims human dual-reviewer" in i for i in issues):
+                _dual_reviewer_patterns = [
+                    (r'[Tt]wo independent reviewers (?:screened|assessed|evaluated) (?:all |the )?(?:titles|abstracts|records)(?:\s+and\s+(?:abstracts|titles))?(?:\s+for\s+\w+)?',
+                     'Title and abstract screening was conducted using automated AI-assisted relevance scoring'),
+                    (r'[Dd]ual[\s-]?reviewer screening was (?:performed|conducted|used)',
+                     'Screening was conducted using automated relevance scoring'),
+                    (r'[Dd]isagreements? (?:were|was) resolved (?:through|by|via) discussion',
+                     'Papers scoring above the pre-specified relevance threshold were selected for full-text review'),
+                    (r'[Ii]nter[\s-]?rater (?:reliability|agreement) was (?:assessed|calculated|measured)',
+                     'Automated relevance scoring consistency was verified through threshold calibration'),
+                ]
+                for pat, replacement in _dual_reviewer_patterns:
+                    content = _pre_re.sub(pat, replacement, content)
+                _log.info("PRE-CRITIC: Auto-replaced dual-reviewer claims in %s", section_name)
+
+            # Auto-fix: convert bullet lists to prose sentences
+            if any("Bullet list detected" in i for i in issues):
+                lines = content.split('\n')
+                new_lines = []
+                bullet_buffer = []
+                for line in lines:
+                    stripped = line.strip()
+                    if _pre_re.match(r'^[-*\u2022]\s+', stripped):
+                        # Remove bullet prefix and collect
+                        bullet_text = _pre_re.sub(r'^[-*\u2022]\s+', '', stripped).strip()
+                        if bullet_text and not bullet_text.endswith('.'):
+                            bullet_text += '.'
+                        bullet_buffer.append(bullet_text)
+                    else:
+                        if bullet_buffer:
+                            # Flush bullet buffer as prose paragraph
+                            new_lines.append(' '.join(bullet_buffer))
+                            bullet_buffer = []
+                        new_lines.append(line)
+                if bullet_buffer:
+                    new_lines.append(' '.join(bullet_buffer))
+                content = '\n'.join(new_lines)
+                _log.info("PRE-CRITIC: Auto-converted bullet lists to prose in %s", section_name)
 
             if content != original_content:
                 section_file.write_text(content, encoding="utf-8")
@@ -3672,6 +4191,7 @@ class RLMEngine:
                         if res.embeddings and len(res.embeddings) > 0:
                             section_embs[s] = res.embeddings[0].values
                 names = list(section_embs.keys())
+                import re as _olap_re
                 for i in range(len(names)):
                     for j in range(i + 1, len(names)):
                         sim = self._cosine_sim(section_embs[names[i]], section_embs[names[j]])
@@ -3679,6 +4199,44 @@ class RLMEngine:
                             result["issues"].append(
                                 f"Section overlap: '{names[i]}' and '{names[j]}' have {sim:.0%} cosine similarity"
                             )
+                            # Programmatic dedup: remove shared n-grams from the later section
+                            target = names[j]
+                            target_file = sections_dir / f"{target}.md"
+                            source_file = sections_dir / f"{names[i]}.md"
+                            if target_file.exists() and source_file.exists():
+                                source_text = source_file.read_text(encoding="utf-8")
+                                target_text = target_file.read_text(encoding="utf-8")
+                                # Build set of 5-grams from source section
+                                source_words = source_text.lower().split()
+                                source_ngrams = set()
+                                for k in range(len(source_words) - 4):
+                                    source_ngrams.add(" ".join(source_words[k:k+5]))
+                                # Find sentences in target that share 5-grams with source
+                                target_sentences = _olap_re.split(r'(?<=[.!?])\s+', target_text)
+                                kept = []
+                                removed = 0
+                                for sent in target_sentences:
+                                    sent_words = sent.lower().split()
+                                    if len(sent_words) < 5:
+                                        kept.append(sent)
+                                        continue
+                                    sent_ngrams = set()
+                                    for k in range(len(sent_words) - 4):
+                                        sent_ngrams.add(" ".join(sent_words[k:k+5]))
+                                    overlap_ratio = len(sent_ngrams & source_ngrams) / max(len(sent_ngrams), 1)
+                                    if overlap_ratio > 0.4:
+                                        removed += 1
+                                        _log.info("POST-PEER-GATE: Removing overlapping sentence from %s (%.0f%% 5-gram overlap with %s)",
+                                                  target, overlap_ratio * 100, names[i])
+                                    else:
+                                        kept.append(sent)
+                                if removed > 0:
+                                    new_target = " ".join(kept)
+                                    # Clean up double spaces
+                                    new_target = _olap_re.sub(r'\s{2,}', ' ', new_target)
+                                    target_file.write_text(new_target, encoding="utf-8")
+                                    result["fixes"] += removed
+                                    _log.info("POST-PEER-GATE: Removed %d overlapping sentences from %s", removed, target)
             except Exception as exc:
                 _log.warning("POST-PEER-GATE: Embedding overlap check failed: %s", exc)
 
@@ -3722,7 +4280,89 @@ class RLMEngine:
                 if len(clean_apa) < len(apa_lines):
                     apa_file.write_text("\n\n".join(clean_apa), encoding="utf-8")
 
-        # 7. Em-dash / en-dash stripping — replace with commas across all sections
+        # 7. Duplicate references — remove exact and near-duplicate entries from APA file
+        apa_file = ws / self.config.session_root_dir / "output" / "references_apa.txt"
+        if apa_file.exists():
+            import re as _dup_re
+            apa_content = apa_file.read_text(encoding="utf-8")
+            apa_entries = [e.strip() for e in apa_content.split("\n\n") if e.strip()]
+            # Deduplicate by (first_author_surname, year, first_20_chars_of_title)
+            seen: dict[str, str] = {}
+            deduped: list[str] = []
+            dup_count = 0
+            for entry in apa_entries:
+                m = _dup_re.match(r'^([^(]+?)\s*\((\d{4})\)\.\s*(.+)', entry)
+                if m:
+                    surname = m.group(1).split(",")[0].strip().lower()
+                    year = m.group(2)
+                    title_frag = _dup_re.sub(r'[^a-z0-9]', '', m.group(3)[:40].lower())
+                    key = f"{surname}:{year}:{title_frag}"
+                    if key in seen:
+                        dup_count += 1
+                        _log.info("POST-PEER-GATE: Removing duplicate reference: %s", entry[:80])
+                        continue
+                    seen[key] = entry
+                deduped.append(entry)
+            if dup_count > 0:
+                apa_file.write_text("\n\n".join(deduped), encoding="utf-8")
+                result["issues"].append(f"Duplicate references: removed {dup_count} duplicates")
+                result["fixes"] += dup_count
+
+        # 8. Sort references alphabetically (APA requirement)
+        if apa_file.exists():
+            apa_content = apa_file.read_text(encoding="utf-8")
+            apa_entries = [e.strip() for e in apa_content.split("\n\n") if e.strip()]
+            sorted_entries = sorted(apa_entries, key=lambda e: e.lower())
+            if apa_entries != sorted_entries:
+                apa_file.write_text("\n\n".join(sorted_entries), encoding="utf-8")
+                _log.info("POST-PEER-GATE: Sorted reference list alphabetically")
+
+        # 9. Same-author-same-year disambiguation (Smith, 2020a; Smith, 2020b)
+        if apa_file.exists():
+            import re as _disamb_re
+            apa_content = apa_file.read_text(encoding="utf-8")
+            apa_entries = [e.strip() for e in apa_content.split("\n\n") if e.strip()]
+            # Group by (first_author_surname, year)
+            author_year_groups: dict[str, list[int]] = {}
+            for idx, entry in enumerate(apa_entries):
+                m = _disamb_re.match(r'^([^(]+?)\s*\((\d{4})\)', entry)
+                if m:
+                    surname = m.group(1).split(",")[0].strip().lower()
+                    year = m.group(2)
+                    key = f"{surname}:{year}"
+                    author_year_groups.setdefault(key, []).append(idx)
+            disambiguated = 0
+            for key, indices in author_year_groups.items():
+                if len(indices) < 2:
+                    continue
+                # Need disambiguation: add a, b, c suffix
+                for i, idx in enumerate(indices):
+                    entry = apa_entries[idx]
+                    suffix = chr(ord('a') + i)
+                    m = _disamb_re.match(r'^([^(]+?)\s*\((\d{4})\)', entry)
+                    if m:
+                        old_year = f"({m.group(2)})"
+                        new_year = f"({m.group(2)}{suffix})"
+                        apa_entries[idx] = entry.replace(old_year, new_year, 1)
+                        disambiguated += 1
+            if disambiguated > 0:
+                apa_file.write_text("\n\n".join(apa_entries), encoding="utf-8")
+                result["issues"].append(f"Same-author-same-year: disambiguated {disambiguated} entries with a/b/c suffixes")
+                result["fixes"] += disambiguated
+                # Also update in-text citations to match
+                for f in sections_dir.iterdir():
+                    if f.suffix == ".md" and f.stem in _paper_sections:
+                        content = f.read_text(encoding="utf-8")
+                        original = content
+                        for key, indices in author_year_groups.items():
+                            if len(indices) < 2:
+                                continue
+                            surname_raw, year = key.split(":")
+                            # For now just log — in-text disambiguation requires knowing which
+                            # citation maps to which paper, which needs title matching
+                            _log.info("POST-PEER-GATE: TODO — in-text disambiguation needed for %s (%s)", surname_raw, year)
+
+        # 10. Em-dash / en-dash stripping — replace with commas across all sections
         import re as _dash_re
         dash_fixes = 0
         for f in sections_dir.iterdir():
@@ -3744,6 +4384,146 @@ class RLMEngine:
             on_event(StepEvent("subtask_end", data="Post-peer-review quality gate complete", depth=0))
 
         return result
+
+    def _generate_references_from_db(
+        self,
+        in_text_citations: set[tuple[str, str]],
+        sections_dir: Path,
+        apa_file: Path,
+        bib_file: Path,
+        db: Any,
+        session_id: int | None,
+    ) -> None:
+        """Build full APA + BibTeX references directly from DB paper metadata.
+
+        This is the last-resort reference generator — produces real bibliographic
+        entries from the title, authors, year, and DOI stored in the papers table.
+        """
+        if not db or not session_id:
+            return
+        from .tools.writing import _normalize_author
+        import re as _ref_re
+
+        # Get all papers from DB
+        rows = db._conn.execute(
+            "SELECT paper_id, title, authors, year, doi, journal_name FROM papers "
+            "WHERE session_id = ? ORDER BY citation_count DESC",
+            (session_id,),
+        ).fetchall()
+        if not rows:
+            return
+
+        all_papers = []
+        for r in rows:
+            p = dict(r)
+            try:
+                p["authors"] = json.loads(p.get("authors") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                p["authors"] = []
+            all_papers.append(p)
+
+        # Match in-text citations to DB papers
+        matched_papers: list[dict] = []
+        matched_ids: set[int] = set()
+        for author_frag, cite_year in in_text_citations:
+            cite_tokens = _normalize_author(author_frag)
+            for p in all_papers:
+                if p["paper_id"] in matched_ids:
+                    continue
+                year = str(p.get("year", ""))
+                if not (year.isdigit() and cite_year.isdigit() and abs(int(cite_year) - int(year)) <= 1):
+                    continue
+                authors_list = p.get("authors", [])
+                for a in authors_list:
+                    a_str = a if isinstance(a, str) else (a.get("name", "") or a.get("family", ""))
+                    a_surname = a_str.strip().split()[-1].lower() if a_str.strip() else ""
+                    paper_tokens = _normalize_author(a_str)
+                    if any(ct == a_surname or ct in paper_tokens for ct in cite_tokens if len(ct) > 2):
+                        matched_papers.append(p)
+                        matched_ids.add(p["paper_id"])
+                        break
+                if p["paper_id"] in matched_ids:
+                    break
+
+        if not matched_papers:
+            _log.warning("PRE-CRITIC: No DB papers matched in-text citations — cannot generate references")
+            return
+
+        # Generate APA 7th edition entries
+        apa_entries = []
+        bib_entries = []
+        for p in sorted(matched_papers, key=lambda x: (
+            (x["authors"][0] if isinstance(x["authors"][0], str) else x["authors"][0].get("name", ""))
+            if x.get("authors") else "",
+            x.get("year", 0),
+        )):
+            authors_list = p.get("authors", [])
+            year = p.get("year", "n.d.")
+            title = p.get("title", "Untitled")
+            doi = p.get("doi", "")
+
+            # APA author formatting
+            apa_authors = []
+            for i, a in enumerate(authors_list[:20]):
+                name = a if isinstance(a, str) else (a.get("name", "") or a.get("family", ""))
+                name = name.strip()
+                if not name:
+                    continue
+                parts = name.split()
+                # Skip corrupted entries (concatenated names from bad API parse)
+                if len(parts) > 5:
+                    continue
+                if len(parts) >= 2:
+                    surname = parts[-1]
+                    initials = " ".join(f"{p[0]}." for p in parts[:-1] if p)
+                    apa_authors.append(f"{surname}, {initials}")
+                else:
+                    apa_authors.append(name)
+
+            if not apa_authors:
+                continue
+
+            if len(apa_authors) == 1:
+                author_str = apa_authors[0]
+            elif len(apa_authors) == 2:
+                author_str = f"{apa_authors[0]}, & {apa_authors[1]}"
+            elif len(apa_authors) <= 20:
+                author_str = ", ".join(apa_authors[:-1]) + f", & {apa_authors[-1]}"
+            else:
+                author_str = ", ".join(apa_authors[:19]) + f", ... {apa_authors[-1]}"
+
+            if doi:
+                doi_clean = doi if doi.startswith("http") else f"https://doi.org/{doi}"
+            else:
+                doi_clean = ""
+            doi_str = f" {doi_clean}" if doi_clean else ""
+            journal_name = p.get("journal_name", "")
+            journal_str = f" *{journal_name}*." if journal_name else ""
+            apa_entries.append(f"{author_str} ({year}). {title}.{journal_str}{doi_str}")
+
+            # BibTeX entry
+            bib_authors = " and ".join(
+                (a if isinstance(a, str) else a.get("name", "")).strip()
+                for a in authors_list[:5]
+                if (a if isinstance(a, str) else a.get("name", "")).strip()
+            )
+            key = f"paper_{p.get('paper_id', 0)}"
+            bib = f"@article{{{key},\n"
+            bib += f"  author = {{{bib_authors}}},\n"
+            bib += f"  title = {{{title}}},\n"
+            bib += f"  year = {{{year}}},\n"
+            if journal_name:
+                bib += f"  journal = {{{journal_name}}},\n"
+            if doi:
+                bib += f"  doi = {{{doi}}},\n"
+            bib += "}\n"
+            bib_entries.append(bib)
+
+        if apa_entries:
+            apa_file.parent.mkdir(parents=True, exist_ok=True)
+            apa_file.write_text("\n\n".join(apa_entries), encoding="utf-8")
+            bib_file.write_text("\n".join(bib_entries), encoding="utf-8")
+            _log.info("PRE-CRITIC: Generated %d APA references + BibTeX from DB metadata", len(apa_entries))
 
     def _prepopulate_verification_flags(self, central_db: Any, db: Any, session_id: int) -> None:
         """Bulk set verification flags from central DB cache — avoids per-paper API calls."""
@@ -4107,30 +4887,57 @@ class RLMEngine:
             if db and session_id:
                 added = 0
                 for author_frag, year in dangling_in_text:
-                    result = _extract_citations_from_text.__module__  # just to confirm import works
                     from .tools.writing import _verify_citation_against_db
                     match = _verify_citation_against_db(author_frag, year, db, session_id)
-                    if match.get("verified") and match.get("paper"):
-                        p = match["paper"]
+                    if match.get("verified") and match.get("paper_id"):
+                        p = db.get_paper(match["paper_id"])
+                        if not p:
+                            continue
+                        try:
+                            p["authors"] = json.loads(p.get("authors") or "[]")
+                        except (json.JSONDecodeError, TypeError):
+                            p["authors"] = []
                         authors_list = p.get("authors", [])
-                        # Build APA entry
-                        if authors_list:
-                            names = [a if isinstance(a, str) else a.get("name", "") for a in authors_list[:5]]
-                            apa_author = ", ".join(names[:3])
-                            if len(names) > 3:
-                                apa_author += f", ... {names[-1]}"
+                        # Build proper APA 7th edition author format: Surname, I.
+                        apa_authors = []
+                        for a in authors_list[:20]:
+                            name = a if isinstance(a, str) else (a.get("name", "") or a.get("family", ""))
+                            name = name.strip()
+                            if not name or len(name.split()) > 5:
+                                continue
+                            parts = name.split()
+                            if len(parts) >= 2:
+                                surname = parts[-1]
+                                initials = " ".join(f"{p[0]}." for p in parts[:-1] if p)
+                                apa_authors.append(f"{surname}, {initials}")
+                            else:
+                                apa_authors.append(name)
+                        if not apa_authors:
+                            continue
+                        if len(apa_authors) == 1:
+                            author_str = apa_authors[0]
+                        elif len(apa_authors) == 2:
+                            author_str = f"{apa_authors[0]}, & {apa_authors[1]}"
+                        elif len(apa_authors) <= 20:
+                            author_str = ", ".join(apa_authors[:-1]) + f", & {apa_authors[-1]}"
                         else:
-                            apa_author = "Unknown"
-                        new_entry = f"{apa_author} ({p.get('year', 'n.d.')}). {p.get('title', 'Untitled')}."
-                        if p.get("doi"):
-                            new_entry += f" https://doi.org/{p['doi']}"
+                            author_str = ", ".join(apa_authors[:19]) + f", ... {apa_authors[-1]}"
+                        doi = p.get("doi", "")
+                        if doi:
+                            doi_str = doi if doi.startswith("http") else f"https://doi.org/{doi}"
+                            doi_part = f" {doi_str}"
+                        else:
+                            doi_part = ""
+                        j_name = p.get("journal_name", "")
+                        journal_part = f" *{j_name}*." if j_name else ""
+                        new_entry = f"{author_str} ({p.get('year', 'n.d.')}). {p.get('title', 'Untitled')}.{journal_part}{doi_part}"
                         apa_text += f"\n\n{new_entry}"
                         added += 1
                 if added:
                     # Re-sort and save
                     entries = [e.strip() for e in apa_text.split("\n\n") if e.strip()]
                     apa_file.write_text("\n\n".join(sorted(entries)), encoding="utf-8")
-                    _log.info("RECONCILE: Added %d missing references from DB", added)
+                    _log.info("RECONCILE: Added %d missing references from DB (proper APA format)", added)
 
         if uncited_refs:
             _log.warning("RECONCILE: %d references never cited in text — removing", len(uncited_refs))

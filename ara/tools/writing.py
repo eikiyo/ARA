@@ -99,6 +99,8 @@ def _strip_llm_meta_text(content: str) -> str:
     # Clean up double commas or comma-period from replacement
     content = _re.sub(r',\s*,', ',', content)
     content = _re.sub(r',\s*\.', '.', content)
+    # Strip unresolved (Author, Year) placeholders
+    content = _re.sub(r'\(Author,?\s*Year\)', '', content, flags=_re.IGNORECASE)
     # Clean up double blank lines and trailing spaces left by removals
     content = _re.sub(r'\n{3,}', '\n\n', content)
     content = _re.sub(r' +\n', '\n', content)

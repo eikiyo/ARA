@@ -105,6 +105,12 @@ class ARAConfig:
     max_avg_sentence_length: int = 30  # Words per sentence — reject above this
     max_section_overlap: float = 0.30  # Cosine similarity between sections — flag repetition above this
 
+    # Journal tier priority — controls how much top-tier journals are preferred
+    # 2.0 = for every 1 unranked citation, require 2 from AAA/AA (100% more priority)
+    # 1.5 = 50% more top-tier, 1.0 = equal weight (no priority)
+    journal_tier_ratio: float = 2.0  # AAA/AA citations per unranked citation
+    journal_tier_min_pct: float = 0.50  # Hard floor: at least 50% citations must be AAA/AA
+
     # Scope mode: "broad" (default) or "narrow"
     # Narrow mode reduces targets for focused reviews on specific subtopics
     scope_mode: str = "broad"
@@ -200,6 +206,8 @@ class ARAConfig:
             max_propositions=_safe_int("ARA_MAX_PROPOSITIONS", 5),
             max_avg_sentence_length=_safe_int("ARA_MAX_AVG_SENTENCE_LENGTH", 30),
             max_section_overlap=_safe_float("ARA_MAX_SECTION_OVERLAP", 0.30),
+            journal_tier_ratio=_safe_float("ARA_JOURNAL_TIER_RATIO", 2.0),
+            journal_tier_min_pct=_safe_float("ARA_JOURNAL_TIER_MIN_PCT", 0.50),
             special_instructions=os.getenv("ARA_SPECIAL_INSTRUCTIONS", ""),
             special_authors=os.getenv("ARA_SPECIAL_AUTHORS", ""),
             peer_review_enabled=os.getenv("ARA_PEER_REVIEW_ENABLED", "true").lower() not in ("false", "0", "no"),

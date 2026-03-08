@@ -23,14 +23,14 @@ PHASE_TOOLS: dict[str, list[str]] = {
     "analyst_triage": ["list_papers", "read_paper", "rate_papers"],
     "analyst_deep_read": ["read_paper", "fetch_fulltext", "extract_claims", "assess_risk_of_bias", "search_similar", "list_papers", "list_claims"],
     "verifier": ["list_papers", "check_retraction", "get_citation_count", "validate_doi", "verify_claim"],
-    "hypothesis": ["read_paper", "search_similar", "list_claims", "list_papers", "score_hypothesis", "get_risk_of_bias_table", "get_grade_table"],
-    "brancher": ["search_*", "search_similar", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table"],
-    "critic": ["read_paper", "search_similar", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table"],
-    "synthesis": ["list_papers", "list_claims", "read_paper", "search_similar", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section"],
+    "hypothesis": ["read_paper", "search_similar", "search_evidence", "list_claims", "list_papers", "score_hypothesis", "get_risk_of_bias_table", "get_grade_table"],
+    "brancher": ["search_*", "search_similar", "search_evidence", "list_claims", "list_papers", "read_paper", "get_risk_of_bias_table", "get_grade_table"],
+    "critic": ["read_paper", "search_similar", "search_evidence", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table"],
+    "synthesis": ["list_papers", "list_claims", "read_paper", "search_similar", "search_evidence", "rate_grade_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section"],
     "protocol": ["list_papers", "write_section"],
-    "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table", "generate_prisma_diagram"],
-    "advisory_board": ["list_papers", "list_claims", "read_paper", "search_similar", "get_risk_of_bias_table", "get_grade_table", "write_section"],
-    "paper_critic": ["read_paper", "search_similar", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
+    "writer": ["list_papers", "list_claims", "read_paper", "search_similar", "search_evidence", "write_section", "get_citations", "get_risk_of_bias_table", "get_grade_table", "generate_prisma_diagram"],
+    "advisory_board": ["list_papers", "list_claims", "read_paper", "search_similar", "search_evidence", "get_risk_of_bias_table", "get_grade_table", "write_section"],
+    "paper_critic": ["read_paper", "search_similar", "search_evidence", "list_papers", "list_claims", "get_risk_of_bias_table", "get_grade_table", "generate_quality_audit", "generate_prisma_diagram", "validate_all_citations", "write_section"],
 }
 
 
@@ -60,6 +60,7 @@ TOOL_DISPATCH: dict[str, Any] = {
     "read_paper": papers.read_paper,
     "list_papers": papers.list_papers,
     "search_similar": papers.search_similar,
+    "search_evidence": papers.search_evidence,
     "list_claims": papers.list_claims,
     "rate_papers": papers.rate_papers,
     # Verification tools
@@ -224,7 +225,7 @@ class ARATools:
                     _search_all_full_results.clear()
             if papers_to_store:
                 self._store_papers_list(papers_to_store)
-        elif tool_name.startswith("search_") and tool_name != "search_similar":
+        elif tool_name.startswith("search_") and tool_name not in ("search_similar", "search_evidence"):
             self._store_search_results(result_str)
 
         return result_str

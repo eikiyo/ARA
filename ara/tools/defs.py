@@ -198,6 +198,21 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
 
     {
+        "name": "search_evidence",
+        "description": "MMR-diversified evidence search across 115K vectors (claims + full-text chunks). "
+                       "Returns diverse, relevant evidence from MULTIPLE papers — avoids concentration from a single source. "
+                       "Use this for writing to get grounded claims with effect sizes, p-values, and full-text excerpts.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Query text describing the evidence you need"},
+                "limit": {"type": "integer", "description": "Max claims to return (default 15)"},
+                "include_chunks": {"type": "boolean", "description": "Include full-text excerpts (default true)"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
         "name": "rate_papers",
         "description": "Batch-rate papers for relevance and select them for deep reading. Call with a list of paper ratings.",
         "parameters": {

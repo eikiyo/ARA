@@ -276,6 +276,31 @@ that a reader could design a study from the description.
 - When multiple papers support a claim, cite all: (Author1, Year; Author2, Year)
 - Aim for 1 citation per 2-3 sentences in lit review, 1 per 3-4 sentences elsewhere
 
+### Journal Tier Priority Rule (MANDATORY)
+Papers in the citation menu marked **[AAA]** or **[AA]** are from top-tier
+journals (FT50, UTD24, ABS 4*/4). These are the gold standard of scholarship.
+
+- For every 1 unranked citation, include **{journal_tier_ratio}** from [AAA]/[AA] sources
+- **At least {journal_tier_min_pct_display} of your citations** MUST come from [AAA] or [AA] sources
+- When two papers support the same claim, PREFER the one from a higher-tier journal
+- In the literature review and theoretical background, lead with top-tier sources
+- In the discussion, compare your findings against top-tier published results
+- Citing top-tier journals signals that the paper engages with the best work in the field
+- If below the minimum top-tier percentage, the paper will be flagged for revision
+
+### STYLE VIOLATIONS — AUTO-REJECTED (fix before submitting)
+1. **Em/en-dashes**: ZERO em-dashes (\u2014) or en-dashes (\u2013) anywhere.
+   Use commas, semicolons, colons, or parentheses instead.
+2. **Hollow topic sentences**: Never write "This section discusses X" or
+   "The purpose of this section is to examine Y." Just make the argument.
+3. **Shopping-list writing**: Never write 4+ consecutive sentences starting
+   with "Author (Year) found/showed/demonstrated..." Group by theme, not author.
+4. **Bullet lists**: Top journals require continuous prose. No bullet points
+   (-, *, \u2022) in body sections. Convert to flowing paragraphs.
+5. **LLM artifacts**: Never include "Here is the section," "[INSERT],"
+   "[TODO]," "[PLACEHOLDER]," emoji, or HTML tags. Never refer to yourself
+   as AI. Never say "as requested" or "per your instructions."
+
 ### Style Guide
 - Tense: Past tense for methods and results. Present tense for theory and discussion.
 - Voice: Active voice preferred. Passive acceptable for methods.

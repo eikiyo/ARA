@@ -230,7 +230,7 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
     order = "ORDER BY COALESCE(relevance_score, 0) DESC, citation_count DESC"
 
     rows = db._conn.execute(
-        f"SELECT paper_id, title, abstract, authors, year, doi, source, citation_count, relevance_score, selected_for_deep_read "
+        f"SELECT paper_id, title, abstract, authors, year, doi, source, citation_count, relevance_score, selected_for_deep_read, journal_name, journal_tier "
         f"FROM papers {where} {order} LIMIT ? OFFSET ?",
         (*params, limit, offset),
     ).fetchall()
@@ -265,6 +265,10 @@ def list_papers(args: dict[str, Any], ctx: dict) -> str:
                     name = a["given"]  # Fallback if only given name
                 author_names.append(name)
         d["authors"] = author_names
+        # Add tier tag for LLM visibility
+        j_tier = d.get("journal_tier")
+        if j_tier:
+            d["tier"] = j_tier  # "AAA" or "AA"
         # In compact mode, skip abstracts to save tokens
         if compact:
             d.pop("abstract", None)
@@ -307,8 +311,11 @@ def rate_papers(args: dict[str, Any], ctx: dict) -> str:
     if not db:
         return json.dumps({"error": "Database not available"})
 
+    from ..db import is_blacklisted
     updated = 0
     selected = 0
+    tier_boosted = 0
+    blacklisted_count = 0
     for r in ratings:
         paper_id = r.get("paper_id")
         score = r.get("relevance_score", 0)
@@ -316,6 +323,38 @@ def rate_papers(args: dict[str, Any], ctx: dict) -> str:
         if paper_id is None:
             continue
         try:
+            # Check blacklist — auto-reject blacklisted papers
+            with db._lock:
+                doi_row = db._conn.execute(
+                    "SELECT doi FROM papers WHERE paper_id = ?", (paper_id,),
+                ).fetchone()
+            if doi_row and doi_row[0]:
+                bl_reason = is_blacklisted(doi_row[0])
+                if bl_reason:
+                    score = 0.0
+                    is_selected = 0
+                    blacklisted_count += 1
+                    with db._lock:
+                        db._conn.execute(
+                            "UPDATE papers SET relevance_score = 0, selected_for_deep_read = 0 WHERE paper_id = ?",
+                            (paper_id,),
+                        )
+                    updated += 1
+                    continue
+            # Boost top-tier journal papers — AAA gets +0.15, AA gets +0.10
+            with db._lock:
+                tier_row = db._conn.execute(
+                    "SELECT journal_tier FROM papers WHERE paper_id = ?", (paper_id,),
+                ).fetchone()
+            if tier_row and tier_row[0] == "AAA":
+                score = min(1.0, score + 0.15)
+                is_selected = 1  # Always select AAA papers for deep read
+                tier_boosted += 1
+            elif tier_row and tier_row[0] == "AA":
+                score = min(1.0, score + 0.10)
+                if score >= 0.5:
+                    is_selected = 1  # Select AA papers if reasonably relevant
+                tier_boosted += 1
             with db._lock:
                 db._conn.execute(
                     "UPDATE papers SET relevance_score = ?, selected_for_deep_read = ? WHERE paper_id = ?",
@@ -331,8 +370,12 @@ def rate_papers(args: dict[str, Any], ctx: dict) -> str:
         with db._lock:
             db._conn.commit()
 
+    if tier_boosted:
+        _log.info("RATE_PAPERS: %d papers boosted by journal tier (AAA/AA)", tier_boosted)
+    if blacklisted_count:
+        _log.info("RATE_PAPERS: %d papers auto-rejected (blacklisted publisher)", blacklisted_count)
     _log.info("RATE_PAPERS: %d updated, %d selected for deep read", updated, selected)
-    return json.dumps({"updated": updated, "selected_for_deep_read": selected})
+    return json.dumps({"updated": updated, "selected_for_deep_read": selected, "blacklisted": blacklisted_count})
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -516,3 +559,52 @@ def search_similar(args: dict[str, Any], ctx: dict) -> str:
     papers = db.search_papers_by_keyword(session_id=session_id, keyword=text, limit=limit)
     papers = _enrich_with_claims(papers, db, session_id)
     return json.dumps({"papers": papers, "method": "keyword_fallback"}, default=str)
+
+
+def search_evidence(args: dict[str, Any], ctx: dict) -> str:
+    """MMR-diversified evidence search across 115K vectors (claims + chunks + papers).
+
+    Returns diverse, relevant evidence from multiple papers — avoids concentration.
+    Use this instead of search_similar when writing to get grounded evidence.
+    """
+    text = args.get("text", "")
+    limit = args.get("limit", 15)
+    include_chunks = args.get("include_chunks", True)
+
+    if not text:
+        return json.dumps({"error": "text is required"})
+
+    central_db = ctx.get("central_db")
+    if not central_db:
+        return json.dumps({"error": "Central DB not available — use search_similar instead"})
+
+    query_emb = _embed_query(text)
+    if not query_emb:
+        return json.dumps({"error": "Failed to embed query"})
+
+    result: dict[str, Any] = {"query": text[:100], "method": "mmr_diversified"}
+
+    # 1. MMR claims — diverse across papers (max 3 per paper)
+    mmr_claims = central_db.search_claims_mmr(
+        query_emb, limit=limit, min_cosine=0.45, lam=0.7, paper_cap=3,
+    )
+    if mmr_claims:
+        for c in mmr_claims:
+            c.pop("supporting_quotes", None)  # Save tokens
+        result["claims"] = mmr_claims
+        result["n_claims"] = len(mmr_claims)
+        result["papers_represented"] = len(set(c.get("paper_title", "") for c in mmr_claims))
+
+    # 2. MMR chunks — grounded full-text excerpts (max 1 per paper)
+    if include_chunks:
+        mmr_chunks = central_db.search_chunks_mmr(
+            query_emb, limit=6, min_cosine=0.50, lam=0.6, paper_cap=1,
+        )
+        if mmr_chunks:
+            for ch in mmr_chunks:
+                ch["chunk_text"] = ch["chunk_text"][:400]  # Truncate for context
+                ch.pop("embedding", None)
+            result["chunks"] = mmr_chunks
+            result["n_chunks"] = len(mmr_chunks)
+
+    return json.dumps(result, default=str)
