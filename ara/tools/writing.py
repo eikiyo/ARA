@@ -373,7 +373,9 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
     unverified: list[str] = []
     stripped: list[str] = []
 
-    if db and session_id and citations_found:
+    # Skip citation verification for internal pipeline sections (they contain citation
+    # instructions with paper IDs, not actual inline citations to verify)
+    if db and session_id and citations_found and section_key not in _INTERNAL_SECTIONS:
         for author, year in citations_found:
             result = _verify_citation_against_db(author, year, db, session_id)
             if result["verified"]:

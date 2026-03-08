@@ -155,53 +155,174 @@ AAA_JOURNAL_QUERIES = [
 ]
 
 # ── AA JOURNALS (high relevance to fintech topic) ──
+# Expanded with more journals and deeper query coverage for 600-call budget
 AA_JOURNAL_QUERIES = [
+    # ── Finance & Banking (core) ──
     ("source:\"Journal of Banking and Finance\"", [
         "fintech financial crisis lending",
         "digital banking technology portfolio",
         "financial innovation emerging markets Asia",
+        "credit risk fintech platform",
+        "mobile banking adoption developing countries",
+        "financial crisis bank technology response",
     ]),
     ("source:\"Journal of Corporate Finance\"", [
         "fintech corporate strategy",
         "financial crisis firm technology investment",
         "digital transformation financial firms",
-    ]),
-    ("source:\"Technological Forecasting and Social Change\"", [
-        "fintech financial technology innovation",
-        "digital platform emerging economy",
-        "financial crisis technology adoption Southeast Asia",
-    ]),
-    ("source:\"Technovation\"", [
-        "fintech innovation developing countries",
-        "digital platform technology strategy",
-        "financial technology emerging markets",
+        "venture capital fintech funding crisis",
+        "corporate innovation technology portfolio",
     ]),
     ("source:\"Review of Finance\"", [
         "fintech lending credit",
         "financial crisis technology",
         "digital finance inclusion",
+        "peer-to-peer lending platform",
+        "financial innovation regulation",
     ]),
     ("source:\"Journal of Financial Intermediation\"", [
         "fintech financial intermediation",
         "digital lending platform",
         "financial crisis credit technology",
+        "disintermediation banking technology",
+        "payment systems innovation",
     ]),
+    ("source:\"Journal of Money Credit and Banking\"", [
+        "fintech monetary policy",
+        "digital currency financial stability",
+        "mobile money developing economy",
+        "credit market technology disruption",
+    ]),
+    ("source:\"Journal of Financial Stability\"", [
+        "fintech systemic risk",
+        "financial crisis digital transformation",
+        "regulatory technology financial stability",
+        "platform risk financial system",
+    ]),
+    ("source:\"European Financial Management\"", [
+        "fintech innovation Europe",
+        "digital banking transformation",
+        "financial crisis technology adoption",
+    ]),
+
+    # ── Technology & Innovation (core) ──
+    ("source:\"Technological Forecasting and Social Change\"", [
+        "fintech financial technology innovation",
+        "digital platform emerging economy",
+        "financial crisis technology adoption Southeast Asia",
+        "blockchain fintech application",
+        "digital transformation financial services",
+        "technology portfolio management innovation",
+    ]),
+    ("source:\"Technovation\"", [
+        "fintech innovation developing countries",
+        "digital platform technology strategy",
+        "financial technology emerging markets",
+        "technology entrepreneurship financial",
+        "innovation ecosystem fintech",
+    ]),
+    ("source:\"Technology Analysis and Strategic Management\"", [
+        "fintech strategy digital innovation",
+        "technology portfolio crisis management",
+        "platform business model technology",
+    ]),
+    ("source:\"Industrial and Corporate Change\"", [
+        "digital transformation industry disruption",
+        "technology innovation financial crisis",
+        "platform ecosystem evolution",
+    ]),
+    ("source:\"R&D Management\"", [
+        "technology portfolio R&D strategy",
+        "innovation management crisis response",
+        "digital technology investment",
+    ]),
+
+    # ── International Business & Development ──
     ("source:\"World Development\"", [
         "fintech financial inclusion developing countries",
         "digital finance Asia Africa",
         "mobile money financial crisis",
+        "digital payment poverty reduction",
+        "technology adoption emerging economy",
     ]),
-    ("source:\"Journal of Business Ethics\"", [
-        "fintech ethics financial inclusion",
-        "digital platform responsible innovation",
+    ("source:\"Journal of Development Economics\"", [
+        "mobile money financial inclusion",
+        "digital finance developing countries",
+        "technology adoption poverty",
     ]),
+    ("source:\"International Business Review\"", [
+        "fintech internationalization emerging markets",
+        "digital platform cross-border",
+        "multinational enterprise technology strategy",
+        "financial crisis international business",
+    ]),
+    ("source:\"Asia Pacific Journal of Management\"", [
+        "fintech Asia digital platform",
+        "financial crisis Southeast Asia technology",
+        "platform economy ASEAN",
+    ]),
+    ("source:\"Emerging Markets Review\"", [
+        "fintech emerging market innovation",
+        "financial crisis technology response",
+        "digital finance inclusion Asia",
+    ]),
+
+    # ── Strategy & Management ──
     ("source:\"Long Range Planning\"", [
         "fintech strategy digital transformation",
         "platform business model innovation",
+        "strategic response financial crisis",
+        "technology portfolio corporate strategy",
     ]),
+    ("source:\"British Journal of Management\"", [
+        "digital transformation strategy",
+        "platform ecosystem management",
+        "organizational resilience technology",
+    ]),
+    ("source:\"Journal of Business Research\"", [
+        "fintech digital innovation consumer",
+        "platform business model disruption",
+        "technology adoption financial services",
+        "financial crisis organizational response",
+    ]),
+
+    # ── Information Systems ──
     ("source:\"International Journal of Information Management\"", [
         "fintech digital innovation",
         "platform ecosystem technology",
+        "digital transformation financial services",
+        "mobile payment adoption technology",
+    ]),
+    ("source:\"Electronic Commerce Research and Applications\"", [
+        "fintech platform digital payment",
+        "mobile banking technology adoption",
+        "digital financial services",
+    ]),
+    ("source:\"Information and Management\"", [
+        "fintech adoption digital innovation",
+        "platform technology financial services",
+        "digital transformation organizational",
+    ]),
+
+    # ── Ethics & Governance ──
+    ("source:\"Journal of Business Ethics\"", [
+        "fintech ethics financial inclusion",
+        "digital platform responsible innovation",
+        "algorithmic bias lending credit",
+        "financial technology governance",
+    ]),
+
+    # ── Entrepreneurship ──
+    ("source:\"Small Business Economics\"", [
+        "fintech entrepreneurship SME",
+        "digital platform small business",
+        "financial crisis SME technology",
+        "crowdfunding platform innovation",
+    ]),
+    ("source:\"Entrepreneurship Theory and Practice\"", [
+        "fintech entrepreneurship digital",
+        "platform ecosystem startup",
+        "financial crisis entrepreneurial response",
     ]),
 ]
 
@@ -241,7 +362,8 @@ def main():
         except Exception:
             pass
 
-    all_queries = AAA_JOURNAL_QUERIES + AA_JOURNAL_QUERIES
+    # AA first (priority for deeper coverage), then AAA
+    all_queries = AA_JOURNAL_QUERIES + AAA_JOURNAL_QUERIES
     query_idx = 0
     skipped_queries = 0
 

@@ -28,6 +28,11 @@ Before evaluating, ground your critique in actual data:
 Your critique MUST reference specific claims and papers by ID.
 A critique that doesn't cite evidence is worthless.
 
+**IMPORTANT**: The read_paper tool DOES return full texts when available. Most papers
+in this database have full texts cached. Do NOT claim "no full texts available" or
+"working from abstracts only" — this is false. If read_paper returns >5000 chars,
+that IS the full text. Read it carefully and cite specific findings, not just abstracts.
+
 ---
 
 ### EVALUATION PROTOCOL (apply ALL 6 tests to EACH hypothesis)

@@ -20,14 +20,14 @@ from .tools import ARATools
 
 
 def _build_hypothesis_model(cfg: ARAConfig) -> any:
-    """Build hypothesis/critic model — Opus 4.6 only."""
+    """Build hypothesis/critic model — Sonnet 4.6."""
     if cfg.anthropic_api_key:
         try:
-            opus = AnthropicModel(model="claude-opus-4-6", api_key=cfg.anthropic_api_key)
-            _log.info("Hypothesis model: Opus 4.6 loaded (100%%)")
-            return opus
+            sonnet = AnthropicModel(model="claude-sonnet-4-6", api_key=cfg.anthropic_api_key)
+            _log.info("Hypothesis model: Sonnet 4.6 loaded (100%%)")
+            return sonnet
         except Exception as exc:
-            _log.warning("Failed to create Opus 4.6 for hypothesis: %s", exc)
+            _log.warning("Failed to create Sonnet 4.6 for hypothesis: %s", exc)
 
     _log.warning("No hypothesis model available — falling back to task model")
     return None

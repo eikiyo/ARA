@@ -455,7 +455,7 @@ class PeerReviewPipeline:
         central_db: Any = None,
         on_event: Callable | None = None,
     ):
-        self.models = models  # keys: gemini_deep, gemini_pro, claude_sonnet, claude_opus
+        self.models = models  # keys: gemini_deep, claude_sonnet
         self.config = config
         self.db = db
         self.session_id = session_id
@@ -610,7 +610,7 @@ class PeerReviewPipeline:
                 self._clear_checkpoint()
                 return self._finalize(topic, paper_type, cycle1_consensus, None, improved=False)
 
-            self._emit("Opus 4.6 making surgical edits...")
+            self._emit("Sonnet 4.6 making surgical edits...")
             self._apply_revisions(cycle1_consensus, sections_dir, paper_md)
 
             # Regenerate output with revised sections
@@ -733,7 +733,7 @@ class PeerReviewPipeline:
     def _apply_revisions(
         self, consensus: dict, sections_dir: Path, paper_md: str,
     ) -> None:
-        """Use Opus to make surgical edits — one section at a time to avoid truncation."""
+        """Use Sonnet to make surgical edits — one section at a time to avoid truncation."""
         if not sections_dir.exists():
             self._emit("  No sections directory found — cannot apply revisions")
             return
@@ -787,7 +787,7 @@ class PeerReviewPipeline:
                 f"- If no changes needed for this section, return {{\"edits\": []}}"
             )
 
-            response_text, usage = self._generate("claude_opus", prompt)
+            response_text, usage = self._generate("claude_sonnet", prompt)
             parsed = _extract_json(response_text)
             edits = parsed.get("edits", [])
 
@@ -1003,11 +1003,11 @@ class PeerReviewPipeline:
 
 
 def build_peer_review_models(config: ARAConfig) -> dict[str, BaseModel] | None:
-    """Build peer review models: Gemini deep (reviewing) + Claude Sonnet (reviewing/consensus) + Claude Opus (surgical edits only).
+    """Build peer review models: Gemini deep (reviewing) + Claude Sonnet (reviewing/consensus/surgical edits).
 
     Reviewers: gemini_deep, claude_sonnet (2 models)
     Consensus: claude_sonnet
-    Surgical edits: claude_opus
+    Surgical edits: claude_sonnet
     """
     from .model import GeminiModel, AnthropicModel
 
@@ -1031,7 +1031,6 @@ def build_peer_review_models(config: ARAConfig) -> dict[str, BaseModel] | None:
 
     try:
         models["claude_sonnet"] = AnthropicModel(model="claude-sonnet-4-6", api_key=config.anthropic_api_key)
-        models["claude_opus"] = AnthropicModel(model="claude-opus-4-6", api_key=config.anthropic_api_key)
     except Exception as exc:
         _log.error("Failed to create Anthropic peer review models: %s", exc)
         return None

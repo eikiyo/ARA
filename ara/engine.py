@@ -634,10 +634,25 @@ class RLMEngine:
 
             name = phase_def["name"]
             if name in completed:
-                _log.info("PIPELINE: Skipping %s (checkpoint found)", name)
-                if on_event:
-                    on_event(StepEvent("text", data=f"Skipping {name} (already completed)", depth=0))
-                continue
+                # Verify output file exists for phases that produce pipeline artifacts
+                _ARTIFACT_PHASES = {"hypothesis", "critic", "synthesis"}
+                if name in _ARTIFACT_PHASES:
+                    pipeline_dir = self.config.workspace / self.config.session_root_dir / "output" / "pipeline"
+                    artifact_file = pipeline_dir / f"{name}.md"
+                    if not artifact_file.exists():
+                        _log.warning("PIPELINE: Checkpoint for %s exists but output file missing — re-running", name)
+                        completed.discard(name)
+                        # Fall through to run the phase
+                    else:
+                        _log.info("PIPELINE: Skipping %s (checkpoint + output file verified)", name)
+                        if on_event:
+                            on_event(StepEvent("text", data=f"Skipping {name} (already completed)", depth=0))
+                        continue
+                else:
+                    _log.info("PIPELINE: Skipping %s (checkpoint found)", name)
+                    if on_event:
+                        on_event(StepEvent("text", data=f"Skipping {name} (already completed)", depth=0))
+                    continue
 
             # Skip phases disabled for this paper type
             if not is_phase_enabled(paper_type, name):
@@ -872,6 +887,12 @@ class RLMEngine:
                 on_event(StepEvent("subtask_end", data=f"Phase {name} complete", depth=0))
 
         # Advisory board — unified writing brief
+        # Verify plan file exists even if checkpoint says done
+        if "advisory_board" in completed:
+            _plan_check = self.config.workspace / self.config.session_root_dir / "output" / "pipeline" / "paper_plan.json"
+            if not _plan_check.exists():
+                _log.warning("PIPELINE: Advisory board checkpoint exists but paper_plan.json missing — re-running")
+                completed.discard("advisory_board")
         if "advisory_board" not in completed and not self.cancel_flag.is_set():
             self._pipeline_advisory_board(topic, paper_type, context, on_event)
             if db and session_id:
@@ -1664,7 +1685,12 @@ class RLMEngine:
 
         scamper_queries: list[tuple[str, str]] = []  # (label, query)
         try:
-            response = self.light_model.generate_content(scamper_prompt)
+            conv = self.light_model.create_conversation(
+                system_prompt="You generate SCAMPER cross-domain research queries. Output one query per line in format 'LETTER: query'.",
+                tool_defs=[],
+            )
+            self.light_model.append_user_message(conv, scamper_prompt)
+            response = self.light_model.generate(conv)
             raw_text = response.text if hasattr(response, "text") else str(response)
             _log.info("BRANCHER: LLM generated SCAMPER queries (%d chars)", len(raw_text))
 
@@ -1779,7 +1805,12 @@ class RLMEngine:
                 f"Be specific. Name the source papers. Focus on genuinely novel connections."
             )
             try:
-                response = self.light_model.generate_content(synthesis_prompt)
+                synth_conv = self.light_model.create_conversation(
+                    system_prompt="You synthesize cross-domain research insights. Be specific and cite source papers.",
+                    tool_defs=[],
+                )
+                self.light_model.append_user_message(synth_conv, synthesis_prompt)
+                response = self.light_model.generate(synth_conv)
                 insight_brief = response.text if hasattr(response, "text") else str(response)
                 _log.info("BRANCHER: Synthesized %d chars of cross-domain insights", len(insight_brief))
             except Exception as exc:
@@ -2912,17 +2943,37 @@ class RLMEngine:
             max_steps=30,
         )
 
-        # ── VALIDATE AND PARSE THE JSON PLAN ──
-        plan_file = pipeline_dir / "paper_plan.md"
+        # ── VALIDATE AND PARSE THE JSON PLAN (with retry) ──
+        import re as _plan_re
         plan_valid = False
-        if plan_file.exists():
+        _MAX_PLAN_ATTEMPTS = 3
+
+        for plan_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+            plan_file = pipeline_dir / "paper_plan.md"
+            if not plan_file.exists():
+                _log.warning("ADVISORY BOARD: paper_plan.md not saved (attempt %d/%d)", plan_attempt, _MAX_PLAN_ATTEMPTS)
+                if plan_attempt < _MAX_PLAN_ATTEMPTS:
+                    # Retry: re-run advisory board with explicit error feedback
+                    retry_objective = (
+                        f"Your previous attempt FAILED — paper_plan.md was not saved. "
+                        f"You MUST call write_section(section='paper_plan', content=<JSON>) to save your plan. "
+                        f"The content must be valid JSON with keys: sections, constructs, propositions, narrative_arc. "
+                        f"Do NOT include any text outside the JSON. Call write_section NOW.\n\n"
+                        f"Here is the data you need:\n{upstream_outputs[:6000]}"
+                    )
+                    self._solve_recursive(
+                        objective=retry_objective, context=context,
+                        depth=self.config.max_depth, on_event=on_event,
+                        system_prompt_override=system_prompt, phase="advisory_board", max_steps=15,
+                    )
+                    continue
+                break
+
             raw_plan = plan_file.read_text(encoding="utf-8")
-            _log.info("ADVISORY BOARD: Paper plan saved — %d chars", len(raw_plan))
+            _log.info("ADVISORY BOARD: Paper plan saved — %d chars (attempt %d)", len(raw_plan), plan_attempt)
 
             # Try to parse JSON (strip markdown code fences if present)
-            import re as _plan_re
             json_text = raw_plan.strip()
-            # Remove ```json ... ``` wrapping if present
             fence_match = _plan_re.search(r'```(?:json)?\s*\n?(.*?)\n?```', json_text, _plan_re.DOTALL)
             if fence_match:
                 json_text = fence_match.group(1).strip()
@@ -2934,12 +2985,9 @@ class RLMEngine:
 
                 # Validate required fields
                 missing = []
-                if "sections" not in plan:
-                    missing.append("sections")
-                if "constructs" not in plan:
-                    missing.append("constructs")
-                if "propositions" not in plan:
-                    missing.append("propositions")
+                for req_field in ("sections", "constructs", "propositions"):
+                    if req_field not in plan:
+                        missing.append(req_field)
                 if missing:
                     _log.warning("ADVISORY BOARD: Plan missing fields: %s", missing)
 
@@ -2963,20 +3011,36 @@ class RLMEngine:
                 plan_json_file = pipeline_dir / "paper_plan.json"
                 plan_json_file.write_text(json.dumps(plan, indent=2, default=str), encoding="utf-8")
                 _log.info("ADVISORY BOARD: Clean JSON plan saved to paper_plan.json")
+                break  # Success — exit retry loop
 
             except json.JSONDecodeError as exc:
-                _log.warning("ADVISORY BOARD: Failed to parse JSON plan: %s", exc)
+                _log.warning("ADVISORY BOARD: Failed to parse JSON (attempt %d/%d): %s",
+                             plan_attempt, _MAX_PLAN_ATTEMPTS, exc)
                 _log.warning("ADVISORY BOARD: Raw plan preview: %s", json_text[:500])
 
+                if plan_attempt < _MAX_PLAN_ATTEMPTS:
+                    # Delete the bad file and retry with error feedback
+                    plan_file.unlink(missing_ok=True)
+                    retry_objective = (
+                        f"Your previous JSON plan was INVALID — parse error: {exc}\n"
+                        f"Preview of what you wrote: {json_text[:300]}\n\n"
+                        f"RETRY: Write ONLY valid JSON. No markdown, no commentary, no code fences. "
+                        f"Call write_section(section='paper_plan', content=<pure JSON string>).\n\n"
+                        f"Required JSON structure: {{\"sections\": {{}}, \"constructs\": [], \"propositions\": [], \"narrative_arc\": \"\"}}\n\n"
+                        f"Data:\n{upstream_outputs[:6000]}"
+                    )
+                    self._solve_recursive(
+                        objective=retry_objective, context=context,
+                        depth=self.config.max_depth, on_event=on_event,
+                        system_prompt_override=system_prompt, phase="advisory_board", max_steps=15,
+                    )
+
         if not plan_valid:
-            _log.warning("ADVISORY BOARD: No valid JSON plan — falling back to legacy writing brief mode")
-            # Fall back: save upstream context as a basic brief so writer has something
-            fallback_brief = (
-                f"# Fallback Writing Brief (advisory board JSON plan failed)\n\n"
-                f"Target journal: {journal}\n\n"
-                f"## Upstream Context\n{upstream_outputs[:8000]}\n"
+            _log.error("ADVISORY BOARD: JSON plan failed after %d attempts — cannot proceed without plan", _MAX_PLAN_ATTEMPTS)
+            raise RuntimeError(
+                f"Advisory board failed to produce a valid JSON paper plan after {_MAX_PLAN_ATTEMPTS} attempts. "
+                f"Cannot proceed to writer phase without a plan."
             )
-            (pipeline_dir / "writing_brief.md").write_text(fallback_brief, encoding="utf-8")
 
         if on_event:
             on_event(StepEvent("subtask_end", data="Advisory Board complete — paper plan produced", depth=0))
@@ -3010,13 +3074,12 @@ class RLMEngine:
             except json.JSONDecodeError as exc:
                 _log.warning("PIPELINE WRITER: Failed to parse paper_plan.json: %s", exc)
 
-        # Fallback: if no JSON plan, try legacy writing brief
-        legacy_brief = ""
+        # No fallback — JSON plan is mandatory
         if not plan:
-            brief_file = pipeline_dir / "writing_brief.md"
-            if brief_file.exists():
-                legacy_brief = brief_file.read_text(encoding="utf-8")
-                _log.warning("PIPELINE WRITER: No JSON plan — falling back to legacy brief (%d chars)", len(legacy_brief))
+            raise RuntimeError(
+                "PIPELINE WRITER: No valid paper_plan.json found. "
+                "Advisory board must produce a JSON plan before writer can execute."
+            )
 
         # ── BUILD CITATION MENU (writer needs exact author names for formatting) ──
         cached_papers_summary = ""
@@ -3216,15 +3279,9 @@ class RLMEngine:
                     for p in propositions:
                         section_instruction += f"  - {p.get('id', '?')}: {p.get('statement', '')[:150]}\n"
 
-            elif legacy_brief:
-                # Fallback: use legacy brief + default section instruction
-                fallback_sections = dict(self._writer_sections())
-                section_instruction = fallback_sections.get(section_name, f"Write the {section_name} section.")
-                section_instruction += f"\n\nWRITING BRIEF:\n{legacy_brief[:3000]}\n"
             else:
-                # No plan, no brief — use default section instructions
-                fallback_sections = dict(self._writer_sections())
-                section_instruction = fallback_sections.get(section_name, f"Write the {section_name} section.")
+                # Should not reach here — plan is mandatory
+                raise RuntimeError(f"No plan instruction for section '{section_name}' — advisory board plan is required")
 
             # ── INJECT ALREADY-WRITTEN SECTION SUMMARIES (anti-overlap) ──
             already_written_summary = ""
