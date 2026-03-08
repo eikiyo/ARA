@@ -110,6 +110,8 @@ class ARATools:
         self.approval_gates = approval_gates
         self.config = config
         self.central_db = getattr(db, '_central', None) if db else None
+        self.plan: dict[str, Any] | None = None  # Advisory board plan (set by engine during writer phase)
+        self.topic: str = ""  # Research topic (set by engine)
 
     def get_definitions(self, include_subtask: bool = True, depth: int = 0, phase: str = "") -> list[dict[str, Any]]:
         # At depth 0 (manager), only expose delegation + pipeline tools
@@ -176,6 +178,10 @@ class ARATools:
         if self.config:
             ctx["min_papers"] = self.config.min_papers
             ctx["config"] = self.config
+        if self.plan:
+            ctx["plan"] = self.plan
+        if self.topic:
+            ctx["topic"] = self.topic
 
         try:
             import signal

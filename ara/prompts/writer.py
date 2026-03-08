@@ -80,7 +80,8 @@ should read as ONE continuous argument, not 7 independent essays.
 
 ### Section-by-Section Instructions
 
-#### Abstract ({min_words_abstract}+ words)
+#### Abstract ({min_words_abstract}-350 words MAXIMUM)
+HARD CAP: 350 words. Abstracts over 350 words will be REJECTED. Target 280 words.
 Structure: Background (2 sentences) → Gap (1 sentence) → Method
 (1-2 sentences) → Key findings (2-3 sentences) → Implications
 (1-2 sentences)
@@ -90,6 +91,9 @@ Rules:
 - Must contain: the research question, the method, the central
   finding, and the primary implication
 - Write this LAST (after all other sections), not first
+- Use the EXACT framework name from the advisory board plan
+- If mentioning mechanisms or propositions, the COUNT and LABELS
+  must exactly match those in the framework/propositions sections
 
 #### Introduction ({min_words_intro}+ words, {min_cites_intro}+ citations)
 Follow the 4-beat structure from Synthesis:

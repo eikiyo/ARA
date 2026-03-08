@@ -31,6 +31,7 @@ REVIEW_ATTRIBUTES_EMPIRICAL = [
     "Writing Clarity",
     "Logical Coherence",
     "Citation Accuracy",
+    "Citation Topical Relevance",
     "Structural Completeness",
     "Reproducibility",
     "Limitations Awareness",
@@ -54,12 +55,16 @@ REVIEW_ATTRIBUTES_CONCEPTUAL = [
     "Logical Coherence",
     "Writing Clarity",
     "Citation Accuracy",
+    "Citation Topical Relevance",
     "Boundary Conditions",
     "Competing Frameworks Comparison",
     "Practical Implications",
     "Future Research Agenda",
     "Domain Specificity",
     "Publication Readiness",
+    "Mechanism-Proposition Alignment",
+    "Framework Naming Consistency",
+    "Abstract Conciseness",
     "Cross-Section Proposition Coherence",
     "Table Deduplication & Placement",
     "Word Count Discipline",
@@ -141,6 +146,14 @@ REVIEWER_PERSONAS_CONCEPTUAL = {
             "(2) Reference Quality — are canonical authors (Teece, Dunning, North, Barney, Khanna & Palepu) "
             "properly cited? Are there references from predatory/low-tier journals? "
             "(3) Construct Naming Consistency — does each construct keep the SAME name across all sections? "
+            "(4) Mechanism-Proposition Alignment — if the abstract introduces N mechanisms, the framework "
+            "section must describe exactly N mechanisms, and each proposition must map to one mechanism. "
+            "Score 0 if the abstract's mechanisms don't match the propositions section. "
+            "(5) Framework Naming Consistency — the framework must have ONE name and ONE acronym used "
+            "identically everywhere. Score 0 if different names or acronyms appear in different sections. "
+            "(6) Citation Topical Relevance — every reference must be topically relevant to the paper. "
+            "Flag any citation from an unrelated field (e.g., medical/clinical paper cited in a business paper). "
+            "(7) Abstract Conciseness — abstract must be 250-350 words. Score 0 if over 400 words. "
             "IMPORTANT: This is NOT an empirical paper — do NOT evaluate statistical validity, "
             "effect sizes, sample sizes, or reproducibility. The rigor comes from theoretical logic."
         ),

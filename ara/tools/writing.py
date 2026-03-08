@@ -357,6 +357,20 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
                 f"Consider expanding by {min_words - word_count} words."
             )
 
+    # Check maximum word count — hard reject abstract and conclusion if overlong
+    _MAX_WORDS: dict[str, int] = {
+        "abstract": 350,     # Journal standard: 250-300, hard cap at 350
+        "conclusion": 500,   # Should be tight, not a second discussion
+    }
+    max_words = _MAX_WORDS.get(section_key, 0)
+    if max_words > 0 and word_count > max_words:
+        errors.append(
+            f"WORD COUNT EXCESS: section '{section}' has {word_count} words, "
+            f"maximum is {max_words}. Cut {word_count - max_words} words. "
+            f"For abstracts, use structured format: Background (2 sentences), "
+            f"Gap (1), Method (1-2), Findings (2-3), Implications (1-2)."
+        )
+
     # Hard reject if section has 0 citations (except abstract, conclusion, and internal sections)
     citations_in_text = _extract_citations_from_text(content)
     _exempt_from_citation_check = {"abstract", "conclusion", "protocol"} | _INTERNAL_SECTIONS
@@ -401,6 +415,36 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
             f"LOW CITATION DENSITY: section '{section}' has {total_citations} citations, "
             f"minimum is {min_cites}. Add more (Author, Year) citations from list_papers data."
         )
+
+    # Framework naming consistency check — detect when multiple framework names are used
+    if section_key not in _INTERNAL_SECTIONS and section_key != "abstract":
+        _fw_plan = ctx.get("plan", {}) or {}
+        _fw_name = _fw_plan.get("framework_name", "")
+        _fw_acronym = _fw_plan.get("framework_acronym", "")
+        if _fw_name and _fw_acronym and len(_fw_acronym) >= 2:
+            # Check if content uses a DIFFERENT acronym that looks like a framework abbreviation
+            import re as _fw_re
+            # Find all capitalized abbreviations (3+ letters) that look like framework acronyms
+            _found_acronyms = set(_fw_re.findall(r'\b([A-Z]{3,8})\b', content))
+            # Remove common non-framework acronyms
+            _common = {"CEO", "CFO", "CTO", "GDP", "ROI", "KPI", "API", "MNE", "MNC",
+                        "SME", "IPO", "R&D", "ICT", "USA", "JIBS", "AMJ", "SMJ", "APA",
+                        "RBV", "KBV", "TCE", "OLI", "NOT", "THE", "AND", "FOR", "HAS",
+                        "ITS", "FDI", "EME", "ALL", "ARE", "BUT", "CAN", "DID", "GET",
+                        "MAY", "NEW", "OUR", "SET", "WHO", "WHY", "HOW", "ITS"}
+            _found_acronyms -= _common
+            if _fw_acronym in _found_acronyms:
+                _found_acronyms.discard(_fw_acronym)
+            # If there are other unknown acronyms that could be framework names, warn
+            if _found_acronyms:
+                _suspicious = [a for a in _found_acronyms
+                               if a not in content.split("(")[0][:50]]  # Not just in citations
+                if _suspicious:
+                    warnings.append(
+                        f"NAMING CONSISTENCY WARNING: Found acronym(s) {_suspicious} that may be "
+                        f"alternative framework names. The ONLY framework acronym should be "
+                        f"'{_fw_acronym}' ({_fw_name}). If these are not framework names, ignore."
+                    )
 
     # Session tracking for retry budgets
     global _section_rejection_session
@@ -476,6 +520,49 @@ def write_section(args: dict[str, Any], ctx: dict) -> str:
     # Track PRISMA stats if this is the methods section
     if section_key == "methods" and db and session_id:
         _extract_prisma_from_methods(content, db, session_id)
+
+    # Mechanism-proposition alignment check for abstract
+    # When abstract is saved, verify it doesn't introduce mechanisms
+    # that differ from the advisory board plan
+    if section_key == "abstract" and section_key not in _INTERNAL_SECTIONS:
+        _plan = ctx.get("plan", {}) or {}
+        _plan_mechanisms = _plan.get("mechanisms", [])
+        _plan_props = _plan.get("propositions", [])
+        if _plan_mechanisms and _plan_props:
+            mech_names = [m.get("name", "") for m in _plan_mechanisms]
+            prop_count = len(_plan_props)
+            # Check if the abstract mentions a different number of mechanisms/propositions
+            import re as _abs_re
+            # Look for patterns like "three mechanisms" or "5 propositions"
+            _number_words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                             "six": 6, "seven": 7, "eight": 8}
+            content_lower = content.lower()
+            for _nw, _nv in _number_words.items():
+                if f"{_nw} mechanism" in content_lower or f"{_nw} proposition" in content_lower:
+                    if f"{_nw} mechanism" in content_lower and _nv != len(mech_names):
+                        warnings.append(
+                            f"ABSTRACT-FRAMEWORK MISMATCH: Abstract says '{_nw} mechanisms' "
+                            f"but plan defines {len(mech_names)} mechanisms: {mech_names}. "
+                            f"Align the abstract with the framework."
+                        )
+                    if f"{_nw} proposition" in content_lower and _nv != prop_count:
+                        warnings.append(
+                            f"ABSTRACT-PROPOSITION MISMATCH: Abstract says '{_nw} propositions' "
+                            f"but plan defines {prop_count} propositions. Align the abstract."
+                        )
+            # Also check digit patterns ("3 mechanisms", "5 propositions")
+            for _dm in _abs_re.finditer(r'(\d+)\s+mechanism', content_lower):
+                if int(_dm.group(1)) != len(mech_names):
+                    warnings.append(
+                        f"ABSTRACT-FRAMEWORK MISMATCH: Abstract says '{_dm.group(1)} mechanisms' "
+                        f"but plan defines {len(mech_names)}: {mech_names}."
+                    )
+            for _dp in _abs_re.finditer(r'(\d+)\s+proposition', content_lower):
+                if int(_dp.group(1)) != prop_count:
+                    warnings.append(
+                        f"ABSTRACT-PROPOSITION MISMATCH: Abstract says '{_dp.group(1)} propositions' "
+                        f"but plan defines {prop_count}."
+                    )
 
     result = {
         "status": "saved",
@@ -612,19 +699,37 @@ def get_citations(args: dict[str, Any], ctx: dict) -> str:
     if not papers:
         papers = all_papers  # Fallback if no matches
 
-    # Reference quality filter — remove predatory DOIs and invalid entries
+    # Reference quality filter — remove predatory DOIs, invalid entries, and off-topic papers
     filtered_papers = []
     predatory_removed = 0
     invalid_removed = 0
+    offtopic_removed = 0
+    none_journal_removed = 0
+
+    # Build topic keywords for relevance check (from session topic if available)
+    _topic = ctx.get("topic", "") or ""
+    _topic_keywords = set()
+    if _topic:
+        _topic_keywords = {w.lower() for w in _topic.split() if len(w) > 3}
+
     for p in papers:
         doi = p.get("doi", "")
         title = p.get("title", "") or ""
         authors_list = p.get("authors", [])
+        journal = p.get("journal", "") or p.get("source", "") or ""
 
         # Skip entries with empty/missing authors or titles
         if not title or title == "Untitled" or not authors_list:
             invalid_removed += 1
             continue
+
+        # Skip entries with "None" as journal name (metadata corruption)
+        if journal.strip().lower() in ("none", "null", "n/a", ""):
+            # Only skip if we have enough other papers — don't remove everything
+            if len(papers) > 20:
+                none_journal_removed += 1
+                _log.info("REFERENCES: Filtered 'None' journal: %s", title[:60])
+                continue
 
         # Skip predatory DOIs
         if _is_predatory_doi(doi):
@@ -632,11 +737,30 @@ def get_citations(args: dict[str, Any], ctx: dict) -> str:
             _log.info("REFERENCES: Filtered predatory DOI: %s (%s)", doi, title[:60])
             continue
 
+        # Topic relevance check — reject papers whose title has zero keyword overlap
+        # with the research topic (catches hallucinated/wrong-field references)
+        if _topic_keywords and title:
+            title_words = {w.lower().strip(".,;:()") for w in title.split() if len(w) > 3}
+            overlap = _topic_keywords & title_words
+            # If zero overlap AND title contains field-foreign keywords, flag it
+            if not overlap:
+                _foreign_fields = {
+                    "obesity", "pediatric", "paediatric", "children", "nursing",
+                    "cancer", "tumor", "clinical trial", "surgery", "pharmaceutical",
+                    "botany", "zoology", "geology", "astronomy", "particle physics",
+                }
+                title_lower = title.lower()
+                is_foreign = any(ff in title_lower for ff in _foreign_fields)
+                if is_foreign:
+                    offtopic_removed += 1
+                    _log.warning("REFERENCES: Filtered off-topic paper: '%s' (no keyword overlap with topic)", title[:80])
+                    continue
+
         filtered_papers.append(p)
 
-    if predatory_removed or invalid_removed:
-        _log.info("REFERENCES: Filtered %d predatory DOIs, %d invalid entries (no author/title)",
-                   predatory_removed, invalid_removed)
+    if predatory_removed or invalid_removed or offtopic_removed or none_journal_removed:
+        _log.info("REFERENCES: Filtered %d predatory DOIs, %d invalid entries, %d off-topic, %d 'None' journals",
+                   predatory_removed, invalid_removed, offtopic_removed, none_journal_removed)
     papers = filtered_papers if filtered_papers else papers  # Fallback if all filtered
 
     # Generate both BibTeX and APA formatted references

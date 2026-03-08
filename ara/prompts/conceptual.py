@@ -264,11 +264,19 @@ Your task is to draft a conceptual/theoretical research paper that meets top-tie
 #### 1. Title
 Specific, signals the theoretical contribution. Pattern: "[Framework/Mechanism]: How [X] Drives [Y] in [Context]"
 
-#### 2. Abstract (250-350 words, STRUCTURED)
-- **Purpose**: 2-3 sentences on the theoretical gap this paper addresses
-- **Design/Approach**: 1-2 sentences on methodology (conceptual analysis, framework development)
-- **Findings**: 3-4 sentences describing the framework and key propositions
-- **Originality/Value**: 2-3 sentences on what this paper contributes that prior work has not
+#### 2. Abstract (250-350 words MAXIMUM, STRUCTURED)
+HARD CAP: 350 words. Abstracts over 350 words will be REJECTED. Target 280 words.
+- **Purpose**: 2 sentences on the theoretical gap this paper addresses
+- **Design/Approach**: 1 sentence on methodology (conceptual analysis, framework development)
+- **Findings**: 2-3 sentences describing the framework and key propositions
+- **Originality/Value**: 1-2 sentences on what this paper contributes that prior work has not
+
+MECHANISM-PROPOSITION ALIGNMENT RULE (CRITICAL):
+- If the abstract names N mechanisms, the framework section MUST describe exactly N mechanisms, and
+  propositions MUST map cleanly onto them. Do NOT introduce mechanisms in the abstract that don't
+  appear in the framework, and do NOT use different labels for the same mechanism across sections.
+- Use the EXACT framework name and acronym from the advisory board plan. Never rename or create
+  alternative acronyms (e.g., if the plan says "CPTP framework", never call it "BC-CFPR").
 
 #### 3. Introduction (minimum 800 words)
 Must include:
@@ -471,6 +479,12 @@ Your feedback is handed directly to the writer for revision. Vague feedback like
 - [ ] At least 3 propositions are non-obvious (an expert would NOT predict them from priors alone)
 - [ ] No single author cited more than 6 times across the paper (over-reliance check)
 - [ ] Re-contextualization construct explicitly defined with clear boundaries
+- [ ] Framework name used IDENTICALLY in every section (no alternative names or acronyms)
+- [ ] Abstract mechanism count matches actual mechanism count in framework section
+- [ ] Every mechanism in the abstract maps to at least one proposition
+- [ ] Every proposition maps to exactly one mechanism from the framework
+- [ ] Abstract is 250-350 words (NOT 400+, which signals poor editing)
+- [ ] No citations from unrelated fields (e.g., medical/clinical references in a business paper)
 
 ### Output Format
 

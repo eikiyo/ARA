@@ -2865,7 +2865,12 @@ class RLMEngine:
             "JSON SCHEMA:\n"
             "{\n"
             '  "target_journal": "string — journal name",\n'
+            '  "framework_name": "string — the ONE canonical name for the framework (e.g., Dynamic Capabilities Framework). Use this EXACT name in every section. Never rename, abbreviate differently, or create alternative acronyms.",\n'
+            '  "framework_acronym": "string — the ONE acronym if any (e.g., DCF). Use ONLY this acronym throughout. If no acronym, set to null.",\n'
             '  "narrative_arc": "string — the overarching story in 3-4 sentences: problem → gap → contribution → implications",\n'
+            '  "mechanisms": [\n'
+            '    {"name": "MechanismName", "description": "1 sentence", "generates_propositions": ["P1", "P2"]}\n'
+            '  ],\n'
             '  "constructs": [\n'
             '    {"name": "ExactConstructName", "definition": "1 sentence definition", "defined_in": "theoretical_background"}\n'
             '  ],\n'
@@ -2873,6 +2878,7 @@ class RLMEngine:
             '    {\n'
             '      "id": "P1",\n'
             '      "statement": "exact formal proposition statement",\n'
+            '      "mechanism": "which mechanism from the mechanisms list this proposition tests",\n'
             '      "constructs_used": ["construct name 1"],\n'
             '      "key_citations": [{"paper_id": 123, "author_year": "Author (Year)"}]\n'
             '    }\n'
@@ -2903,6 +2909,12 @@ class RLMEngine:
             f"- Propositions: {cfg.max_propositions} maximum, use EXACT construct names\n"
             f"- Each section's thesis must be UNIQUE — zero content overlap between sections\n"
             f"- Citations per section must meet minimums AND {cfg.journal_tier_min_pct:.0%} must be [AAA]/[AA]\n"
+            f"- FRAMEWORK NAME: Pick ONE name and ONE acronym. Use ONLY these across ALL sections. "
+            f"Never introduce alternative names or acronyms for the same framework.\n"
+            f"- MECHANISM-PROPOSITION MAP: Every mechanism in the 'mechanisms' list MUST generate at least one proposition. "
+            f"Every proposition MUST trace to exactly one mechanism. The abstract MUST reference ONLY the mechanisms "
+            f"from this list, and the propositions section MUST use the SAME mechanism labels. "
+            f"If abstract says 3 mechanisms, there must be exactly 3 mechanisms in the list, and propositions must map to them.\n"
         )
 
         # ── COMPOSE THE ADVISORY BOARD OBJECTIVE ──
@@ -2985,11 +2997,31 @@ class RLMEngine:
 
                 # Validate required fields
                 missing = []
-                for req_field in ("sections", "constructs", "propositions"):
+                for req_field in ("sections", "constructs", "propositions", "framework_name"):
                     if req_field not in plan:
                         missing.append(req_field)
                 if missing:
                     _log.warning("ADVISORY BOARD: Plan missing fields: %s", missing)
+
+                # Validate mechanism-proposition alignment
+                mechanisms = plan.get("mechanisms", [])
+                propositions = plan.get("propositions", [])
+                if mechanisms and propositions:
+                    mech_names = {m.get("name") for m in mechanisms}
+                    prop_mechs = {p.get("mechanism") for p in propositions if p.get("mechanism")}
+                    orphan_mechs = mech_names - prop_mechs
+                    orphan_props = prop_mechs - mech_names
+                    if orphan_mechs:
+                        _log.warning("ADVISORY BOARD: Mechanisms without propositions: %s", orphan_mechs)
+                    if orphan_props:
+                        _log.warning("ADVISORY BOARD: Propositions referencing unknown mechanisms: %s", orphan_props)
+
+                # Log framework name for consistency tracking
+                fw_name = plan.get("framework_name", "")
+                if fw_name:
+                    _log.info("ADVISORY BOARD: Framework name locked: %s", fw_name)
+                else:
+                    _log.warning("ADVISORY BOARD: No framework_name in plan — naming inconsistency risk")
 
                 # Validate section coverage
                 plan_sections = set(plan.get("sections", {}).keys())
@@ -3080,6 +3112,10 @@ class RLMEngine:
                 "PIPELINE WRITER: No valid paper_plan.json found. "
                 "Advisory board must produce a JSON plan before writer can execute."
             )
+
+        # Inject plan and topic into tools context for write_section validation
+        self.tools.plan = plan
+        self.tools.topic = topic
 
         # ── BUILD CITATION MENU (writer needs exact author names for formatting) ──
         cached_papers_summary = ""
@@ -3266,7 +3302,22 @@ class RLMEngine:
 
                 section_instruction += f"WORD COUNT: {word_min}-{word_max} words.\n"
 
-                # Add global plan context (constructs, propositions)
+                # Add global plan context (framework name, constructs, mechanisms, propositions)
+                fw_name = plan.get("framework_name", "")
+                fw_acronym = plan.get("framework_acronym")
+                if fw_name:
+                    section_instruction += f"\nFRAMEWORK NAME (use ONLY this name, never rename or create alternatives):\n"
+                    section_instruction += f"  - Full name: *{fw_name}*\n"
+                    if fw_acronym:
+                        section_instruction += f"  - Acronym: {fw_acronym} (use ONLY this abbreviation)\n"
+
+                mechanisms = plan.get("mechanisms", [])
+                if mechanisms:
+                    section_instruction += "\nMECHANISMS (use these EXACT labels — abstract, framework, and propositions MUST align):\n"
+                    for m in mechanisms:
+                        props = ", ".join(m.get("generates_propositions", []))
+                        section_instruction += f"  - *{m.get('name', '')}*: {m.get('description', '')} → generates {props}\n"
+
                 constructs = plan.get("constructs", [])
                 if constructs:
                     section_instruction += "\nCONSTRUCT NAMES (use these EXACT names, never rename):\n"
@@ -3277,7 +3328,9 @@ class RLMEngine:
                 if propositions and section_name not in ("abstract", "methodology"):
                     section_instruction += f"\nPROPOSITIONS (locked by advisory board, do not modify):\n"
                     for p in propositions:
-                        section_instruction += f"  - {p.get('id', '?')}: {p.get('statement', '')[:150]}\n"
+                        mech = p.get('mechanism', '')
+                        mech_label = f" [mechanism: {mech}]" if mech else ""
+                        section_instruction += f"  - {p.get('id', '?')}: {p.get('statement', '')[:150]}{mech_label}\n"
 
             else:
                 # Should not reach here — plan is mandatory
